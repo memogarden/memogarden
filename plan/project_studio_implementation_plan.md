@@ -832,6 +832,216 @@ def context_frame(client: MemoGardenClient, participant_uuid: str) -> list[str]:
 
 **Estimated**: 80-120 hours
 
+#### Session 22: Project Scaffold and Devcontainer Setup ✅ COMPLETE (2026-02-18)
+
+**Goal**: Initialize Svelte 5 + Vite project with TypeScript, configure devcontainer
+
+**Deliverables Completed**:
+1. ✅ Update devcontainer with Node.js 20+ LTS
+2. ✅ Add VSCode extensions for Svelte/TypeScript development
+3. ✅ Create `mg-project-studio` repository scaffold
+4. ✅ Initialize Svelte 5 + Vite project
+5. ✅ Configure TypeScript paths for clean imports
+6. ✅ Set up Tailwind CSS
+7. ✅ Configure Vite build output for Flask static serving
+8. ✅ Create basic project structure and UI components
+
+**Implementation Notes**:
+- Svelte 5 with runes mode enabled
+- Vite 5.4 for development and build
+- TypeScript with path aliases ($lib, $components, $stores, $services, $types)
+- Tailwind CSS with MemoGarden brand colors
+- All type checks pass (0 errors, 0 warnings)
+
+**Project Structure Created**:
+```
+mg-project-studio/
+├── src/
+│   ├── lib/
+│   │   ├── components/
+│   │   │   ├── ScopeList.svelte    # Scope list with create dialog
+│   │   │   └── ScopeCard.svelte     # Individual scope card
+│   │   ├── stores/
+│   │   │   └── auth.ts              # Authentication state management
+│   │   ├── services/
+│   │   │   ├── memogarden.ts        # MemoGarden API client
+│   │   │   └── sse.ts               # Server-Sent Events client
+│   │   └── types/
+│   │       └── api.ts               # TypeScript types for API
+│   ├── App.svelte                   # Main app component
+│   ├── main.ts                      # App entry point (Svelte 5 mount)
+│   └── app.css                      # Global styles with Tailwind
+├── index.html
+├── vite.config.ts                   # Vite config with API proxy
+├── svelte.config.js                 # Svelte 5 runes enabled
+├── tailwind.config.js               # Tailwind with MG brand colors
+├── tsconfig.json                    # TypeScript with path aliases
+└── package.json
+```
+
+**API Client Features**:
+- Full Semantic API verb support (create, get, edit, query)
+- Scope operations (createScope, listScopes, getScope)
+- Artifact operations (createArtifact, getArtifact, commitDelta)
+- Conversation operations (sendMessage, foldConversation)
+- Context operations (enterScope, leaveScope, focus)
+
+**Dev server**: Running on http://localhost:5173/
+
+---
+
+#### Session 23: Auth and API Connection Services
+
+**Goal**: Connect to MemoGarden Semantic API with authentication
+
+**Deliverables**:
+1. Create `src/lib/services/memogarden.ts` - API client
+2. Create `src/lib/services/sse.ts` - Server-Sent Events client
+3. Create `src/lib/stores/auth.ts` - Authentication state
+4. Create `src/lib/types/api.ts` - TypeScript types for API
+5. Implement JWT token refresh logic
+6. Add API key authentication support
+
+**API Service Structure**:
+```typescript
+// src/lib/services/memogarden.ts
+export class MemoGardenAPI {
+  private baseURL: string;
+  private token: string | null = null;
+
+  constructor(baseURL: string, apiKey?: string) {
+    this.baseURL = baseURL;
+    this.token = apiKey || localStorage.getItem('mg_token');
+  }
+
+  async semantic(request: SemanticRequest): Promise<SemanticResponse> {
+    // POST /mg with request envelope
+  }
+
+  async getEntity(uuid: string): Promise<Entity> {
+    // get verb wrapper
+  }
+
+  async queryEntities(filter: QueryFilter): Promise<Entity[]> {
+    // query verb wrapper
+  }
+
+  // Authentication
+  setToken(token: string) {
+    this.token = token;
+    localStorage.setItem('mg_token', token);
+  }
+
+  // Scope operations
+  async createScope(label: string): Promise<Scope> { }
+  async listScopes(): Promise<Scope[]> { }
+
+  // Artifact operations
+  async createArtifact(scopeUuid: string, artifact: ArtifactInput): Promise<Artifact> { }
+  async listArtifacts(scopeUuid: string): Promise<Artifact[]> { }
+
+  // Conversation operations
+  async sendMessage(logUuid: string, content: string): Promise<Message> { }
+  async getConversation(logUuid: string): Promise<ConversationLog> { }
+}
+```
+
+**SSE Service Structure**:
+```typescript
+// src/lib/services/sse.ts
+export class SSEClient {
+  private eventSource: EventSource | null = null;
+  private listeners: Map<string, Set<EventHandler>>;
+
+  connect(token: string, scopes: string[]) {
+    const url = `${this.baseURL}/mg/events?token=${token}&scopes=${scopes.join(',')}`;
+    this.eventSource = new EventSource(url);
+
+    this.eventSource.addEventListener('artifact_delta', this.handleArtifactDelta);
+    this.eventSource.addEventListener('message_sent', this.handleMessageSent);
+    this.eventSource.addEventListener('context_updated', this.handleContextUpdated);
+    // Reconnection handling
+  }
+
+  on(event: string, handler: EventHandler) {
+    if (!this.listeners.has(event)) {
+      this.listeners.set(event, new Set());
+    }
+    this.listeners.get(event)!.add(handler);
+  }
+
+  disconnect() {
+    this.eventSource?.close();
+  }
+}
+```
+
+---
+
+#### Session 24: Scope Management UI
+
+**Goal**: List scopes, create new scopes, navigate to scope details
+
+**Deliverables**:
+1. Scope list page (`src/routes/+page.svelte`)
+2. Scope creation dialog
+3. Scope detail page (`src/routes/scope/[uuid]/+page.svelte`)
+4. Navigation component
+5. Error handling and loading states
+
+**Scope List Page**:
+```svelte
+<!-- src/routes/+page.svelte -->
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { mgApi } from '$lib/services/memogarden';
+  import { authStore } from '$lib/stores/auth';
+
+  let scopes = [];
+  let loading = true;
+  let error = null;
+
+  async function loadScopes() {
+    try {
+      scopes = await mgApi.queryEntities({ _type: 'Scope' });
+    } catch (e) {
+      error = e.message;
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function createScope(label: string) {
+    const scope = await mgApi.createScope(label);
+    scopes.push(scope);
+  }
+
+  onMount(loadScopes);
+</script>
+
+<div class="scope-list">
+  <h1>Project Studio</h1>
+  <button on:click={() => showCreateDialog = true}>New Scope</button>
+
+  {#if loading}
+    <p>Loading scopes...</p>
+  {:else if error}
+    <p class="error">{error}</p>
+  {:else}
+    <ul>
+      {#each scopes as scope}
+        <li>
+          <a href="/scope/{scope.uuid}">{scope.data.label}</a>
+          <small>{scope.data.active_participants?.length || 0} participants</small>
+        </li>
+      {/each}
+    </ul>
+  {/if}
+</div>
+```
+
+---
+
 #### Session 22-24: Core UI and Scope Management
 
 **Deliverables**:
@@ -1191,12 +1401,41 @@ project-studio/
 - **memogarden-system**: Core library (`/workspaces/memogarden/memogarden-system/`)
 - **memogarden-api**: Flask server (`/workspaces/memogarden/memogarden-api/`)
 - **memogarden-client**: Python SDK ✅ CREATED (`/workspaces/memogarden/memogarden-client/`)
-- **memogarden-letta**: Agent integration (to be created)
-- **project-studio**: Web application (to be created)
+- **memogarden-letta**: Agent integration ✅ CREATED (`/workspaces/memogarden/memogarden-letta/`)
+- **mg-project-studio**: Web application 🔄 IN PROGRESS (`https://github.com/memogarden/mg-project-studio`)
 
 ---
 
-**Current Session**: Session 21 (Complete) - Letta Memory Block Projections
+**Current Session**: Session 22 Complete ✅ - Project Scaffold, Testing Infrastructure
+
+**Status:** Phase 4 Started ✅ (1/10 sessions complete)
+**Documentation:**
+- Updated devcontainer with Node.js LTS for Svelte development
+- Added VSCode extensions: Svelte, ESLint, Prettier, Tailwind
+- Forwarded ports: 5173 (Vite dev), 3000 (preview)
+
+**Recent Progress:**
+- Session 22 (2026-02-18): Project Scaffold Setup ✅ COMPLETE
+  - Created Svelte 5 + Vite + TypeScript project with runes mode
+  - Configured Tailwind CSS with MemoGarden brand colors
+  - Implemented auth store with localStorage persistence
+  - Implemented MemoGarden API client (Semantic API wrapper)
+  - Implemented SSE client for real-time updates
+  - Created ScopeList and ScopeCard UI components
+  - Set up Vitest testing infrastructure (20 tests passing)
+  - Code review: Fixed critical issues (getToken bug, error logging, SSE state)
+  - Committed: `456d35e` feat(project-studio): implement Svelte 5 app with API client and testing
+
+**Testing:**
+- Vitest configured with jsdom environment
+- 20 tests passing (11 API tests, 9 store tests)
+- Component tests skipped pending @testing-library/svelte Svelte 5 support
+- See [`mg-project-studio/tests/README.md`](https://github.com/memogarden/mg-project-studio)
+
+**Next Steps:**
+1. Implement Scope detail page (Session 24)
+2. Add Artifact list and editor components (Session 25-27)
+3. Implement Conversation and Fragment system (Session 28-30)
 
 **Status:** Phase 0 Complete ✅ (7/7 sessions complete) - Ready for Phase 1
 **Documentation:**
