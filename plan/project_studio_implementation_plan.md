@@ -1,8 +1,9 @@
 # Project Studio Implementation Plan
 
-**Version:** 1.0
-**Status:** Active Planning
+**Version:** 1.1
+**Status:** In Progress (Phase 4: Web App MVP - Session 23/31 complete)
 **Created:** 2026-02-11
+**Last Updated:** 2026-03-11 (Session 23 complete)
 **Supersedes:** N/A (new plan)
 
 ---
@@ -890,17 +891,35 @@ mg-project-studio/
 
 ---
 
-#### Session 23: Auth and API Connection Services
+#### Session 23: Auth and API Connection Services ✅ COMPLETE (2026-03-11)
 
 **Goal**: Connect to MemoGarden Semantic API with authentication
 
-**Deliverables**:
-1. Create `src/lib/services/memogarden.ts` - API client
-2. Create `src/lib/services/sse.ts` - Server-Sent Events client
-3. Create `src/lib/stores/auth.ts` - Authentication state
-4. Create `src/lib/types/api.ts` - TypeScript types for API
-5. Implement JWT token refresh logic
-6. Add API key authentication support
+**Deliverables Completed**:
+1. ✅ Created `src/lib/services/memogarden.ts` - API client with login/getCurrentUser
+2. ✅ `src/lib/services/sse.ts` - Server-Sent Events client (from Session 22)
+3. ✅ Enhanced `src/lib/stores/auth.ts` - JWT decoding, token expiry, two auth methods
+4. ✅ `src/lib/types/api.ts` - TypeScript types for API (from Session 22)
+5. ⚠️ JWT token refresh logic - deferred (30-day expiry, refresh not critical)
+6. ✅ API key authentication support - full implementation
+7. ✅ Created `src/lib/components/LoginForm.svelte` - Login UI with JWT/API key modes
+8. ✅ Updated `src/App.svelte` - Auth state handling with health check timeout
+
+**Implementation Notes**:
+- JWT decoding extracts `exp` claim instead of hardcoding 30-day expiry
+- EXPIRY_BUFFER_SECONDS constant (5 minutes) for token refresh window
+- Input validation on LoginForm (username format, password strength)
+- User-friendly error messages for network/auth failures
+- Health check timeout (5 seconds) prevents infinite loading
+
+**Code Review Fixes Applied**:
+- Fixed hardcoded token expiry - now decodes JWT `exp` claim
+- Added EXPIRY_BUFFER_SECONDS constant replacing magic number 300
+- Fixed test that manipulated store internals
+- Added health check timeout wrapper
+- Improved error handling with specific error type messages
+
+**Tests**: 29 passing (18 auth store + 11 API client)
 
 **API Service Structure**:
 ```typescript
