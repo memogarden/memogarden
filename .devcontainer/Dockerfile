@@ -52,6 +52,12 @@ RUN pip3 install --no-cache-dir --ignore-installed \
     ruff==0.2.0 \
     mypy==1.8.0
 
+# Install Node.js LTS via NodeSource (for Svelte/Project Studio development)
+RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \
+    && apt-get install -y nodejs \
+    && apt-get clean -y \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install GitHub CLI (gh)
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
     && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
