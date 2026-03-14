@@ -97,3 +97,9 @@ bin/
 memogarden/
 letta/
 letta-python/
+
+# Node.js artifacts (from running npm in root)
+node_modules/
+package-lock.json
+package.json
+test-results/

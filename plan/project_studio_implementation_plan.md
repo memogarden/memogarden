@@ -1,9 +1,9 @@
 # Project Studio Implementation Plan
 
 **Version:** 1.1
-**Status:** In Progress (Phase 4: Web App MVP - Session 24/31 complete)
+**Status:** In Progress (Phase 4: Web App MVP - Session 25/31 in progress)
 **Created:** 2026-02-11
-**Last Updated:** 2026-03-11 (Session 24 complete)
+**Last Updated:** 2026-03-13 (Session 25 in progress)
 **Supersedes:** N/A (new plan)
 
 ---
@@ -105,7 +105,7 @@ class Scope:
 
 ---
 
-**Current Session**: Session 24 Complete ✅ - Scope Management UI with Navigation
+**Current Session**: Session 25 In Progress 🔄 - Artifact Editor and Delta Operations
 
 ## Implementation Phases
 
@@ -1396,6 +1396,27 @@ project-studio/
 
 **Decision deferred**: Until multi-scope deployment testing
 
+### KIV-5: Database Path Resolution (RFC-004 Violation) ⚠️ BUG
+
+**Question**: Databases being created in current directory instead of RFC-004 locations
+
+**Issue**: The `init_system()` function uses `get_db_path()` which falls back to `./{layer}.db` instead of using RFC-004's `resolve_context()` mechanism.
+
+**Impact**:
+- Test databases created in project directories (data integrity risk)
+- Database location depends on launch directory
+- Inconsistent with RFC-004 specifications
+
+**Root Cause**: [`system/host/environment.py:get_db_path()`](../memogarden-system/system/host/environment.py) doesn't use `resolve_context()`
+
+**Proposed Fix**: Modify `init_system()` to use `resolve_context(verb)` for path resolution
+
+**Report**: [`mg-project-studio/docs/database-path-resolution-bug.md`](../mg-project-studio/docs/database-path-resolution-bug.md)
+
+**Workaround**: `export MEMOGARDEN_DATA_DIR="$HOME/.local/share/memogarden"`
+
+**Action Required**: Fix in new session to avoid autocompact issues
+
 ---
 
 ## Summary and Estimates
@@ -1450,25 +1471,21 @@ project-studio/
 
 ---
 
-**Current Session**: Session 24 Complete ✅ - Scope Management UI with Navigation
+**Current Session**: Session 25 In Progress 🔄 - Artifact Editor and Delta Operations
 
-**Status:** Phase 4 In Progress ✅ (2/10 sessions complete)
+**Status:** Phase 4 In Progress ✅ (2.5/10 sessions complete)
 
 **Recent Progress:**
-- Session 22 (2026-02-18): Project Scaffold Setup ✅ COMPLETE
-  - Created Svelte 5 + Vite + TypeScript project with runes mode
-  - Configured Tailwind CSS with MemoGarden brand colors
-  - Implemented auth store with localStorage persistence
-  - Implemented MemoGarden API client (Semantic API wrapper)
-  - Implemented SSE client for real-time updates
-  - Created ScopeList and ScopeCard UI components
-  - Set up Vitest testing infrastructure (20 tests passing)
-
-- Session 23 (2026-03-11): Auth and API Connection Services ✅ COMPLETE
-  - Implemented JWT decoding with `exp` claim extraction
-  - Added API key authentication support
-  - Created LoginForm component with dual auth modes
-  - 29 tests passing (18 auth + 11 API)
+- Session 25 (2026-03-13): Artifact Editor - IN PROGRESS
+  - Created ArtifactList component with clickable artifact cards
+  - Created ArtifactEditor component with line numbers and tab indentation
+  - Created ArtifactDetail component with save workflow
+  - Created CreateArtifactDialog component for artifact creation
+  - Updated navigation store for artifact-detail view
+  - Updated App.svelte to handle artifact-detail routing
+  - Updated ScopeDetail to use ArtifactList and CreateArtifactDialog
+  - Fixed SemanticRequest type to include `op` field
+  - All tests passing (37/37), svelte-check: 0 errors, 0 warnings
 
 - Session 24 (2026-03-11): Scope Management UI ✅ COMPLETE
   - Created navigation store for SPA routing
@@ -1478,9 +1495,24 @@ project-studio/
   - 37 tests passing (8 navigation + 18 auth + 11 API)
   - Code review: A+ grade, 0 errors, 0 warnings
 
+- Session 23 (2026-03-11): Auth and API Connection Services ✅ COMPLETE
+  - Implemented JWT decoding with `exp` claim extraction
+  - Added API key authentication support
+  - Created LoginForm component with dual auth modes
+  - 29 tests passing (18 auth + 11 API)
+
+- Session 22 (2026-02-18): Project Scaffold Setup ✅ COMPLETE
+  - Created Svelte 5 + Vite + TypeScript project with runes mode
+  - Configured Tailwind CSS with MemoGarden brand colors
+  - Implemented auth store with localStorage persistence
+  - Implemented MemoGarden API client (Semantic API wrapper)
+  - Implemented SSE client for real-time updates
+  - Created ScopeList and ScopeCard UI components
+  - Set up Vitest testing infrastructure (20 tests passing)
+
 **Testing:**
 - Vitest configured with jsdom environment
-- 37 tests passing (29 auth/store + 8 navigation)
+- 37 tests passing (18 auth + 11 API + 8 navigation)
 - Component tests skipped pending @testing-library/svelte Svelte 5 support
 - svelte-check: 0 errors, 0 warnings
 
