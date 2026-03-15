@@ -1,9 +1,9 @@
 # Project Studio Implementation Plan
 
-**Version:** 1.1
-**Status:** In Progress (Phase 4: Web App MVP - Session 26/31 in progress)
+**Version:** 1.2
+**Status:** In Progress (Phase 4: Web App MVP - Session 26A complete, 26B deferred)
 **Created:** 2026-02-11
-**Last Updated:** 2026-03-16 (Session 25 complete, Session 26 in progress)
+**Last Updated:** 2026-03-16 (Session 26A complete, 26B deferred)
 **Supersedes:** N/A (new plan)
 
 ---
@@ -1175,19 +1175,66 @@ const highlights = generateHighlights(parsed);
 ```
 
 **KIV**:
-- Three-way diff for merge conflicts (Session 26)
+- Three-way diff for merge conflicts (Session 26B - deferred)
 - Reference rendering and linkification (Session 27)
 - Fragment ID generation and assignment (Session 27)
 
 ---
 
-#### Session 26: Delta Highlighting and Three-Way Diff (In Progress)
+#### Session 26A: Delta Visualization and Optimistic Locking ✅ COMPLETE (2026-03-16)
 
-**Deliverables**:
-1. Delta operation visualization in editor
-2. Three-way diff for merge conflicts
-3. Conflict resolution UI
-4. Optimistic locking error handling
+**Tests:** 70 passing (38 existing + 32 delta parser tests)
+
+**Goal:** Delta operation preview and optimistic locking for artifact editing
+
+**Deliverables Completed:**
+1. ✅ Delta operation visualization in commit dialog
+2. ✅ Delta parser with 32 tests (parseOp, parseDeltaOps, generateHighlights, serializeOps, mergeDeltas)
+3. ✅ Optimistic locking error handling with conflict detection
+4. ✅ Delta statistics (add/remove counts, net change)
+5. ✅ Line number component with highlight support (already existed from Session 25)
+
+**Deliverables Deferred to Session 26B:**
+1. ⏸️ Three-way diff for merge conflicts
+2. ⏸️ Conflict resolution UI (per-line merge, accept yours/theirs)
+
+**Rationale for deferral:**
+- Delta visualization and locking are MVP for single-user editing
+- Three-way diff requires more complex UI (side-by-side comparison)
+- Conflict resolution needs workflow design (approve/reject individual changes)
+- Current implementation provides "reload to discard" as interim solution
+
+**Implementation Notes:**
+- Created `DeltaCommitDialog.svelte` for pre-commit review with statistics and operations preview
+- Delta computation uses simple line-based diff algorithm (O(n*m) for small files)
+- Conflict detection checks for 'conflict', 'hash', or 'lock_conflict' error code
+- Line numbers already support highlight colors from Session 25
+- Delta format: `+LINE:CONTENT` (add) and `-LINE` (remove)
+- Replace (`~`) and move (`>`) operations not yet supported
+
+**New Files:**
+- `mg-project-studio/src/lib/components/DeltaCommitDialog.svelte` - Delta preview dialog (417 lines)
+- `mg-project-studio/src/lib/delta/parser.test.ts` - Parser tests (256 lines, 32 tests)
+
+**Modified Files:**
+- `mg-project-studio/src/lib/components/ArtifactDetail.svelte` - Integrated delta dialog with conflict handling
+- `mg-project-studio/src/lib/services/memogarden.test.ts` - Fixed test assertion for edit operation format
+
+---
+
+#### Session 26B: Three-Way Diff and Conflict Resolution (DEFERRED)
+
+**Deliverables:**
+1. Three-way diff visualization (original, local, incoming)
+2. Conflict resolution UI (accept yours, accept theirs, merge)
+3. Per-line conflict resolution
+4. Auto-merge for non-overlapping changes
+
+**Unknown** (from KIV-3):
+- Three-way diff visualization libraries (diff2html-ui, monaco-editor diff?)
+- Conflict markers in content (`<<<<<<<` style or custom?)
+- Per-line conflict resolution or whole-document?
+- Auto-merge strategy for non-overlapping changes
 
 ---
 
@@ -1368,18 +1415,27 @@ const highlights = generateHighlights(parsed);
 
 **Decision deferred**: Until Phase 2 when concrete use cases emerge
 
-### KIV-3: Merge Conflict Resolution UX
+### KIV-3: Merge Conflict Resolution UX ⏸️ DEFERRED TO SESSION 26B
 
 **Question**: What's the UI pattern for agent-proposed conflict resolution?
 
 **Current plan**: Agent drafts resolution, operator approves
 
-**Unknown**:
-- Three-way diff visualization (libraries?)
-- Conflict markers in content (`<<<<<<<` style or custom?)
-- Per-line conflict resolution or whole-document?
+**Session 26A Progress (2026-03-16)**:
+- ✅ Optimistic locking error handling implemented
+- ✅ Conflict detection (hash mismatch, `lock_conflict` error code)
+- ✅ "Reload to discard" workflow for simple conflicts
+- ✅ DeltaCommitDialog shows operations preview before commit
+- ❌ Three-way diff visualization not yet implemented
+- ❌ Per-line conflict resolution not yet implemented
 
-**Decision deferred**: Until Session 26 (Artifact Editor implementation)
+**Current interim solution**: When conflict is detected, user sees error message and "Reload" button that discards local changes and reloads the server version.
+
+**Remaining Unknown** (for Session 26B):
+- Three-way diff visualization libraries: diff2html-ui, monaco-editor diff, or custom?
+- Conflict markers in content: Git-style `<<<<<<<` markers or inline UI?
+- Per-line conflict resolution or whole-document merge?
+- Auto-merge strategy for non-overlapping changes
 
 ### KIV-4: Cross-Scope Reference Security
 
@@ -1469,12 +1525,21 @@ const highlights = generateHighlights(parsed);
 
 ---
 
-**Current Session**: Session 26 In Progress 🔄 - Delta Highlighting and Three-Way Diff
+**Current Session**: Session 26A Complete ✅ - Delta Visualization and Optimistic Locking
 
-**Status:** Phase 4 In Progress ✅ (2.5/10 sessions complete)
+**Status:** Phase 4 In Progress ✅ (3.5/10 sessions complete)
 
 **Recent Progress:**
-- Session 25 (2026-03-13): Artifact Editor - IN PROGRESS
+- Session 26A (2026-03-16): Delta Visualization and Optimistic Locking ✅ COMPLETE
+  - Created DeltaCommitDialog with delta operation preview and statistics
+  - Integrated delta dialog with ArtifactDetail save workflow
+  - Added conflict detection (hash mismatch, lock_conflict error code)
+  - Added 32 delta parser tests (all passing)
+  - Deferred: Three-way diff and conflict resolution UI → Session 26B
+  - All tests passing (70 total: 38 existing + 32 delta parser)
+  - svelte-check: 0 errors, 8 accessibility warnings
+
+- Session 25 (2026-03-13): Artifact Editor - COMPLETE
   - Created ArtifactList component with clickable artifact cards
   - Created ArtifactEditor component with line numbers and tab indentation
   - Created ArtifactDetail component with save workflow
