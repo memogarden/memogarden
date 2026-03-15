@@ -238,6 +238,31 @@ For complete testing documentation:
 
 For detailed testing philosophy and patterns, use the **memogarden-testing** skill.
 
+## Running E2E Tests (Project Studio)
+
+Project Studio has browser-based E2E tests that verify the frontend works correctly with the API.
+
+```bash
+# From the root directory, run E2E tests
+cd mg-project-studio
+./run_e2e.sh
+
+# Run specific test file
+./run_e2e.sh e2e.spec.ts
+
+# Run in headed mode (watch browser)
+./run_e2e.sh --headed
+```
+
+**Prerequisites:**
+- API server running on http://localhost:5000
+- Vite dev server running on http://localhost:5173 (`cd mg-project-studio && npm run dev`)
+
+**Common E2E Issues:**
+- If tests fail with "Playwright Test did not expect test.describe()", you're running from the wrong directory
+- Use `./run_e2e.sh` which automatically changes to the correct directory
+- Never run `npx playwright test` from the root directory
+
 ## Working with the Implementation Plan
 
 ### Understanding Progress

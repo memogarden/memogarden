@@ -1,9 +1,9 @@
 # Project Studio Implementation Plan
 
 **Version:** 1.1
-**Status:** In Progress (Phase 4: Web App MVP - Session 25/31 in progress)
+**Status:** In Progress (Phase 4: Web App MVP - Session 26/31 in progress)
 **Created:** 2026-02-11
-**Last Updated:** 2026-03-13 (Session 25 in progress)
+**Last Updated:** 2026-03-16 (Session 25 complete, Session 26 in progress)
 **Supersedes:** N/A (new plan)
 
 ---
@@ -105,7 +105,7 @@ class Scope:
 
 ---
 
-**Current Session**: Session 25 In Progress 🔄 - Artifact Editor and Delta Operations
+**Current Session**: Session 26 In Progress 🔄 - Delta Highlighting and Three-Way Diff
 
 ## Implementation Phases
 
@@ -1137,73 +1137,71 @@ project-studio/
 └── tailwind.config.js
 ```
 
-#### Session 25-27: Artifact Editor and Delta Operations
+#### Session 25: Artifact Editor Component and Delta Parser ✅ COMPLETE (2026-03-16)
 
 **Deliverables**:
-1. Artifact editor component (line-numbered)
-2. Delta syntax highlighting
-3. Commit workflow with optimistic locking
-4. Three-way diff for merge conflicts
-5. Reference rendering (parse and linkify)
+1. ✅ Artifact editor component with line numbers
+2. ✅ Delta operation parser (`+3:content`, `-5` → structured data)
+3. ✅ Modular editor components (LineNumbers, TextContent, FragmentHighlight)
+4. ✅ Line selection UI (click, Shift+click for range, Esc to clear)
+5. ✅ Fragment highlighting types and utilities
 
-**Artifact Editor Features**:
+**Implementation Details**:
+- Created `src/lib/delta/parser.ts` - Parse delta ops into `AddOp`, `RemoveOp`, `ParsedDelta`
+- Created `src/lib/components/editor/LineNumbers.svelte` - Line numbers with highlight support
+- Created `src/lib/components/editor/TextContent.svelte` - Textarea component
+- Created `src/lib/components/editor/FragmentHighlight.svelte` - Overlay for fragment highlights
+- Refactored `src/lib/components/ArtifactEditor.svelte` - Uses modular components
+- Added `FragmentHighlight`, `DeltaOp`, `ParsedDelta`, `LineRange` types to `src/lib/types/api.ts`
+
+**New Capabilities**:
 ```typescript
-// src/lib/components/ArtifactEditor.svelte
-<script lang="ts">
-  import { commitDelta, getArtifactAtCommit } from '$lib/services/memogarden';
-  import { parseReferences, renderReferences } from '$lib/services/fragment';
+// Parse delta operations
+import { parseDeltaOps, generateHighlights } from '$lib/delta';
 
-  let content = '';
-  let artifactHash = '';
-  let proposedChanges = [];
+const parsed = parseDeltaOps(`+3:New line here\n-5\n+7:Another line`);
+// → { ops: [...], addedLines: Map, removedLines: Set, lineRanges: [...] }
 
-  // Parse fragment references on input
-  $: content = parseReferences($content);
+// Generate highlights for UI
+const highlights = generateHighlights(parsed);
+// → [{ id: 'add-3-3', startLine: 3, endLine: 3, color: '#d1fae5', type: 'add' }]
 
-  // Commit delta
-  async function commit() {
-    const ops = buildDeltaOps();  // "+5:^abc -10"
-    const result = await commitDelta(artifact.uuid, ops, proposedReferences);
-    if (result.error) {
-      if (result.error.code === 'conflict') {
-        showMergeConflict(result.conflict);  // Three-way diff UI
-      }
-    } else {
-      showError(result.error);
-    }
-  }
-</script>
-
-<template>
-  <div class="artifact-editor">
-    <!-- Line numbers -->
-    <div class="line-numbers">
-      {#each content.split('\n') as line, i}
-        <div class="line-number">{i + 1}</div>
-      {/each}
-    </div>
-
-    <!-- Content with reference rendering -->
-    <textarea
-      bind:value={content}
-      class="content"
-      placeholder="Start typing..."
-    />
-
-    <!-- Proposed changes panel -->
-    {#if proposedChanges.length > 0}
-      <div class="proposed-changes">
-        <h3>Proposed Changes</h3>
-        {#each proposedChanges as change}
-          <div class="change">{change.description}</div>
-        {/each}
-        <button on:click={commit}>Accept</button>
-        <button on:click={reject}>Reject</button>
-      </div>
-    {/if}
-  </div>
-</template>
+// Use in editor
+<ArtifactEditor
+  {artifact}
+  {highlights}
+  on:lineSelect={(e) => console.log('Selected:', e.detail.lines)}
+/>
 ```
+
+**KIV**:
+- Three-way diff for merge conflicts (Session 26)
+- Reference rendering and linkification (Session 27)
+- Fragment ID generation and assignment (Session 27)
+
+---
+
+#### Session 26: Delta Highlighting and Three-Way Diff (In Progress)
+
+**Deliverables**:
+1. Delta operation visualization in editor
+2. Three-way diff for merge conflicts
+3. Conflict resolution UI
+4. Optimistic locking error handling
+
+---
+
+#### Session 27: Reference Rendering and Fragment Creation
+
+**Deliverables**:
+1. Reference syntax parsing (`^abc`, `@artifact`)
+2. Reference linkification in editor
+3. Fragment ID generation
+4. Fragment-to-delta assignment
+
+**Fragment System UI**:
+```typescript
+// src/lib/components/FragmentComposer.svelte
 
 #### Session 28-30: Conversation and Fragment System
 
@@ -1471,7 +1469,7 @@ project-studio/
 
 ---
 
-**Current Session**: Session 25 In Progress 🔄 - Artifact Editor and Delta Operations
+**Current Session**: Session 26 In Progress 🔄 - Delta Highlighting and Three-Way Diff
 
 **Status:** Phase 4 In Progress ✅ (2.5/10 sessions complete)
 
