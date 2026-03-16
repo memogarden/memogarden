@@ -1,9 +1,9 @@
 # Project Studio Implementation Plan
 
-**Version:** 1.2
-**Status:** In Progress (Phase 4: Web App MVP - Session 26A complete, 26B deferred)
+**Version:** 1.4
+**Status:** In Progress (Phase 4: Web App MVP - Session 27 complete with E2E tests)
 **Created:** 2026-02-11
-**Last Updated:** 2026-03-16 (Session 26A complete, 26B deferred)
+**Last Updated:** 2026-03-16 (Session 27 complete, E2E tests working)
 **Supersedes:** N/A (new plan)
 
 ---
@@ -1238,13 +1238,90 @@ const highlights = generateHighlights(parsed);
 
 ---
 
-#### Session 27: Reference Rendering and Fragment Creation
+#### Session 27: Reference Rendering and Fragment Creation ✅ COMPLETE (2026-03-16)
 
-**Deliverables**:
-1. Reference syntax parsing (`^abc`, `@artifact`)
-2. Reference linkification in editor
-3. Fragment ID generation
-4. Fragment-to-delta assignment
+**Tests:**
+- **107 unit tests passing** (37 reference parser tests + 70 existing delta parser tests)
+- **3 E2E tests passing** (delta highlights feature)
+- **svelte-check:** 0 errors, 8 pre-existing accessibility warnings
+
+**Configuration Fixes:**
+- **Vitest/Playwright Conflict - RESOLVED**
+  - Root cause: Missing `tsconfig` option in `playwright.config.ts`
+  - Solution: Added `tsconfig: './tsconfig.playwright.json'` to isolate Playwright from Vitest types
+  - Created isolated tsconfigs for both Vitest (`tsconfig.vitest.json`) and Playwright (`tsconfig.playwright.json`)
+  - Modified main `tsconfig.json` to exclude `src/test/vite-env.d.ts`
+  - Added `optimizeDeps.exclude` for vitest packages in `vite.config.ts`
+
+**Deliverables Completed:**
+1. ✅ **Reference parser module** (`src/lib/references/parser.ts`)
+   - `parseReferences(content)` - Parse fragment, artifact line, object, and log references
+   - `generateFragmentId(content)` - Async SHA-256 based fragment ID generation
+   - `generateFragmentIdSync(content)` - Synchronous fallback for non-async contexts
+   - `linkifyReferences(content, renderer)` - Convert references to HTML
+   - `extractFragmentIds(content)` - Extract unique fragment IDs
+   - `hasFragmentRef(content, fragmentId)` - Check for fragment reference
+   - `extractUuids(content)` - Extract UUIDs from object/log references
+   - `isValidFragmentId(fragmentId)` - Validate fragment ID format
+   - `isValidMemoGardenUuid(uuid)` - Validate MemoGarden UUID format
+
+2. ✅ **Reference linkification component** (`src/lib/components/ReferenceContent.svelte`)
+   - Renders content with clickable reference links
+   - Color-coded by reference type (fragment, artifact_line, object, log)
+   - Keyboard accessible (Enter/Space support)
+   - Custom click handlers per reference type
+
+3. ✅ **Delta-to-highlight conversion** (`src/lib/delta/parser.ts`)
+   - `artifactDeltasToHighlights(deltas)` - Convert ArtifactDelta Items to FragmentHighlight[]
+   - `artifactDeltaToHighlights(delta)` - Convert single ArtifactDelta to highlights
+   - Handles add/remove operations with proper color coding
+
+4. ✅ **Artifact delta history fetching** (`src/lib/services/memogarden.ts`)
+   - `getItem(uuid)` - Get any Soil Item by UUID
+   - `getArtifactDeltas(artifactUuid)` - Fetch all deltas for an artifact
+
+5. ✅ **Delta highlight toggle** (`src/lib/components/ArtifactDetail.svelte`)
+   - "Show/Hide Deltas" button to toggle fragment highlighting
+   - Fetches deltas on first click, caches for subsequent toggles
+   - Shows delta highlights in editor when enabled
+
+6. ✅ **E2E tests for delta highlights** (`tests/delta-highlights.spec.ts`)
+   - Tests "Show Deltas" button visibility in artifact detail
+   - Tests delta highlight toggle functionality
+   - Tests delta count display in info bar
+
+**Implementation Notes:**
+- Fragment ID format: `^` + exactly 3 alphanumeric characters (base36 of SHA-256)
+- Reference regex patterns properly match:
+  - Fragment refs: `^abc` (exactly 3 chars, negative lookahead to avoid partial matches)
+  - Artifact line refs: `<label>:<line>[@<commit>]` (dots/hyphens allowed in labels)
+  - Object refs: `@core_abc123` or `@soil_xyz789`
+  - Log refs: `[text](uuid)` markdown-style links
+- Type safety improvements: Discriminated unions for segment types in ReferenceContent
+- svelte-check: 0 errors, 8 accessibility warnings (pre-existing)
+
+**New Files:**
+- `src/lib/references/parser.ts` - Reference parser (300+ lines)
+- `src/lib/references/index.ts` - Module exports
+- `src/lib/references/parser.test.ts` - Parser tests (37 tests)
+- `src/lib/components/ReferenceContent.svelte` - Reference linkification component
+
+**Modified Files:**
+- `src/lib/delta/parser.ts` - Added artifactDeltasToHighlights, artifactDeltaToHighlights
+- `src/lib/delta/index.ts` - Exported new functions
+- `src/lib/services/memogarden.ts` - Added getItem, getArtifactDeltas
+- `src/lib/components/ArtifactDetail.svelte` - Added delta toggle button and highlights
+
+**Deliverables:**
+1. **Fragment highlighting in editor** - Show added/removed lines with color coding ✅
+   - Fetch artifact delta history from backend ✅
+   - Convert delta ops to FragmentHighlight[] format ✅
+   - Pass highlights to ArtifactEditor for display ✅
+   - Toggle highlights on/off in artifact view ✅
+2. Reference syntax parsing (`^abc`, `@artifact`) ✅
+3. Reference linkification in editor ✅
+4. Fragment ID generation ✅
+5. Fragment-to-delta assignment (via delta parser) ✅
 
 **Fragment System UI**:
 ```typescript
@@ -1525,11 +1602,22 @@ const highlights = generateHighlights(parsed);
 
 ---
 
-**Current Session**: Session 26A Complete ✅ - Delta Visualization and Optimistic Locking
+**Current Session**: Session 27 Complete ✅ - Reference Rendering and Fragment Creation
 
-**Status:** Phase 4 In Progress ✅ (3.5/10 sessions complete)
+**Status:** Phase 4 In Progress ✅ (4.5/10 sessions complete)
 
 **Recent Progress:**
+- Session 27 (2026-03-16): Reference Rendering and Fragment Creation ✅ COMPLETE
+  - Created reference parser module (37 tests passing)
+  - Reference linkification component with color-coded types
+  - Delta-to-highlight conversion for artifact history
+  - Delta highlight toggle in ArtifactDetail
+  - E2E tests for delta highlights (3 tests passing)
+  - RESOLVED: Vitest/Playwright configuration conflict
+  - All tests passing (110 total: 107 unit + 3 E2E)
+  - Fragment ID generation (SHA-256 based)
+  - svelte-check: 0 errors, 8 accessibility warnings
+
 - Session 26A (2026-03-16): Delta Visualization and Optimistic Locking ✅ COMPLETE
   - Created DeltaCommitDialog with delta operation preview and statistics
   - Integrated delta dialog with ArtifactDetail save workflow
