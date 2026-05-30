@@ -364,6 +364,13 @@ Changes: {brief description}
 **❌ Timeout issues**
 - Fix: Adjust test timeouts or optimize slow tests
 
+**❌ Shared test state causing flaky tests**
+- Fix: Prefer test isolation over shared fixtures
+- **Pattern**: "Shared instance = faster but complex tests. Isolated instances = slower but simple, reliable tests."
+- **When to isolate**: If tests require wait loops, cleanup logic, or timing dependencies → isolate them
+- **Benefit**: Simpler, more reliable tests that are easier to understand and maintain
+- **Cost**: Accept performance overhead for test reliability (10 tests × 10s startup = 100s total vs complex timing issues)
+
 ## Related Skills
 
 - **continue-implementation**: Detailed implementation execution
