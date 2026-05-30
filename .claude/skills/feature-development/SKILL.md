@@ -17,50 +17,37 @@ Use this skill when:
 
 ## Workflow Overview
 
-```
-┌─────────────────────────────────────────────────────────┐
-│ 1. ISSUE CREATION & DISCUSSION                                 │
-├─────────────────────────────────────────────────────────┤
-│ • Create GitHub issue describing problem                   │
-│ • Discuss solution approach if needed                     │
-│ • Get alignment on requirements before implementation      │
-└─────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────┐
-│ 2. BRANCH CREATION & IMPLEMENTATION                            │
-├─────────────────────────────────────────────────────────┤
-│ • Create feature branch from main                             │
-│ • Follow continue-implementation skill for execution        │
-│ • Make changes, write tests, update docs                     │
-└─────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────┐
-│ 3. QUALITY GATES                                                    │
-├─────────────────────────────────────────────────────────┤
-│ • Documentation review: accuracy and completeness          │
-│ • Test coverage review: fidelity and organization          │
-│ • Requirements review: reflect actual implementation       │
-└─────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────┐
-│ 4. CI INTEGRATION & MONITORING                                   │
-├─────────────────────────────────────────────────────────┤
-│ • Create PR to main branch                                     │
-│ • Monitor CI status in PR                                     │
-│ • Fix obvious CI issues; escalate complex ones              │
-└─────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────┐
-│ 5. COMPLETION & ALERT                                               │
-├─────────────────────────────────────────────────────────┤
-│ • Verify CI passes and PR is ready                             │
-│ • Alert human for review and merge                             │
-└─────────────────────────────────────────────────────────┘
-```
+**Phase 1: Issue Creation & Discussion**
+- Create GitHub issue describing problem
+- Discuss solution approach if needed
+- Get alignment on requirements before implementation
+
+↓
+
+**Phase 2: Branch Creation & Implementation**
+- Create feature branch from main
+- Follow continue-implementation skill for execution
+- Make changes, write tests, update docs
+
+↓
+
+**Phase 3: Quality Gates**
+- Documentation review: accuracy and completeness
+- Test coverage review: fidelity and organization
+- Requirements review: reflect actual implementation
+
+↓
+
+**Phase 4: CI Integration & Monitoring**
+- Create PR to main branch
+- Monitor CI status in PR
+- Fix obvious CI issues; escalate complex ones
+
+↓
+
+**Phase 5: Completion & Alert**
+- Verify CI passes and PR is ready
+- Alert human for review and merge
 
 ## Phase 1: Issue Creation & Discussion
 
