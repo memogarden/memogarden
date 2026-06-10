@@ -121,6 +121,82 @@ feature/ci-workflow
    git commit -m "feat: add document management system"
    ```
 
+### Tool Registration (Agent-Based Projects)
+
+**For projects that add tools to AI agents**, additional steps are required:
+
+**⚠️ Important: Smoke tests do NOT verify tool-handler registration!**
+
+Smoke tests only check that tools can be loaded from JSON definitions. They do NOT verify that:
+- Handler functions exist
+- Handler functions are properly registered
+- Tool schemas match handler signatures
+- Tools appear in agent context (AUI rendering)
+
+**Required Registration Steps:**
+
+1. **Add handler function to handlers module**
+   ```python
+   # In src/tools/handlers.py or equivalent
+   def handle_<tool_name>(conn, invocation_id, ...):
+       """Handler function for <tool_name> tool."""
+       # Implementation
+       return {"output": result, "error": None, "stop": False}
+   ```
+
+2. **Add handler to agent imports**
+   ```python
+   # In src/mars/agent.py or equivalent
+   from tools.handlers import (
+       handle_existing_tool,
+       handle_<tool_name>,  # Add this line alphabetically
+       ...
+   )
+   ```
+
+3. **⚠️ CRITICAL: Update AUI tool rendering (if applicable)**
+   ```python
+   # In src/tools/loader.py or equivalent
+   # Check for category_order list and add new category
+   category_order = ["system", "chat", "tasks", "files", "documents", "web", "skills"]
+   #                                                                       ^^^^^^^ ADD NEW CATEGORIES HERE
+   ```
+   
+   **Why this matters:** The `get_aui_tools()` function has a hardcoded `category_order` list. If you add a new tool category but forget to update this list, the tools will be registered but won't appear in agent context (silent failure).
+
+4. **Verify registration manually**
+   ```python
+   # Test handler is registered
+   from mars.agent import _TOOL_HANDLERS
+   assert '<tool_name>' in _TOOL_HANDLERS
+   
+   # Test tools appear in agent context
+   from tools.loader import get_aui_tools
+   aui_tools = get_aui_tools()
+   assert f'%%% tools:<new_category>' in aui_tools
+   ```
+
+**Why This Happens:**
+
+Agent projects typically have:
+- **tools.json**: Tool definitions (schema, description, parameters)
+- **handlers.py**: Handler function implementations
+- **agent.py**: Dynamic handler mapping via `_build_tool_handlers()`
+- **loader.py**: AUI tool rendering with hardcoded category list
+
+The agent imports handlers explicitly AND builds a handler mapping dynamically. Missing explicit imports or category updates causes silent failures.
+
+**Common Pitfalls:**
+- ✗ Adding tools to tools.json but forgetting to update category_order
+- ✗ Adding handlers but not importing them in agent setup
+- ✗ Assuming smoke tests verify registration (they don't)
+- ✗ Hardcoding expected tool counts in tests instead of using schema
+
+**Verification Tests:**
+- Look for tests like `test_register_tools_from_spec` in test_agent.py
+- These tests verify tool-handler coverage but are NOT smoke tests
+- Pre-commit smoke tests won't catch missing handler registrations or missing categories
+
 ## Phase 3: Quality Gates
 
 Before creating a PR, verify these quality gates:
@@ -177,6 +253,12 @@ Before creating a PR, verify these quality gates:
   - Tests check behavior, not implementation?
   - Tests are maintainable?
   - No brittle tests that break easily?
+
+- [ ] **⚠️ NO HARDCODED COUNTS**
+  - Tests use schema-based validation instead of hardcoded numbers
+  - Example: `assert len(registered_tools) == len(get_tool_names())`
+  - NOT: `assert len(registered_tools) == 27`
+  - This prevents test breakage when tools are added/removed
 
 ### Requirements Review
 
@@ -243,6 +325,15 @@ gh pr create --title "feat: Your Feature Title" --base main
 
 ### CI Monitoring
 
+**⚠️ CRITICAL: CI MUST PASS BEFORE COMPLETION**
+
+CI passing is MANDATORY. A feature is NOT complete until:
+- All smoke tests pass
+- All unit tests pass  
+- No test failures
+- No linting errors
+- All CI checks show green
+
 **Monitor CI status in PR:**
 
 ```bash
@@ -252,7 +343,30 @@ gh pr checks
 
 # Watch for CI results
 gh run list --branch feature/your-feature-name
+
+# Check specific test results locally
+poetry run pytest tests/ -xvs
 ```
+
+### Common CI Issues and Prevention
+
+**Issue: Tools not appearing in agent context**
+- **Symptom:** Tools defined in tools.json but not in agent input (%%% tools:category missing)
+- **Root cause:** Forgot to add new category to category_order in tools/loader.py
+- **Prevention:** Always check category_order when adding new tool categories
+- **Verification:** Run `get_aui_tools()` and check for new category section
+
+**Issue: Test failures due to hardcoded counts**
+- **Symptom:** Tests fail with AssertionError on tool counts after adding tools
+- **Root cause:** Tests use hardcoded numbers instead of schema-based validation
+- **Prevention:** Use `assert len(registered) == len(get_tool_names())` not hardcoded numbers
+- **Verification:** Run tests before committing, check for hardcoded patterns
+
+**Issue: Global agent tests failing**
+- **Symptom:** Tests checking _global_agent directly fail with None or AttributeError
+- **Root cause:** Tests check internal implementation details instead of public API
+- **Prevention:** Use get_global_agent() public API, not _global_agent variable
+- **Verification:** Ensure tests trigger lazy initialization properly
 
 ### CI Failure Handling
 
@@ -261,6 +375,7 @@ gh run list --branch feature/your-feature-name
 - Missing test files
 - Simple test assertion updates
 - Configuration issues
+- Category order updates
 
 **Complex Issues** (escalate to human):
 - Architecture-level failures
@@ -275,20 +390,63 @@ CI Failure?
 ├─ Can I clearly identify the root cause?
 │  ├─ Yes ── Is it a simple, obvious fix?
 │  │        ├─ Yes ── Apply fix, push to branch
+│  │        │         ├─ Re-run tests locally
+│  │        │         ├─ Verify fix works
+│  │        │         └─ Push to remote
 │  │        └─ No  ── Escalate to human
 │  └─ No  ── Escalate to human
 ```
 
+**Pre-commit Testing:**
+Before pushing, always run:
+```bash
+# Run full test suite
+poetry run pytest tests/ -x
+
+# Check for common issues
+poetry run python3 -c "from tools.loader import get_aui_tools; assert '%%% tools:<new_category>' in get_aui_tools()"
+```
+
 ## Phase 5: Completion & Alert
+
+### ⚠️ CRITICAL: CI MUST PASS BEFORE COMPLETION
+
+**A feature is NOT complete until ALL CI checks pass.**
+
+Do NOT alert the human for review until:
+- ✅ All smoke tests pass
+- ✅ All unit tests pass
+- ✅ Zero test failures
+- ✅ Zero linting errors
+- ✅ All CI checks show green
+
+**If CI is failing:**
+1. Identify root cause using CI failure handling guidance (Phase 4)
+2. Apply simple fixes immediately
+3. Escalate complex issues to human
+4. Re-run tests and verify fixes locally
+5. Push updates and wait for CI to pass
+6. ONLY then proceed to alert human
 
 ### PR Readiness Checklist
 
 Before alerting the human, verify:
 
-- [ ] **All CI checks pass**
+- [ ] **✅ All CI checks pass** (MANDATORY - NO EXCEPTIONS)
   - Fast tests (smoke + unit) pass
   - No test failures
   - No linting errors
+  - All CI checks show green
+
+- [ ] **Tool registration verified** (Agent projects)
+  - All new tools appear in agent context (check AUI output)
+  - New categories added to category_order
+  - Handlers properly registered and tested
+
+- [ ] **Tests use schema-based validation** (NOT hardcoded)
+  - Tests use `get_tool_names()` instead of hardcoded counts
+  - Tests adapt to schema changes automatically
+  - No brittle hardcoded numbers in tests
 
 - [ ] **Code review ready**
   - Code follows project patterns
@@ -371,6 +529,23 @@ Changes: {brief description}
 - **Benefit**: Simpler, more reliable tests that are easier to understand and maintain
 - **Cost**: Accept performance overhead for test reliability (10 tests × 10s startup = 100s total vs complex timing issues)
 
+### Tool Registration Issues (Agent-Based Projects)
+
+**❌ "Handler not implemented for: <tool_name>" error**
+- Fix: Add handler function to agent imports in agent.py
+- Example: Missing `handle_web_search` in `from tools.handlers import ...`
+- **Verification**: Check `_TOOL_HANDLERS` mapping includes your tool
+
+**❌ Handler exists but not registered**
+- Fix: Add handler to explicit imports in agent.py
+- Even if handler exists in handlers.py, agent needs explicit import
+- Pattern: `from tools.handlers import handle_<tool_name>`
+
+**❌ Smoke tests pass but runtime fails**
+- Reason: Smoke tests don't verify handler registration
+- Fix: Run unit tests like `test_execute_tool_call_registered_tools`
+- Manual check: `python -c "from mars.agent import _TOOL_HANDLERS; print(_TOOL_HANDLERS.keys())"`
+
 ## Related Skills
 
 - **continue-implementation**: Detailed implementation execution
@@ -408,6 +583,6 @@ gh run view <run-id>
 
 ---
 
-**Last Updated:** 2026-05-22
+**Last Updated:** 2026-06-02
 **For:** AI agents working on feature development
 **Maintained by:** Project contributors
