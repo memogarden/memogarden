@@ -37,9 +37,30 @@ Use this skill when:
 
 ### Create Issue
 
-**Basic Issue Creation:**
+**Basic Issue Creation (no labels - most compatible):**
 ```bash
 gh issue create --repo <repo> --title "Issue Title" --body "Description"
+```
+
+**Issue with Labels (two-step process):**
+```bash
+# Step 1: Create issue without labels
+ISSUE_URL=$(gh issue create --repo <repo> --title "Issue Title" --body "Description")
+
+# Step 2: Add labels (only if they exist)
+gh issue edit <number> --repo <repo> --add-label "enhancement,documentation"
+```
+
+**Adding Labels After Creation:**
+```bash
+# Create issue first
+gh issue create --repo <repo> --title "feat: add feature" --body "Description..."
+
+# Then add labels to the created issue
+gh issue edit <number> --repo <repo> --add-label "enhancement"
+
+# Or add multiple labels
+gh issue edit <number> --repo <repo> --add-label "enhancement,documentation"
 ```
 
 **Issue Template:**
@@ -102,21 +123,30 @@ gh issue list --repo <repo> --label "enhancement"
 
 ### Issue Management Patterns
 
-**Feature Request Pattern:**
+**Best Practice - Create First, Label After:**
 ```bash
-# 1. Create issue for feature
+# 1. Create issue without labels (most compatible)
 gh issue create --repo memogarden/mars \
   --title "feat: add document versioning" \
   --body "Feature request template..."
 
-# 2. Create feature branch
+# 2. Add labels if they exist (optional, after creation)
+gh issue edit <number> --repo <repo> --add-label "enhancement"
+
+# 3. Create feature branch
 git checkout -b feature/document-versioning
 
-# 3. Implement and create PR
+# 4. Implement and create PR
 gh pr create --repo memogarden/mars \
   --title "feat: add document versioning" \
   --body "Fixes #15"
 ```
+
+**Why Two-Step Label Process?**
+- Not all repositories have the same labels
+- Creating issues without labels is more compatible
+- Labels can be added after creation without errors
+- Prevents workflow interruptions from missing labels
 
 **Bug Report Pattern:**
 ```bash
@@ -355,6 +385,28 @@ EOF
 gh issue create --repo <repo> --body-file description.md
 gh pr create --repo <repo> --body-file description.md
 ```
+
+### Issue: Labels Don't Exist
+
+**Problem:** "could not add label: 'label-name' not found" error
+
+**Solution:** Create issue first, add labels after
+```bash
+# Step 1: Create without labels
+gh issue create --repo <repo> --title "Title" --body "Body..."
+
+# Step 2: Add labels separately (optional)
+gh issue edit <number> --repo <repo> --add-label "enhancement"
+
+# Or create label first if needed
+gh label create enhancement --color "#0366d6"
+```
+
+**Why This Happens:**
+- Different repositories have different label sets
+- Labels may not exist in target repository
+- Creating issues with labels requires all labels to exist
+- Two-step process is more compatible across repositories
 
 ## Complete Workflow Example
 
