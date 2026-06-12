@@ -87,6 +87,9 @@ fixtures/
 *.mbox
 *.mbox.*
 
+# Test screenshots
+test_screenshots/
+
 # User cache and local data
 .cache/
 .config/

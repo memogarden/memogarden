@@ -1,0 +1,83 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# MUSH-specific
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Vendor build artifacts
+vendor/libghostty-vt/build/
+vendor/libghostty-vt/.zig-cache/
+vendor/libghostty-vt/zig-out/
+
+# But keep vendored source and libs
+!vendor/libghostty-vt/
+!vendor/libghostty-vt/**/
+!vendor/libghostty-vt/**/**
+
+# Socket files
+*.sock
+
+# Log files
+*.log
+logs/
