@@ -313,10 +313,30 @@ gh auth status
 # Token scopes: 'gist', 'read:org', 'repo', 'workflow'
 ```
 
-### Setup Workflow Token
+### Adding Scopes to Existing Session (Preferred)
+
+To add a new scope (e.g. `workflow`) to an already-authenticated `gh` session, use `gh auth refresh`. This avoids generating a brand-new token and reuses the existing login:
 
 ```bash
-# Login with workflow token
+# Add the workflow scope to current session
+gh auth refresh --scopes workflow
+
+# Add multiple scopes at once
+gh auth refresh --scopes workflow,read:public_key
+```
+
+The flow is interactive:
+1. A one-time code is displayed (e.g. `66DD-E49E`)
+2. Press Enter to open https://github.com/login/device in the browser
+3. Paste the code and approve the requested scopes
+4. `gh auth status` will then show the updated scopes
+
+### Adding Scopes via New Token (Alternative)
+
+If `gh auth refresh` isn't usable (e.g. headless environment), log in with a new token that has the required scopes:
+
+```bash
+# Login with a new token
 gh auth login --with-token
 
 # Or set environment variable
@@ -350,10 +370,11 @@ gh issue create --repo memogarden/mars --title "title" --body "body"
 # Check token scopes
 gh auth status
 
-# Re-authenticate with workflow token
-gh auth login --with-token
+# Add the workflow scope to existing session (preferred)
+gh auth refresh --scopes workflow
 
-# Verify workflow scope is present
+# Verify workflow scope is now present
+gh auth status
 ```
 
 ### Issue: Branch Not Pushed
@@ -508,12 +529,13 @@ gh pr merge <number> --repo <repo> --merge --delete-branch
 
 **Authentication:**
 ```bash
-gh auth status
-gh auth login --with-token
+gh auth status                          # Check current token + scopes
+gh auth refresh --scopes workflow       # Add scope to existing session
+gh auth login --with-token              # Login with new token (alternative)
 ```
 
 ---
 
-**Last Updated:** 2026-05-22
+**Last Updated:** 2026-06-17
 **For:** AI agents working on MARS and related projects
 **Maintained by:** Project contributors
