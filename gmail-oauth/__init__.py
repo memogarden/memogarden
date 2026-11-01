@@ -20,9 +20,10 @@ from typing import Literal
 # Configuration
 GOOGLE_AUTH_URI = "https://accounts.google.com/o/oauth2/auth"
 GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
+# Read-only is all ingestion needs; keep the consent screen minimal.
+# Add gmail.modify here (and re-consent) when label writes are actually needed.
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",  # Read emails
-    "https://www.googleapis.com/auth/gmail.modify",  # Modify labels (optional)
 ]
 
 
@@ -35,6 +36,7 @@ class GmailOAuthClient:
         client_id: str | None = None,
         client_secret: str | None = None,
         redirect_uri: str = "http://localhost:8080/callback",
+        passphrase: str | None = None,
     ):
         """Initialize OAuth client.
 
@@ -43,11 +45,14 @@ class GmailOAuthClient:
             client_id: OAuth client ID (or load from HACM)
             client_secret: OAuth client secret (or load from HACM)
             redirect_uri: OAuth redirect URI
+            passphrase: HACM store passphrase (required if the store is
+                passphrase-protected)
         """
         self.hacm_path = hacm_path
         self.redirect_uri = redirect_uri
         self._client_id = client_id
         self._client_secret = client_secret
+        self._passphrase = passphrase
 
     def get_client_credentials(self) -> tuple[str, str]:
         """Get OAuth client credentials (from HACM or constructor)."""
@@ -58,7 +63,7 @@ class GmailOAuthClient:
         try:
             from hacm import CredentialStore
 
-            store = CredentialStore(self.hacm_path)
+            store = CredentialStore(self.hacm_path, passphrase=self._passphrase)
             client_cred = store.get("google:oauth-client")
             if not client_cred:
                 raise ValueError(
@@ -168,7 +173,7 @@ class GmailOAuthClient:
             from hacm import Credential, CredentialStore
             from datetime import datetime
 
-            store = CredentialStore(self.hacm_path)
+            store = CredentialStore(self.hacm_path, passphrase=self._passphrase)
 
             # Create credential
             cred = Credential(
@@ -206,7 +211,7 @@ class GmailOAuthClient:
         try:
             from hacm import CredentialStore
 
-            store = CredentialStore(self.hacm_path)
+            store = CredentialStore(self.hacm_path, passphrase=self._passphrase)
             cred = store.get(f"google:{account_id}")
 
             if not cred:
@@ -294,12 +299,10 @@ class SimpleCallbackServer:
         import threading
         import time
 
+        outer = self  # closure: HTTPServer instantiates the handler per request
+
         class CallbackHandler(BaseHTTPRequestHandler):
             """Handle OAuth callback."""
-
-            def __init__(self, outer):
-                super().__init__()
-                self.outer = outer
 
             def do_GET(self):
                 """Handle GET request for OAuth callback."""
@@ -308,9 +311,9 @@ class SimpleCallbackServer:
                 params = parse_qs(parsed.query)
 
                 if "code" in params:
-                    self.outer._code = params["code"][0]
+                    outer._code = params["code"][0]
                     if "state" in params:
-                        self.outer._state = params["state"][0]
+                        outer._state = params["state"][0]
 
                     # Send success response
                     self.send_response(200)
@@ -321,9 +324,9 @@ class SimpleCallbackServer:
                         b"<p>You can close this window.</p></body></html>"
                     )
                 elif "error" in params:
-                    self.outer._error = params["error"][0]
+                    outer._error = params["error"][0]
                     if "error_description" in params:
-                        self.outer._error += f": {params['error_description'][0]}"
+                        outer._error += f": {params['error_description'][0]}"
 
                     # Send error response
                     self.send_response(400)
@@ -331,7 +334,7 @@ class SimpleCallbackServer:
                     self.end_headers()
                     self.wfile.write(
                         b"<html><body><h1>Authorization failed</h1>"
-                        b"<p>Error: " + self.outer._error.encode() + b"</p></body></html>"
+                        b"<p>Error: " + outer._error.encode() + b"</p></body></html>"
                     )
                 else:
                     self.send_response(400)
@@ -343,7 +346,7 @@ class SimpleCallbackServer:
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
 
         # Start server
-        server = HTTPServer(("localhost", self.port), CallbackHandler(self))
+        server = HTTPServer(("localhost", self.port), CallbackHandler)
         server.timeout = timeout
 
         print(f"Listening for OAuth callback on http://localhost:{self.port}")
