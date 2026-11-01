@@ -62,6 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="auth-setup: overwrite existing client credentials (prompt for values)",
     )
+    parser.add_argument("--dry-run", action="store_true", help="attachments: list what would be downloaded, store nothing")
     parser.add_argument("--quiet", action="store_true", help="Suppress progress output")
     return parser
 
@@ -251,19 +252,67 @@ def cmd_oldest(args) -> int:
     return 0 if stats.get("errors", 0) == 0 else 1
 
 
+def cmd_attachments(args) -> int:
+    """Download attachment binaries for ingested emails; Attachment facts + relations."""
+    if not args.account:
+        sys.exit("--account is required for attachments")
+
+    from system.soil import Soil
+
+    from gmail_importer.attachments import AttachmentExtractor, AttachmentStore
+    from gmail_importer.importer import GmailImporter
+
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
+
+    hacm_path = args.hacm or (args.data_dir / "hacm/credentials.enc")
+    passphrase_file = args.passphrase_file or (hacm_path.parent / "passphrase")
+    passphrase = (
+        passphrase_file.read_text().strip() if passphrase_file.exists() else None
+    )
+
+    soil = Soil(args.data_dir / "soil.db")
+    with soil:
+        soil.init_schema()  # idempotent; mirrors initialize_system in system.core
+        importer = GmailImporter(
+            soil=soil,
+            account_id=args.account,
+            hacm_path=str(hacm_path),
+            passphrase=passphrase,
+        )
+        store = AttachmentStore(args.data_dir / "attachments")
+        extractor = AttachmentExtractor(
+            soil, store, importer._build_api_client, verbose=not args.quiet
+        )
+        stats = extractor.extract_all(dry_run=args.dry_run)
+
+    verb = "would download" if args.dry_run else "downloaded"
+    print(
+        f"Attachments: {stats['emails_scanned']} emails scanned, "
+        f"{stats['attachments_found']} found, {stats['downloaded']} {verb}, "
+        f"{stats['skipped_existing']} already present, {stats['errors']} errors"
+    )
+    return 0 if stats.get("errors", 0) == 0 else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     parser.add_argument(
         "command",
         nargs="?",
         default="oldest",
-        choices=["oldest", "auth-setup", "auth-login"],
-        help="What to do (default: oldest)",
+        choices=["oldest", "attachments", "auth-setup", "auth-login"],
+        help=(
+            "What to do (default: oldest). attachments = download binaries for "
+            "ingested emails into <data-dir>/attachments/ as Attachment facts"
+        ),
     )
     args = parser.parse_args(argv)
-    return {"auth-setup": cmd_auth_setup, "auth-login": cmd_auth_login, "oldest": cmd_oldest}[
-        args.command
-    ](args)
+    return {
+        "auth-setup": cmd_auth_setup,
+        "auth-login": cmd_auth_login,
+        "oldest": cmd_oldest,
+        "attachments": cmd_attachments,
+    }[args.command](args)
 
 
 if __name__ == "__main__":

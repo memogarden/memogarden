@@ -78,6 +78,10 @@ class GmailApiClient:
         """Full message resource (payload, headers, parts, internalDate)."""
         return self._get(f"/messages/{message_id}", {"format": "full"})
 
+    def get_attachment(self, message_id: str, attachment_id: str) -> dict:
+        """Attachment resource — `data` (base64url) is a TOP-LEVEL field."""
+        return self._get(f"/messages/{message_id}/attachments/{attachment_id}")
+
     def iter_message_ids(self, query: Optional[str] = None, max_pages: int = _ENUM_PAGES) -> list[str]:
         """Enumerate ALL message ids for a query, newest-first, up to max_pages.
 

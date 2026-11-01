@@ -49,10 +49,27 @@ poetry run python -m gmail_importer.ingest --account you@gmail.com oldest
 Re-running `oldest` with the same `--limit` after a successful import is a
 no-op (the same messages deduplicate); grow the window with `--limit N`.
 
+## Attachments on disk
+
+```bash
+poetry run python -m gmail_importer.ingest --account you@gmail.com attachments [--dry-run]
+```
+
+Downloads binaries for every ingested email that declares attachments into
+`<data-dir>/attachments/<h2>/<h2>/<sha256><ext>` — content-addressed, so
+identical files deduplicate and integrity is checkable against the fact's
+`sha256`. Each instance is an immutable `Attachment` fact (original
+filename, mime, size, hash, relative path) linked to its email with a
+`contained_by` relation; search targets the metadata, never the files.
+Email facts are not modified. NB: Gmail attachment ids are per-fetch
+handles and change between fetches — idempotency is keyed on
+`(email, filename)`, so re-runs skip what is already extracted.
+
 ## Implementation Status
 
 - [x] EmailImporter pipeline reuse (dedup, threading, batching)
 - [x] Gmail API OAuth via HACM (loopback flow; OOB is dead upstream)
 - [x] Oldest-N fetch + translation
 - [ ] Incremental sync (historyId-based; needed for scheduled ingestion)
-- [ ] Attachment binaries / `contained_by` items (deliberately deferred)
+- [x] Attachment binaries on disk (content-addressed `attachments/` dir,
+      `Attachment` facts + `contained_by` relations, `attachments` subcommand)

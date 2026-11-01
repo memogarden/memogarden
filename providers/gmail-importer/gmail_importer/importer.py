@@ -193,9 +193,10 @@ class GmailImporter(EmailImporter):
 
             sent_at = parse_date(headers.get("date", "")) or realized_at
 
-        plain_text, html_body, attachment_filenames = self._extract_bodies(
+        plain_text, html_body, attachments = self._extract_bodies(
             gmail_msg.get("payload", {})
         )
+        attachment_filenames = [a["filename"] for a in attachments]
 
         if plain_text:
             body = plain_text
@@ -223,6 +224,11 @@ class GmailImporter(EmailImporter):
             metadata["gmail_thread_id"] = gmail_msg["threadId"]
         if gmail_msg.get("labelIds"):
             metadata["gmail_labels"] = gmail_msg["labelIds"]
+        if attachments:
+            # Provenance for later attachment extraction. NB: Gmail
+            # attachment ids are session-scoped handles that change between
+            # fetches — extraction refetches the message for current ids.
+            metadata["gmail_attachments"] = attachments
         if html_body and content_type == "text/plain":
             # Store HTML in metadata when plain text is the primary body
             metadata["html_body"] = html_body[:_MAX_METADATA_HTML_BYTES]
@@ -288,19 +294,23 @@ class GmailImporter(EmailImporter):
             h["name"].lower(): h["value"] for h in part.get("headers", [])
         }
 
-    def _extract_bodies(self, payload: dict) -> tuple[Optional[str], Optional[str], list[str]]:
-        """Extract (plain_text, html_body, attachment_filenames).
+    def _extract_bodies(
+        self, payload: dict
+    ) -> tuple[Optional[str], Optional[str], list[dict]]:
+        """Extract (plain_text, html_body, attachments).
 
         Attachment = part with a filename AND Content-Disposition: attachment
         (same rule as the mbox importer's parser; note the Gmail path counts
         only NAMED attachments, and inline files are never attachments).
-        Bodies are base64url decoded using the part's declared charset —
-        the oldest mail is the most likely to use legacy charsets, and Soil
-        facts are immutable, so a wrong decode would persist forever.
+        Each attachment is a record {filename, attachment_id, mime_type, size}
+        — attachment_id enables direct binary fetch later. Bodies are
+        base64url decoded using the part's declared charset — the oldest
+        mail is the most likely to use legacy charsets, and Soil facts are
+        immutable, so a wrong decode would persist forever.
         """
         plain_text: Optional[str] = None
         html_body: Optional[str] = None
-        attachment_filenames: list[str] = []
+        attachments: list[dict] = []
 
         for part in self._walk_parts(payload):
             part_headers = self._part_headers(part)
@@ -308,7 +318,14 @@ class GmailImporter(EmailImporter):
             filename = part.get("filename") or ""
 
             if filename and "attachment" in disposition.lower():
-                attachment_filenames.append(decode_header_value(filename))
+                attachments.append(
+                    {
+                        "filename": decode_header_value(filename),
+                        "attachment_id": part.get("body", {}).get("attachmentId"),
+                        "mime_type": part.get("mimeType", ""),
+                        "size": part.get("body", {}).get("size"),
+                    }
+                )
                 continue
             if filename:
                 # Inline files (Content-Disposition: inline) are not
@@ -329,7 +346,7 @@ class GmailImporter(EmailImporter):
             elif mime_type == "text/html" and html_body is None:
                 html_body = text
 
-        return plain_text, html_body, attachment_filenames
+        return plain_text, html_body, attachments
 
     @staticmethod
     def _decode_body(body_data: str, content_type_header: str) -> Optional[str]:
