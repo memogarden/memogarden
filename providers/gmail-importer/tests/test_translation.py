@@ -141,6 +141,66 @@ class TestTranslation:
         assert result["data"]["content_type"] == "text/html"
         assert result["data"]["description"] == "<p>HTML body</p>"
 
+    def test_legacy_charset_decoded(self, importer):
+        """ISO-8859-1 body decodes via its declared charset, not utf-8."""
+        import base64 as b64
+
+        raw = "caf\u00e9 na\u00efve".encode("iso-8859-1")
+        msg = simple_message()
+        msg["payload"]["parts"] = [
+            {
+                "mimeType": "text/plain",
+                "headers": [
+                    {"name": "Content-Type", "value": 'text/plain; charset="iso-8859-1"'}
+                ],
+                "body": {"data": b64.urlsafe_b64encode(raw).decode().rstrip("=")},
+            }
+        ]
+        result = importer.translate_gmail_to_email(msg)
+        assert result["data"]["description"] == "caf\u00e9 na\u00efve"
+
+
+class TestFetchOrchestration:
+    def test_oldest_first_slice_errors_and_skips(self, importer, monkeypatch):
+        """fetch_emails reverses the finder's newest-first ids, slices to the
+        limit, counts fetch errors, and skips untranslatable messages."""
+        from gmail_importer import importer as importer_module
+        from gmail_importer.gmail_api import GmailApiError
+
+        class FakeApi:
+            def __init__(self):
+                self.fetched = []
+
+            def get_message(self, message_id):
+                self.fetched.append(message_id)
+                if message_id == "boom":
+                    raise GmailApiError("404")
+                msg = simple_message()
+                msg["id"] = message_id
+                if message_id == "untranslatable":
+                    del msg["payload"]["headers"]
+                return msg
+
+        api = FakeApi()
+        monkeypatch.setattr(importer, "_build_api_client", lambda: api)
+        # Finder contract: ids are NEWEST-first. "18abc123" is the oldest.
+        monkeypatch.setattr(
+            importer_module,
+            "find_oldest_message_ids",
+            lambda api_, target, verbose: ["newest", "18abc123", "untranslatable", "boom"],
+        )
+
+        importer._limit = 3
+        importer._verbose = False
+        emails = list(importer.fetch_emails())
+
+        # reversed + sliced: newest dropped entirely, boom counted as error,
+        # untranslatable skipped, 18abc123 yielded oldest-first.
+        assert api.fetched == ["boom", "untranslatable", "18abc123"]
+        assert [e["data"]["rfc_message_id"] for e in emails] == ["<msg-1@example.com>"]
+        assert importer.stats["errors"] == 1
+        assert importer.stats["skipped"] == 1
+
 
 class TestSoilRoundtrip:
     def test_import_dedup_and_retrieval(self, importer, monkeypatch):

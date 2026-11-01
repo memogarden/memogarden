@@ -13,35 +13,22 @@ pip install requests memogarden-hacm
 poetry add requests memogarden-hacm
 ```
 
-## CLI Usage
+## Credential Setup
 
-### 1. Generate Authorization URL
-
-```bash
-python -m gmail_oauth.gmail_auth_cli auth-url --hacm /path/to/credentials.enc
-```
-
-This will display an OAuth URL that you visit in a browser to authorize the application.
-
-### 2. Run Callback Server
+Client credentials and refresh tokens are seeded via the gmail-importer CLI
+(this module provides the underlying `GmailOAuthClient` and callback server):
 
 ```bash
-python -m gmail_oauth.gmail_auth_cli callback \
-    --hacm /path/to/credentials.enc \
-    --account user@gmail.com \
-    --port 8080
+cd providers/gmail-importer
+poetry run python -m gmail_importer.ingest --account you@gmail.com auth-setup   # client creds -> HACM
+poetry run python -m gmail_importer.ingest --account you@gmail.com auth-login   # browser consent -> refresh token
 ```
 
-After visiting the authorization URL and completing the flow, Google will redirect to `http://localhost:8080/callback?code=...&state=...`. The callback server will:
-- Exchange the authorization code for tokens
-- Store the refresh token in HACM
-- Display success message
-
-### 3. List Stored Credentials
-
-```bash
-python -m gmail_oauth.gmail_auth_cli list --hacm /path/to/credentials.enc
-```
+The client secret is supplied via `--client-secrets FILE` (flat or GCP
+Console download JSON) or an interactive prompt — never committed to the
+repository. The callback flow uses the loopback redirect
+`http://localhost:8080/callback`; the old OOB flow was shut down by Google
+in 2023.
 
 ## API Endpoints (Flask)
 
@@ -139,37 +126,9 @@ new_tokens = client.refresh_access_token("user@gmail.com")
    - Enable Gmail API
 
 2. **Client Credentials Storage:**
+   Do not hardcode or commit client credentials. Seed them into HACM:
    ```bash
-   # Store client credentials in HACM
-   python -c "
-   from hacm import CredentialStore, Credential
-   import json, base64
-   from datetime import datetime
-
-   store = CredentialStore('/var/lib/hacm/credentials.enc')
-
-   client_creds = {
-       'client_id': 'your-client-id.apps.googleusercontent.com',
-       'client_secret': 'GOCSPX-...'
-   }
-
-   material = base64.b64encode(json.dumps(client_creds).encode()).decode()
-
-   cred = Credential(
-       id='google:oauth-client',
-       provider='google',
-       account_id='gmail-scraper-app',
-       type='oauth_client',
-       material=material,
-       metadata={
-           'redirect_uris': ['http://localhost:8080/callback'],
-           'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
-           'token_uri': 'https://oauth2.googleapis.com/token'
-       },
-       created_at=datetime.utcnow(),
-       updated_at=datetime.utcnow()
-   )
-
-   store.put('google:oauth-client', cred)
-   "
+   cd providers/gmail-importer
+   poetry run python -m gmail_importer.ingest --account you@gmail.com auth-setup --client-secrets /path/to/downloaded.json
    ```
+

@@ -108,19 +108,27 @@ class GmailImporter(EmailImporter):
     # Fetch + translate
     # ------------------------------------------------------------------
 
-    def fetch_emails(self, since: Optional[datetime] = None) -> Iterator[dict]:
+    def fetch_emails(
+        self, since: Optional[datetime] = None, verbose: bool = True
+    ) -> Iterator[dict]:
         """Fetch the oldest emails from Gmail.
 
         Args:
             since: Unused for the oldest-N strategy (kept for the
                 EmailImporter interface; date-range sync lands with the
                 background scheduler work).
+            verbose: Print search progress.
 
         Yields:
             Email dicts in the same shape as mbox_message_to_email_item.
         """
         api = self._build_api_client()
-        ids = find_oldest_message_ids(api, target=self._limit or 10, verbose=True)
+        # The base pipeline calls fetch_emails() with no args, so --quiet
+        # flows through instance state set by import_oldest().
+        verbose = getattr(self, "_verbose", verbose)
+        ids = find_oldest_message_ids(
+            api, target=self._limit or 10, verbose=verbose
+        )
         # API returns newest-first; the oldest are at the tail.
         oldest_ids = list(reversed(ids))
         if self._limit:
@@ -143,8 +151,13 @@ class GmailImporter(EmailImporter):
                 self.stats["skipped"] += 1
 
     def import_oldest(self, limit: int = 10, verbose: bool = True) -> dict:
-        """Import the `limit` oldest messages (dedup + threading via base class)."""
+        """Import the `limit` oldest messages (dedup + threading via base class).
+
+        Re-running with the same limit after a successful import is a no-op
+        (the same oldest messages deduplicate); growth requires raising limit.
+        """
         self._limit = limit
+        self._verbose = verbose
         try:
             return self.import_all(verbose=verbose)
         finally:
@@ -278,9 +291,12 @@ class GmailImporter(EmailImporter):
     def _extract_bodies(self, payload: dict) -> tuple[Optional[str], Optional[str], list[str]]:
         """Extract (plain_text, html_body, attachment_filenames).
 
-        Attachment = part with a filename AND Content-Disposition: attachment,
-        mirroring the mbox importer's definition. Bodies are base64url
-        decoded; text parts without inline data (large messages) are skipped.
+        Attachment = part with a filename AND Content-Disposition: attachment
+        (same rule as the mbox importer's parser; note the Gmail path counts
+        only NAMED attachments, and inline files are never attachments).
+        Bodies are base64url decoded using the part's declared charset —
+        the oldest mail is the most likely to use legacy charsets, and Soil
+        facts are immutable, so a wrong decode would persist forever.
         """
         plain_text: Optional[str] = None
         html_body: Optional[str] = None
@@ -305,11 +321,8 @@ class GmailImporter(EmailImporter):
             body_data = part.get("body", {}).get("data")
             if not body_data:
                 continue
-            try:
-                text = base64.urlsafe_b64decode(
-                    body_data + "=" * (-len(body_data) % 4)
-                ).decode("utf-8", errors="replace")
-            except Exception:
+            text = self._decode_body(body_data, part_headers.get("content-type", ""))
+            if text is None:
                 continue
             if mime_type == "text/plain" and plain_text is None:
                 plain_text = text
@@ -317,3 +330,21 @@ class GmailImporter(EmailImporter):
                 html_body = text
 
         return plain_text, html_body, attachment_filenames
+
+    @staticmethod
+    def _decode_body(body_data: str, content_type_header: str) -> Optional[str]:
+        """Decode a base64url body using its declared charset, utf-8 fallback."""
+        import re as _re
+
+        try:
+            raw = base64.urlsafe_b64decode(body_data + "=" * (-len(body_data) % 4))
+        except Exception:
+            return None
+        charset_match = _re.search(
+            r'charset=["\']?([A-Za-z0-9_\-.]+)', content_type_header
+        )
+        charset = charset_match.group(1) if charset_match else "utf-8"
+        try:
+            return raw.decode(charset, errors="replace")
+        except (LookupError, UnicodeDecodeError):
+            return raw.decode("utf-8", errors="replace")

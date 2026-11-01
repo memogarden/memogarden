@@ -30,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="gmail_importer.ingest",
         description="Ingest Gmail into Soil (attachment metadata only).",
     )
-    parser.add_argument("--account", required=True, help="Gmail address (HACM lookup key)")
+    parser.add_argument("--account", default=None, help="Gmail address (HACM lookup key; required for oldest and auth-login)")
     parser.add_argument(
         "--data-dir",
         type=Path,
@@ -103,10 +103,13 @@ def cmd_auth_setup(args) -> int:
     passphrase_file = args.passphrase_file or (hacm_path.parent / "passphrase")
 
     if not passphrase_file.exists():
+        import os
+
         hacm_path.parent.mkdir(parents=True, exist_ok=True)
         passphrase = secrets.token_urlsafe(24)
-        passphrase_file.write_text(passphrase + "\n")
-        passphrase_file.chmod(0o600)
+        fd = os.open(passphrase_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(passphrase + "\n")
         print(f"Generated HACM passphrase: {passphrase_file}")
     else:
         print(f"Using existing HACM passphrase: {passphrase_file}")
@@ -121,11 +124,14 @@ def cmd_auth_setup(args) -> int:
         return 0
 
     if args.client_secrets:
-        doc = json.loads(Path(args.client_secrets).read_text())
-        # Accept either a flat JSON or the GCP Console download shape.
-        blob = doc.get("installed") or doc.get("web") or doc
-        client_id = blob["client_id"]
-        client_secret = blob["client_secret"]
+        try:
+            doc = json.loads(Path(args.client_secrets).read_text())
+            # Accept either a flat JSON or the GCP Console download shape.
+            blob = doc.get("installed") or doc.get("web") or doc
+            client_id = blob["client_id"]
+            client_secret = blob["client_secret"]
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            sys.exit(f"Could not read client credentials from {args.client_secrets}: {e}")
     else:
         client_id = input("OAuth client ID: ").strip()
         client_secret = getpass("OAuth client secret: ")
@@ -153,11 +159,15 @@ def cmd_auth_setup(args) -> int:
     print(f"OAuth client credentials stored: {hacm_path}")
     print(f"  Client ID: {client_id}")
     print("  Secret is stored only in the encrypted HACM store.")
+    if args.client_secrets:
+        print(f"  NOTE: {args.client_secrets} still contains the secret — delete it.")
     return 0
 
 
 def cmd_auth_login(args) -> int:
     """Run the loopback OAuth consent flow and store the refresh token."""
+    if not args.account:
+        sys.exit("--account is required for auth-login")
     gmail_oauth = _load_gmail_oauth()
     hacm_path = args.hacm or (args.data_dir / "hacm/credentials.enc")
     passphrase = _read_passphrase(args)
@@ -165,7 +175,7 @@ def cmd_auth_login(args) -> int:
     client = gmail_oauth.GmailOAuthClient(str(hacm_path), passphrase=passphrase)
 
     registered = "http://localhost:8080/callback"  # as registered in Google Cloud Console
-    url = _auth_url(client, registered)
+    url, state = _auth_url(client, registered)
     print("\nVisit this URL in a browser to authorize:")
     print(f"\n  {url}\n")
 
@@ -173,22 +183,27 @@ def cmd_auth_login(args) -> int:
     print(f"Waiting for callback on {registered} ({args.timeout}s timeout)...")
     result = server.wait_for_callback(timeout=args.timeout)
 
-    tokens = client.exchange_code_for_tokens(
-        result["code"], redirect_uri=registered, state=result.get("state")
-    )
+    if result.get("state") != state:
+        raise SystemExit(
+            "OAuth state mismatch — the callback did not match the authorization "
+            "request (possible CSRF). Aborting without storing anything."
+        )
+
+    tokens = client.exchange_code_for_tokens(result["code"], redirect_uri=registered)
     client.store_tokens(args.account, tokens)
     print(f"\nOAuth complete. Refresh token stored for {args.account}.")
     print(f"Scopes: {tokens.get('scope', '')}")
     return 0
 
 
-def _auth_url(client, redirect_uri: str) -> str:
-    """Build the authorization URL with an explicit redirect URI."""
+def _auth_url(client, redirect_uri: str) -> tuple[str, str]:
+    """Build the authorization URL; returns (url, state) for callback validation."""
     import urllib.parse
 
     from gmail_oauth import GOOGLE_AUTH_URI, GOOGLE_SCOPES
 
     client_id, _ = client.get_client_credentials()
+    state = client._generate_state()
     params = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
@@ -196,14 +211,17 @@ def _auth_url(client, redirect_uri: str) -> str:
         "response_type": "code",
         "access_type": "offline",
         "prompt": "consent",
-        "state": client._generate_state(),
+        "state": state,
     }
-    return f"{GOOGLE_AUTH_URI}?{urllib.parse.urlencode(params)}"
+    return f"{GOOGLE_AUTH_URI}?{urllib.parse.urlencode(params)}", state
 
 
 def cmd_oldest(args) -> int:
+    if not args.account:
+        sys.exit("--account is required for oldest")
     from system.soil import Soil
 
+    from gmail_importer.gmail_api import GmailApiError
     from gmail_importer.importer import GmailImporter
 
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
@@ -225,7 +243,11 @@ def cmd_oldest(args) -> int:
             hacm_path=str(hacm_path),
             passphrase=passphrase,
         )
-    stats = importer.import_oldest(limit=args.limit, verbose=not args.quiet)
+    try:
+        stats = importer.import_oldest(limit=args.limit, verbose=not args.quiet)
+    except GmailApiError as e:
+        print(f"Ingestion failed: {e}", file=sys.stderr)
+        return 1
     return 0 if stats.get("errors", 0) == 0 else 1
 
 
