@@ -1,77 +1,319 @@
 """Gmail Email Importer for MemoGarden Soil.
 
-Provides GmailImporter stub for future Gmail API integration.
-The EmailImporter base class is imported from mbox-importer package.
+Fetches messages from the Gmail API and translates them to the same
+provider-agnostic Email item shape as the mbox importer (strict RFC 5322
+data / provider metadata separation), reusing the mbox email_parser
+helpers so both importers stay consistent.
+
+Attachments are captured as metadata only (has_attachments, count,
+filenames) — no binaries — matching the decision in
+plan/email-implementation-plan.md (Q2).
 """
 
 from __future__ import annotations
 
-from datetime import datetime
-from pathlib import Path
+import base64
+import logging
+from datetime import datetime, timezone
 from typing import Iterator, Optional
 
-# Import from system.soil
 from system.soil import Soil
-
-# Import EmailImporter base class from mbox-importer
 from mbox_importer.import_mbox import EmailImporter
+from mbox_importer.email_parser import (
+    decode_header_value,
+    normalize_message_id,
+    parse_addresses,
+    parse_references,
+    strip_angle_brackets,
+    validate_email_data,
+)
 
+from gmail_importer.gmail_api import (
+    GmailApiClient,
+    GmailApiError,
+    find_oldest_message_ids,
+)
 
-# ============================================================================
-# CONCRETE IMPORTERS
-# ============================================================================
+logger = logging.getLogger(__name__)
+
+_MAX_METADATA_HTML_BYTES = 10000  # same truncation as mbox importer
 
 
 class GmailImporter(EmailImporter):
-    """Incremental import from Gmail API (future implementation).
+    """Import emails from the Gmail API.
 
-    This is a stub for future Gmail API integration.
-    Will use HACM (Headless Agent Credential Manager) for OAuth tokens.
+    Uses HACM for OAuth credentials: a refresh token stored under
+    `google:{account_id}` and client credentials under `google:oauth-client`.
     """
 
-    def __init__(self, soil: Soil, account_id: str, batch_size: int = 50):
-        """Initialize Gmail importer.
-
-        Args:
-            soil: Soil database instance
-            account_id: Gmail account identifier (for HACM lookup)
-            batch_size: Batch size for API calls (default: 50)
-        """
+    def __init__(
+        self,
+        soil: Soil,
+        account_id: str,
+        hacm_path: str,
+        passphrase: Optional[str] = None,
+        batch_size: int = 50,
+    ):
         super().__init__(soil, batch_size)
         self.account_id = account_id
-        # TODO: Load refresh token from HACM
-        # TODO: Build Gmail service
-        # self.service = build_gmail_service(account_id)
+        self.hacm_path = hacm_path
+        self.passphrase = passphrase
+        self._limit: Optional[int] = None
+
+    # ------------------------------------------------------------------
+    # OAuth plumbing
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _load_oauth_client():
+        """Load GmailOAuthClient from the gmail-oauth source directory.
+
+        The gmail-oauth directory ships as `gmail-oauth/` (dash, not a valid
+        package name), so it is loaded by path rather than installed.
+        """
+        import importlib.util
+        import sys
+        from pathlib import Path
+
+        try:
+            import gmail_oauth  # type: ignore
+
+            return gmail_oauth.GmailOAuthClient
+        except ImportError:
+            pass
+
+        oauth_dir = Path(__file__).resolve().parents[3] / "gmail-oauth"
+        init_py = oauth_dir / "__init__.py"
+        if not init_py.exists():
+            raise ImportError(
+                f"gmail-oauth source not found at {oauth_dir}; expected it "
+                "next to providers/ in the repository root"
+            )
+        spec = importlib.util.spec_from_file_location(
+            "gmail_oauth", init_py, submodule_search_locations=[str(oauth_dir)]
+        )
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["gmail_oauth"] = module
+        spec.loader.exec_module(module)
+        return module.GmailOAuthClient
+
+    def _build_api_client(self) -> GmailApiClient:
+        """Refresh the access token via HACM-stored credentials."""
+        oauth_cls = self._load_oauth_client()
+        oauth = oauth_cls(self.hacm_path, passphrase=self.passphrase)
+        tokens = oauth.refresh_access_token(self.account_id)
+        return GmailApiClient(tokens["access_token"])
+
+    # ------------------------------------------------------------------
+    # Fetch + translate
+    # ------------------------------------------------------------------
 
     def fetch_emails(self, since: Optional[datetime] = None) -> Iterator[dict]:
-        """Fetch emails from Gmail API since last sync.
+        """Fetch the oldest emails from Gmail.
 
         Args:
-            since: Only fetch emails after this timestamp (for incremental sync)
+            since: Unused for the oldest-N strategy (kept for the
+                EmailImporter interface; date-range sync lands with the
+                background scheduler work).
 
         Yields:
-            Email dicts
-
-        Raises:
-            NotImplementedError: Not yet implemented
+            Email dicts in the same shape as mbox_message_to_email_item.
         """
-        raise NotImplementedError("Gmail sync not yet implemented")
+        api = self._build_api_client()
+        ids = find_oldest_message_ids(api, target=self._limit or 10, verbose=True)
+        # API returns newest-first; the oldest are at the tail.
+        oldest_ids = list(reversed(ids))
+        if self._limit:
+            oldest_ids = oldest_ids[: self._limit]
 
-    def translate_gmail_to_email(self, gmail_msg: dict) -> dict:
-        """Translate Gmail API response to Email item dict.
+        realized_at = datetime.now(timezone.utc).isoformat()
+        for message_id in oldest_ids:
+            try:
+                message = api.get_message(message_id)
+            except GmailApiError as e:
+                self.stats["errors"] += 1
+                logger.warning("Failed to fetch message %s: %s", message_id, e)
+                continue
+            email_dict = self.translate_gmail_to_email(
+                message, realized_at=realized_at
+            )
+            if email_dict:
+                yield email_dict
+            else:
+                self.stats["skipped"] += 1
 
-        Args:
-            gmail_msg: Gmail API message object
+    def import_oldest(self, limit: int = 10, verbose: bool = True) -> dict:
+        """Import the `limit` oldest messages (dedup + threading via base class)."""
+        self._limit = limit
+        try:
+            return self.import_all(verbose=verbose)
+        finally:
+            self._limit = None
 
-        Returns:
-            Email dict with _type, data, metadata
+    def translate_gmail_to_email(
+        self, gmail_msg: dict, realized_at: Optional[str] = None
+    ) -> Optional[dict]:
+        """Translate a Gmail API message resource to an Email item dict.
 
-        Raises:
-            NotImplementedError: Not yet implemented
+        Mirrors mbox_message_to_email_item: RFC 5322 fields into data,
+        Gmail-specific fields into metadata, attachments as metadata only.
+        Returns None for messages that cannot be deduplicated (no
+        Message-ID), matching the mbox importer.
         """
-        # TODO: Map Gmail API schema to RFC 5322 schema
-        # - GmailMessage.id -> rfc_message_id (with <>)
-        # - GmailMessage.payload.headers -> From, To, Subject, etc.
-        # - GmailMessage.threadId -> metadata.gmail_thread_id
-        # - GmailMessage.labelIds -> metadata.gmail_labels
-        raise NotImplementedError("Gmail translation not yet implemented")
+        if realized_at is None:
+            realized_at = datetime.now(timezone.utc).isoformat()
+
+        headers: dict[str, str] = {}
+        for header in gmail_msg.get("payload", {}).get("headers", []):
+            name = header["name"].lower()
+            if name not in headers:
+                headers[name] = header["value"]
+
+        raw_message_id = headers.get("message-id", "")
+        if not raw_message_id:
+            return None  # cannot deduplicate; same rule as mbox path
+        normalized_message_id = normalize_message_id(raw_message_id)
+
+        sent_at = self._internal_date_to_iso(gmail_msg.get("internalDate"))
+        if not sent_at:
+            from mbox_importer.email_parser import parse_date
+
+            sent_at = parse_date(headers.get("date", "")) or realized_at
+
+        plain_text, html_body, attachment_filenames = self._extract_bodies(
+            gmail_msg.get("payload", {})
+        )
+
+        if plain_text:
+            body = plain_text
+            content_type = "text/plain"
+        elif html_body:
+            body = html_body
+            content_type = "text/html"
+        else:
+            body = ""
+            content_type = "text/plain"
+
+        references = parse_references(headers["references"]) if headers.get("references") else None
+        in_reply_to = (
+            strip_angle_brackets(headers["in-reply-to"])
+            if headers.get("in-reply-to")
+            else None
+        )
+
+        metadata = {
+            "provider": "google",
+            "source": "gmail_api",
+            "gmail_message_id": gmail_msg.get("id"),
+        }
+        if gmail_msg.get("threadId"):
+            metadata["gmail_thread_id"] = gmail_msg["threadId"]
+        if gmail_msg.get("labelIds"):
+            metadata["gmail_labels"] = gmail_msg["labelIds"]
+        if html_body and content_type == "text/plain":
+            # Store HTML in metadata when plain text is the primary body
+            metadata["html_body"] = html_body[:_MAX_METADATA_HTML_BYTES]
+
+        data = {
+            "rfc_message_id": normalized_message_id,
+            "from_address": decode_header_value(headers.get("from", "")),
+            "to_addresses": parse_addresses(headers.get("to", "")),
+            "cc_addresses": parse_addresses(headers["cc"]) if headers.get("cc") else None,
+            "bcc_addresses": parse_addresses(headers["bcc"]) if headers.get("bcc") else None,
+            "sent_at": sent_at,
+            "received_at": None,
+            "references": references,
+            "in_reply_to": in_reply_to,
+            "title": decode_header_value(headers.get("subject", "")),
+            "description": body,
+            "content_type": content_type,
+            "has_attachments": bool(attachment_filenames),
+            "attachment_count": len(attachment_filenames),
+            "attachment_filenames": attachment_filenames,
+        }
+
+        try:
+            validate_email_data(data)
+        except ValueError as e:
+            logger.warning("Skipping invalid Gmail message %s: %s", gmail_msg.get("id"), e)
+            return None
+
+        return {
+            "_type": "Email",
+            "realized_at": realized_at,
+            "canonical_at": sent_at,
+            "fidelity": "full",
+            "data": data,
+            "metadata": metadata,
+        }
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _internal_date_to_iso(internal_date: Optional[str]) -> Optional[str]:
+        """Gmail internalDate (ms since epoch, string) -> ISO 8601 UTC."""
+        if not internal_date:
+            return None
+        try:
+            seconds = int(internal_date) / 1000
+        except (TypeError, ValueError):
+            return None
+        return datetime.fromtimestamp(seconds, tz=timezone.utc).isoformat()
+
+    @staticmethod
+    def _walk_parts(payload: dict) -> Iterator[dict]:
+        """Depth-first walk of a MIME payload tree."""
+        yield payload
+        for part in payload.get("parts", []) or []:
+            yield from GmailImporter._walk_parts(part)
+
+    @staticmethod
+    def _part_headers(part: dict) -> dict[str, str]:
+        return {
+            h["name"].lower(): h["value"] for h in part.get("headers", [])
+        }
+
+    def _extract_bodies(self, payload: dict) -> tuple[Optional[str], Optional[str], list[str]]:
+        """Extract (plain_text, html_body, attachment_filenames).
+
+        Attachment = part with a filename AND Content-Disposition: attachment,
+        mirroring the mbox importer's definition. Bodies are base64url
+        decoded; text parts without inline data (large messages) are skipped.
+        """
+        plain_text: Optional[str] = None
+        html_body: Optional[str] = None
+        attachment_filenames: list[str] = []
+
+        for part in self._walk_parts(payload):
+            part_headers = self._part_headers(part)
+            disposition = part_headers.get("content-disposition", "")
+            filename = part.get("filename") or ""
+
+            if filename and "attachment" in disposition.lower():
+                attachment_filenames.append(decode_header_value(filename))
+                continue
+            if filename:
+                # Inline files (Content-Disposition: inline) are not
+                # attachments per the mbox importer's definition.
+                continue
+
+            mime_type = part.get("mimeType", "")
+            if mime_type not in ("text/plain", "text/html"):
+                continue
+            body_data = part.get("body", {}).get("data")
+            if not body_data:
+                continue
+            try:
+                text = base64.urlsafe_b64decode(
+                    body_data + "=" * (-len(body_data) % 4)
+                ).decode("utf-8", errors="replace")
+            except Exception:
+                continue
+            if mime_type == "text/plain" and plain_text is None:
+                plain_text = text
+            elif mime_type == "text/html" and html_body is None:
+                html_body = text
+
+        return plain_text, html_body, attachment_filenames
