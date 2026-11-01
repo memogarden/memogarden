@@ -18,13 +18,11 @@ import argparse
 import base64
 import json
 import logging
-import re
 import secrets
 import sys
 from pathlib import Path
 
 DEFAULT_DATA_DIR = Path.home() / ".local/share/memogarden"
-REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -53,6 +51,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--limit", type=int, default=10, help="Number of oldest messages (default: 10)")
     parser.add_argument("--timeout", type=int, default=3600, help="auth-login callback wait seconds (default: 3600)")
+    parser.add_argument(
+        "--client-secrets",
+        default=None,
+        metavar="FILE",
+        help="auth-setup: JSON file with client_id/client_secret (flat or GCP download format)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="auth-setup: overwrite existing client credentials (prompt for values)",
+    )
     parser.add_argument("--quiet", action="store_true", help="Suppress progress output")
     return parser
 
@@ -76,8 +85,16 @@ def _read_passphrase(args) -> str:
 
 
 def cmd_auth_setup(args) -> int:
-    """Create HACM store (if needed) and seed google:oauth-client credentials."""
+    """Create HACM store (if needed) and seed google:oauth-client credentials.
+
+    Client credentials are NEVER taken from the repository: they come from
+    --client-secrets FILE (flat {"client_id", "client_secret"} JSON or a
+    Google Cloud Console download) or an interactive prompt, and are stored
+    only in the encrypted HACM store. This is also the rotation path — run
+    it again with a new secret after resetting it in Google Cloud Console.
+    """
     from datetime import datetime, timezone
+    from getpass import getpass
 
     from hacm import CredentialStore
     from hacm.core import Credential
@@ -94,26 +111,27 @@ def cmd_auth_setup(args) -> int:
     else:
         print(f"Using existing HACM passphrase: {passphrase_file}")
 
-    # Client credentials live in gmail-oauth/store_client.py (extracted by
-    # regex so the secret is not duplicated into this file).
-    store_client_src = (REPO_ROOT / "gmail-oauth" / "store_client.py").read_text()
-    client_id_match = re.search(r'CLIENT_ID\s*=\s*"([^"]+)"', store_client_src)
-    client_secret_match = re.search(r'CLIENT_SECRET\s*=\s*"([^"]+)"', store_client_src)
-    if not (client_id_match and client_secret_match):
-        sys.exit("Could not extract CLIENT_ID/CLIENT_SECRET from gmail-oauth/store_client.py")
+    store = CredentialStore(str(hacm_path), passphrase=passphrase_file.read_text().strip())
 
-    redirect_uris = re.search(r'"redirect_uris":\s*\[([^\]]*)\]', store_client_src)
-    uris = re.findall(r'"([^"]+)"', redirect_uris.group(1)) if redirect_uris else [
-        "http://localhost:8080/callback"
-    ]
+    existing = store.get("google:oauth-client")
+    if existing is not None and not args.client_secrets and not args.force:
+        print("OAuth client credentials already present in HACM (google:oauth-client).")
+        print("Nothing to do. To replace them (e.g. after rotating the secret in")
+        print("Google Cloud Console), pass --client-secrets FILE or --force to prompt.")
+        return 0
+
+    if args.client_secrets:
+        doc = json.loads(Path(args.client_secrets).read_text())
+        # Accept either a flat JSON or the GCP Console download shape.
+        blob = doc.get("installed") or doc.get("web") or doc
+        client_id = blob["client_id"]
+        client_secret = blob["client_secret"]
+    else:
+        client_id = input("OAuth client ID: ").strip()
+        client_secret = getpass("OAuth client secret: ")
 
     material = base64.b64encode(
-        json.dumps(
-            {
-                "client_id": client_id_match.group(1),
-                "client_secret": client_secret_match.group(1),
-            }
-        ).encode()
+        json.dumps({"client_id": client_id, "client_secret": client_secret}).encode()
     ).decode()
 
     now = datetime.now(timezone.utc)
@@ -124,18 +142,17 @@ def cmd_auth_setup(args) -> int:
         type="oauth_client",
         material=material,
         metadata={
-            "redirect_uris": uris,
+            "redirect_uris": ["http://localhost:8080/callback"],
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
         },
         created_at=now,
         updated_at=now,
     )
-    store = CredentialStore(str(hacm_path), passphrase=passphrase_file.read_text().strip())
     store.put("google:oauth-client", cred)
     print(f"OAuth client credentials stored: {hacm_path}")
-    print(f"  Client ID: {client_id_match.group(1)}")
-    print(f"  Redirect URIs: {uris}")
+    print(f"  Client ID: {client_id}")
+    print("  Secret is stored only in the encrypted HACM store.")
     return 0
 
 

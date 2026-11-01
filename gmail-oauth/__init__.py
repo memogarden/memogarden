@@ -68,7 +68,7 @@ class GmailOAuthClient:
             if not client_cred:
                 raise ValueError(
                     "OAuth client credentials not found in HACM. "
-                    "Add them using `hacm-credentials add-client` or via API."
+                    "Add them with: python -m gmail_importer.ingest auth-setup (see gmail-importer)."
                 )
 
             # Decode client credentials
