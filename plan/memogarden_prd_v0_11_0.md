@@ -37,6 +37,11 @@ MemoGarden uses a two-layer storage model:
 - Context mechanism: RFC-003
 - Deployment: RFC-004
 
+MemoGarden is client-server: a persistent server backend owns the databases
+and serves requests from clients (CLI tools, apps, agents, web UI). Clients
+access data through the server API rather than opening the database files
+directly — see [Process Model and Service Units](#process-model-and-service-units).
+
 ---
 
 ## Consistency Guarantees
@@ -540,6 +545,43 @@ User relations fossilize when time-horizon expires, transferring from Core to So
 
 ---
 
+## Process Model and Service Units
+
+MemoGarden is a client-server application. A persistent server backend
+process owns the databases (Soil and Core) and serves all requests; clients
+— command-line tools, apps, agents, and web UIs — talk to that backend over
+its API rather than opening the SQLite files directly. This is a product
+requirement, not an implementation detail: it is what allows multiple
+clients (human and agent) to work against one consistent timeline.
+
+Two systemd deployment modes must be supported for the server backend. They
+differ in unit scope, lifecycle, and path roots — the server code path and
+verb-based configuration (RFC-004) are shared.
+
+| Mode | Verb | Unit scope | Lifecycle | Data / config roots | Intended host |
+|------|------|------------|-----------|---------------------|---------------|
+| **Appliance** | `serve` | System unit (`/etc/systemd/system`), dedicated `memogarden` user | Starts at boot; runs headless indefinitely | `/var/lib/memogarden`, `/etc/memogarden` | Raspberry Pi / always-on server |
+| **User session** | `run` | User units (`~/.config/systemd/user/`), invoking user | Starts at login; shuts down at logout | `~/.local/share/memogarden`, `~/.config/memogarden` | Desktop / laptop daily driver |
+
+Requirements for **user-session mode**:
+
+- The server runs as a **user-mode systemd service**: no root privileges, no
+  dedicated system user, no `/opt` or `/var/lib` footprint.
+- Lifecycle follows the login session: started at login, shut down at
+  logout. The unit MUST NOT enable lingering by default — surviving logout
+  is the appliance mode's job. An operator may opt into lingering
+  (`loginctl enable-linger`) themselves if they want appliance-like
+  availability on a machine that also has user-session data.
+- Uses the same server entry point, health endpoint, and verb-based
+  configuration as appliance mode, resolved to user (XDG) paths per RFC-004.
+- Scheduled background work tied to the user session (e.g., scheduled email
+  ingestion) runs as **user timers** and therefore only fires while the user
+  is logged in, unless lingering is opted in as above.
+- The appliance mode is unchanged and remains the reference deployment for
+  headless, always-on hosts.
+
+---
+
 ## Configuration
 
 ```python
@@ -617,6 +659,7 @@ class EncryptionConfig:
 - Context capture mechanism
 
 **Planned:**
+- User-session systemd service units (login-scoped server; see Process Model and Service Units)
 - Android app for comprehensive data capture
 - Staging area architecture (external information processing)
 - Protective agents (toxic/sensitive content handling)
