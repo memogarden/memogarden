@@ -1,2 +1,5 @@
 node_modules/
 .wrangler/
+# The root repo ignores npm manifests globally; the site's must be tracked.
+!package.json
+!package-lock.json

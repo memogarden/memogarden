@@ -1,0 +1,7 @@
+{
+  "name": "memogarden-site",
+  "private": true,
+  "devDependencies": {
+    "wrangler": "4.156.1"
+  }
+}
