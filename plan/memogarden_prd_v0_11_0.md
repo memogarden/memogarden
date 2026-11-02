@@ -659,8 +659,12 @@ class EncryptionConfig:
 - Context capture mechanism
 
 **Planned:**
-- User-session systemd service units (login-scoped server; see Process Model and Service Units)
 - Android app for comprehensive data capture
+
+**Implemented (post-v0.11):**
+- User-session systemd service units (login-scoped server + optional hourly
+  ingestion timer; `scripts/install-user-service.sh`; see Process Model and
+  Service Units)
 - Staging area architecture (external information processing)
 - Protective agents (toxic/sensitive content handling)
 - Project Studio integration
