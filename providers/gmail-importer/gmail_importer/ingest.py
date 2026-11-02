@@ -294,16 +294,32 @@ def cmd_attachments(args) -> int:
     return 0 if stats.get("errors", 0) == 0 else 1
 
 
+def cmd_verify(args) -> int:
+    """Re-hash attachment files against their facts; report missing/mutated/orphaned.
+
+    Local-only: no Gmail account or network access needed.
+    """
+    from system.soil import Soil
+
+    from gmail_importer.verify import verify_attachments
+
+    soil = Soil(args.data_dir / "soil.db")
+    report = verify_attachments(soil, args.data_dir / "attachments")
+    print(report.summary())
+    return 0 if report.problems == 0 else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     parser.add_argument(
         "command",
         nargs="?",
         default="oldest",
-        choices=["oldest", "attachments", "auth-setup", "auth-login"],
+        choices=["oldest", "attachments", "verify", "auth-setup", "auth-login"],
         help=(
             "What to do (default: oldest). attachments = download binaries for "
-            "ingested emails into <data-dir>/attachments/ as Attachment facts"
+            "ingested emails into <data-dir>/attachments/ as Attachment facts; "
+            "verify = re-hash those files against the facts (mutation detection)"
         ),
     )
     args = parser.parse_args(argv)
@@ -312,6 +328,7 @@ def main(argv: list[str] | None = None) -> int:
         "auth-login": cmd_auth_login,
         "oldest": cmd_oldest,
         "attachments": cmd_attachments,
+        "verify": cmd_verify,
     }[args.command](args)
 
 
