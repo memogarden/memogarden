@@ -1,0 +1,18 @@
+// Memo Garden landing + privacy policy — assets-only Worker.
+// Deploy: CLOUDFLARE_API_TOKEN=<token> npx wrangler deploy
+// The custom_domain route registers the Worker on the zone and creates the
+// DNS record automatically (requires Zone/DNS Edit on ngjunsiang.me).
+{
+  "name": "memogarden-site",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./public",
+    "html_handling": "auto-trailing-slash"
+  },
+  "routes": [
+    {
+      "pattern": "memogarden.ngjunsiang.me",
+      "custom_domain": true
+    }
+  ]
+}

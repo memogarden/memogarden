@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — Memo Garden</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; max-width: 46rem;
+         margin: 4rem auto; padding: 0 1.5rem; line-height: 1.65; color: #1f2430; }
+  h1 { font-size: 1.7rem; }
+  h2 { font-size: 1.15rem; margin-top: 2rem; }
+  a { color: #2b6cb0; }
+  .meta { color: #5b6472; font-size: 0.9rem; }
+  .notice { background: #f3f6fa; border-left: 4px solid #2b6cb0; padding: 0.75rem 1rem;
+            margin: 1.5rem 0; }
+</style>
+</head>
+<body>
+<h1>Privacy Policy</h1>
+<p class="meta">Memo Garden v0 · Effective date: 2 November 2026 · Contact:
+<a href="mailto:ngjunsiang@gmail.com">ngjunsiang@gmail.com</a></p>
+
+<div class="notice">
+Memo Garden is a <strong>personal-use application</strong>. It is operated by a
+single individual (Ng Jun Siang, the owner of this website) for their own
+private use. There are no public accounts, no other users, and no sign-ups.
+This policy describes how the operator's own data is handled.
+</div>
+
+<h2>What the application is</h2>
+<p>Memo Garden is a personal memory system for financial transactions. It
+ingests email from the operator's own Gmail mailbox and stores it — together
+with extracted attachment metadata — in a private, local database as
+searchable, immutable records.</p>
+
+<h2>What data is accessed and collected</h2>
+<ul>
+  <li><strong>Google account identity:</strong> the email address of the
+  authorized Google account and an internal user identifier, obtained via
+  OAuth consent.</li>
+  <li><strong>Gmail data (read-only):</strong> message metadata, headers,
+  bodies, and attachment names/hashes from <em>the authorized account's own
+  mailbox</em>, read through the Gmail API with the read-only scope
+  (<code>gmail.readonly</code>). Attachments are recorded as metadata
+  (filename, size, content hash); binaries, where stored, are kept only in
+  the operator's private local store.</li>
+</ul>
+
+<h2>Where data is stored</h2>
+<p>All ingested data is stored <strong>locally on the operator's own
+machine</strong> (SQLite databases and a local file store). It is not
+uploaded to this website or to any cloud service operated by a third party.
+This website itself is a static page: it collects no data, sets no cookies,
+uses no analytics, and serves no trackers.</p>
+
+<h2>What we do not do</h2>
+<ul>
+  <li>We do not sell, rent, share, or transfer personal data to third
+  parties.</li>
+  <li>We do not show advertisements.</li>
+  <li>We do not collect data about any other person: the only mailbox read is
+  that of the operator, with the operator's own explicit consent.</li>
+  <li>We do not use Gmail data for advertising, model training, or any
+  purpose other than the personal record-keeping described above.</li>
+</ul>
+
+<h2>Gmail API — Limited Use disclosure</h2>
+<p>Memo Garden's use and transfer to any other app of information received
+from Google APIs will adhere to the
+<a href="https://developers.google.com/terms/api-services-user-data-policy">Google
+API Services User Data Policy</a>, including the Limited Use requirements.</p>
+
+<h2>Retention and deletion</h2>
+<p>Ingested data is retained locally for as long as the operator finds it
+useful, and is deleted when the operator deletes the local database or
+individual records. The operator can revoke the application's access to
+their Google account at any time via
+<a href="https://myaccount.google.com/permissions">Google Account — Third-party
+access</a>. Revoking access stops all future reads; locally stored data is
+under the operator's sole control and is not retrievable by anyone else.</p>
+
+<h2>Changes to this policy</h2>
+<p>If Memo Garden ever stops being a single-user, personal application, this
+policy will be updated before any new data practices take effect.</p>
+
+<p><a href="/">← Back to Memo Garden</a></p>
+</body>
+</html>
