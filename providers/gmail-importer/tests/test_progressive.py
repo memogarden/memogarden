@@ -115,14 +115,27 @@ class TestProgressiveIngestion:
         assert stats["imported"] == 0
         assert api.fetched == []  # exhausted: nothing fetched at all
 
-    def test_dedup_guards_nonprefix_done_set(self, importer, monkeypatch):
-        """Done set {b, c} is not a mailbox prefix; cursor counts 2, so the
-        [2:4] slice (c, d) overlaps an ingested message — dedup absorbs it."""
+    def test_nonprefix_done_set_selected_correctly(self, importer, monkeypatch):
+        """Done set {b, c} is not a mailbox prefix (e.g. mixed import
+        sources). Set-based selection picks the first two window ids NOT in
+        the done set — no count assumptions, no overlap, nothing skipped."""
         ingest_ids_directly(importer.soil, importer, ["b", "c"])
         imp, api, stats = run_next(importer.soil, monkeypatch, limit=2)
-        assert stats["imported"] == 1  # d
-        assert stats["skipped"] == 1   # c (already present)
-        assert soil_emails(importer.soil) == ["b", "c", "d"]
+        assert api.fetched == ["a", "d"]  # b, c excluded by the done set
+        assert stats["imported"] == 2
+        assert soil_emails(importer.soil) == ["a", "b", "c", "d"]
+
+    def test_skipped_message_retried_next_run(self, importer, monkeypatch):
+        """A message skipped for validation stays out of the done set and is
+        retried next run — self-healing after a validation change."""
+        # Simulate the no-subject mail: strip Subject so validate_email_data
+        # (relaxed) now accepts an empty title instead of skipping.
+        done_ids = ["a", "c"]  # pretend b was once skipped (e.g. old validator)
+        ingest_ids_directly(importer.soil, importer, ["a", "c"])
+        # note: 'b' was never ingested
+        imp, api, stats = run_next(importer.soil, monkeypatch, limit=3)
+        assert set(api.fetched) == {"b", "d", "e"}
+        assert stats["imported"] == 3
 
     def test_page_budget_scales_with_cursor(self):
         from gmail_importer.gmail_api import page_budget_for

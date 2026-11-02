@@ -168,3 +168,26 @@ class TestSoilRoundtrip:
         by_subject = {item.data["title"]: item for item in items}
         assert by_subject["Hello world"].data["attachment_filenames"] == ["invoice.pdf"]
         assert by_subject["Hello world"].metadata["gmail_thread_id"] == "18abc123"
+
+
+class TestRelaxedValidation:
+    def test_missing_subject_imports_with_empty_title(self, importer):
+        """Emails with no Subject header are valid — empty title, not skipped."""
+        msg = simple_message()
+        msg["payload"]["headers"] = [
+            h for h in msg["payload"]["headers"] if h["name"] != "Subject"
+        ]
+        result = importer.translate_gmail_to_email(msg)
+        assert result is not None
+        assert result["data"]["title"] == ""
+
+    def test_bodyless_attachment_only_imports(self, importer):
+        """Attachment-only emails (no body parts) import with empty body."""
+        msg = simple_message()
+        parts = msg["payload"]["parts"]
+        msg["payload"]["parts"] = [p for p in parts if p.get("filename")]
+        result = importer.translate_gmail_to_email(msg)
+        assert result is not None
+        assert result["data"]["description"] == ""
+        assert result["data"]["content_type"] == "text/plain"
+        assert result["data"]["has_attachments"] is True
