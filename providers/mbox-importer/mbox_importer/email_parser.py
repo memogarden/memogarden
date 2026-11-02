@@ -324,13 +324,16 @@ def validate_email_data(data: dict) -> None:
         'from_address',
         'to_addresses',
         'sent_at',
-        'title',        # Email subject
-        'description',  # Email body
     ]
 
     missing = [f for f in required_fields if not data.get(f)]
     if missing:
         raise ValueError(f"Missing required Email data fields: {missing}")
+
+    # title (subject) and description (body) are deliberately NOT required:
+    # real mailboxes contain empty-subject and body-less attachment-only
+    # emails, and soil facts are immutable, so over-strict validation would
+    # permanently exclude them.
 
 
 def validate_email_format(email_addr: str) -> bool:
