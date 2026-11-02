@@ -32,9 +32,14 @@ from gmail_importer.gmail_api import (
     GmailApiClient,
     GmailApiError,
     find_oldest_message_ids,
+    page_budget_for,
 )
+from gmail_importer.search_cache import SearchCache
 
 logger = logging.getLogger(__name__)
+
+# Hourly runs between 6-hourly cache refreshes that one search must cover.
+_SEARCH_HEADROOM_RUNS = 5
 
 _MAX_METADATA_HTML_BYTES = 10000  # same truncation as mbox importer
 
@@ -53,11 +58,16 @@ class GmailImporter(EmailImporter):
         hacm_path: str,
         passphrase: Optional[str] = None,
         batch_size: int = 50,
+        search_cache_path: Optional[str] = None,
     ):
         super().__init__(soil, batch_size)
         self.account_id = account_id
         self.hacm_path = hacm_path
         self.passphrase = passphrase
+        # Progressive mode only: path of the oldest-window search cache.
+        # Hourly runs serve slices from the cache and only rerun the full
+        # search every 6h (or when the cursor needs ids beyond it).
+        self.search_cache_path = search_cache_path
         self._limit: Optional[int] = None
 
     # ------------------------------------------------------------------
@@ -111,12 +121,11 @@ class GmailImporter(EmailImporter):
     def fetch_emails(
         self, since: Optional[datetime] = None, verbose: bool = True
     ) -> Iterator[dict]:
-        """Fetch the oldest emails from Gmail.
+        """Fetch emails from Gmail (oldest-N, or the progressive next batch).
 
         Args:
-            since: Unused for the oldest-N strategy (kept for the
-                EmailImporter interface; date-range sync lands with the
-                background scheduler work).
+            since: Unused (kept for the EmailImporter interface; date-range
+                sync lands with the background scheduler work).
             verbose: Print search progress.
 
         Yields:
@@ -124,18 +133,23 @@ class GmailImporter(EmailImporter):
         """
         api = self._build_api_client()
         # The base pipeline calls fetch_emails() with no args, so --quiet
-        # flows through instance state set by import_oldest().
+        # flows through instance state set by import_oldest()/import_next().
         verbose = getattr(self, "_verbose", verbose)
-        ids = find_oldest_message_ids(
-            api, target=self._limit or 10, verbose=verbose
-        )
-        # API returns newest-first; the oldest are at the tail.
-        oldest_ids = list(reversed(ids))
-        if self._limit:
-            oldest_ids = oldest_ids[: self._limit]
+
+        if getattr(self, "_progressive", False):
+            cursor = getattr(self, "_cursor_total", 0)
+            batch_ids, exhausted = self._next_batch_ids(api, cursor, self._limit or 100)
+            if exhausted:
+                self._log_progress(verbose, cursor)
+                return
+        else:
+            ids = find_oldest_message_ids(
+                api, target=self._limit or 10, verbose=verbose
+            )
+            batch_ids = list(reversed(ids))[: self._limit]
 
         realized_at = datetime.now(timezone.utc).isoformat()
-        for message_id in oldest_ids:
+        for message_id in batch_ids:
             try:
                 message = api.get_message(message_id)
             except GmailApiError as e:
@@ -150,6 +164,59 @@ class GmailImporter(EmailImporter):
             else:
                 self.stats["skipped"] += 1
 
+    def _log_progress(self, verbose: bool, cursor: int) -> None:
+        if verbose:
+            print(
+                f"[gmail search] cursor at {cursor}: mailbox window fully "
+                "ingested — nothing further to fetch"
+            )
+
+    def _next_batch_ids(
+        self, api: GmailApiClient, cursor: int, limit: int
+    ) -> tuple[list[str], bool]:
+        """Ids of the `limit` oldest NOT-yet-ingested messages, oldest-first.
+
+        The cursor is the number of Email facts already ingested; because
+        ingestion always proceeds oldest-first and contiguously, the done
+        set is exactly the oldest `cursor` messages, so the next batch is
+        the slice [cursor : cursor + limit] of the full oldest-first list.
+        The dedup index still guards against any overlap.
+
+        Serves from the search cache when fresh and long enough (see
+        search_cache.py); otherwise runs the full search and restores it.
+
+        Returns (batch_ids, exhausted) — exhausted=True when the window
+        holds no messages past the cursor.
+        """
+        cache = (
+            SearchCache(self.search_cache_path) if self.search_cache_path else None
+        )
+        min_length = cursor + limit
+        if cache is not None:
+            cached = cache.load_valid(min_length=min_length)
+            if cached is not None:
+                if cursor >= len(cached):
+                    return [], True
+                return cached[cursor : cursor + limit], False
+
+        # Overprovision the searched window by ~5 runs so the cache keeps
+        # serving hourly batches until the next 6-hourly refresh — searching
+        # exactly cursor+limit would make every subsequent run miss by one
+        # batch. Extra enumeration cost is at most a page or two.
+        target = min_length + limit * _SEARCH_HEADROOM_RUNS
+        ids = find_oldest_message_ids(
+            api,
+            target=target,
+            verbose=getattr(self, "_log_verbose", False),
+            page_budget=page_budget_for(cursor, target - cursor),
+        )
+        oldest_first = list(reversed(ids))
+        if cache is not None:
+            cache.store(oldest_first)
+        if cursor >= len(oldest_first):
+            return [], True
+        return oldest_first[cursor : cursor + limit], False
+
     def import_oldest(self, limit: int = 10, verbose: bool = True) -> dict:
         """Import the `limit` oldest messages (dedup + threading via base class).
 
@@ -158,9 +225,34 @@ class GmailImporter(EmailImporter):
         """
         self._limit = limit
         self._verbose = verbose
+        self._log_verbose = verbose
         try:
             return self.import_all(verbose=verbose)
         finally:
+            self._limit = None
+
+    def import_next(self, limit: int = 100, verbose: bool = True) -> dict:
+        """Progressive ingestion: import the next `limit` oldest messages
+        that are not yet in Soil.
+
+        The cursor is the current Email fact count — ingestion proceeds
+        oldest-first, so each run advances the frontier by up to `limit`
+        and never re-fetches ingested messages. Returns the import stats
+        (as with import_oldest, counters are cumulative per instance).
+        """
+        self._limit = limit
+        self._verbose = verbose
+        self._log_verbose = verbose
+        self._progressive = True
+        try:
+            with self.soil:
+                self._cursor_total = len(
+                    self.soil.list_items(_type="Email", limit=1_000_000)
+                )
+            return self.import_all(verbose=verbose)
+        finally:
+            self._progressive = False
+            self._cursor_total = None
             self._limit = None
 
     def translate_gmail_to_email(

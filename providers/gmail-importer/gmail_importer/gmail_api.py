@@ -122,10 +122,21 @@ def _is_enumerable(api: GmailApiClient, query: Optional[str], max_pages: int = _
     return False
 
 
+def page_budget_for(cursor: int, limit: int) -> int:
+    """List-page budget needed so enumeration reaches cursor + limit.
+
+    Progressive ingestion raises its budget as the cursor advances; the
+    ceiling (40 pages = 20,000 messages) is the point where this oldest-N
+    strategy stops and historyId-based incremental sync must take over.
+    """
+    return min(40, max(_ENUM_PAGES, -(-(cursor + limit) // _LIST_PAGE_SIZE) + 2))
+
+
 def find_oldest_message_ids(
     api: GmailApiClient,
     target: int = 10,
     verbose: bool = False,
+    page_budget: int = _ENUM_PAGES,
 ) -> list[str]:
     """Find the ids of the `target` oldest messages in the mailbox.
 
@@ -133,6 +144,10 @@ def find_oldest_message_ids(
     prefix that is ACTUALLY enumerable, binary search it to day granularity,
     then fully enumerate it. The oldest `target` messages are the head of
     that window in reverse order.
+
+    page_budget bounds how deep enumeration may reach (in 500-message list
+    pages). Progressive ingestion raises it as its cursor advances so the
+    enumerable window always covers cursor + batch.
 
     Returns ids newest-first as the API yields them; callers reverse and
     slice to get the oldest `target`.
@@ -145,9 +160,9 @@ def find_oldest_message_ids(
     now_ms = int(time.time() * 1000)
 
     # Whole mailbox enumerable? Then no search is needed at all.
-    if _is_enumerable(api, None):
+    if _is_enumerable(api, None, page_budget):
         log("whole mailbox within enumeration budget")
-        return api.iter_message_ids(None)
+        return api.iter_message_ids(None, page_budget)
 
     # Gallop upward from launch: `lo` stays a known-enumerable prefix,
     # `hi` is the first prefix found NOT enumerable.
@@ -156,7 +171,7 @@ def find_oldest_message_ids(
     hi_ms = now_ms
     probe_ms = launch_ms + step_ms
     while probe_ms < now_ms:
-        if _is_enumerable(api, _date_query(probe_ms)):
+        if _is_enumerable(api, _date_query(probe_ms), page_budget):
             lo_ms = probe_ms
             step_ms *= 2
             probe_ms = min(now_ms, probe_ms + step_ms)
@@ -167,7 +182,7 @@ def find_oldest_message_ids(
     # Binary search the good/bad bracket to day granularity.
     while hi_ms - lo_ms > _DAY_MS:
         mid_ms = (lo_ms + hi_ms) // 2
-        if _is_enumerable(api, _date_query(mid_ms)):
+        if _is_enumerable(api, _date_query(mid_ms), page_budget):
             lo_ms = mid_ms
         else:
             hi_ms = mid_ms
@@ -178,7 +193,7 @@ def find_oldest_message_ids(
     # would fail enumeration — not a real-world case for a personal mailbox).
     ids: list[str] = []
     for _ in range(4):
-        ids = api.iter_message_ids(_date_query(lo_ms))
+        ids = api.iter_message_ids(_date_query(lo_ms), page_budget)
         log(f"window {_date_query(lo_ms)}: {len(ids)} messages")
         if len(ids) >= target or lo_ms <= launch_ms:
             return ids

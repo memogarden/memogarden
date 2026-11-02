@@ -243,9 +243,20 @@ def cmd_oldest(args) -> int:
             account_id=args.account,
             hacm_path=str(hacm_path),
             passphrase=passphrase,
+            # Progressive runs cache the oldest-window search (6h TTL):
+            # hourly passes slice the cached ids and only rerun the full
+            # search every 6h or when the cursor outgrows the cache.
+            search_cache_path=(
+                str(args.data_dir / "gmail-search-cache.json")
+                if args.progressive
+                else None
+            ),
         )
     try:
-        stats = importer.import_oldest(limit=args.limit, verbose=not args.quiet)
+        if args.progressive:
+            stats = importer.import_next(limit=args.limit, verbose=not args.quiet)
+        else:
+            stats = importer.import_oldest(limit=args.limit, verbose=not args.quiet)
     except GmailApiError as e:
         print(f"Ingestion failed: {e}", file=sys.stderr)
         return 1
@@ -312,17 +323,27 @@ def cmd_verify(args) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     parser.add_argument(
+        "--progressive",
+        action="store_true",
+        help="oldest: use progressive cursor mode (same as the next command)",
+    )
+    parser.add_argument(
         "command",
         nargs="?",
         default="oldest",
-        choices=["oldest", "attachments", "verify", "auth-setup", "auth-login"],
+        choices=["oldest", "next", "attachments", "verify", "auth-setup", "auth-login"],
         help=(
-            "What to do (default: oldest). attachments = download binaries for "
-            "ingested emails into <data-dir>/attachments/ as Attachment facts; "
-            "verify = re-hash those files against the facts (mutation detection)"
+            "What to do (default: oldest). oldest = fixed oldest-N window; "
+            "next = progressive (ingest the next N oldest not yet in Soil); "
+            "attachments = download binaries for ingested emails into "
+            "<data-dir>/attachments/; verify = re-hash those files against "
+            "the facts (mutation detection)"
         ),
     )
     args = parser.parse_args(argv)
+    if args.command == "next":
+        args.progressive = True
+        args.command = "oldest"
     return {
         "auth-setup": cmd_auth_setup,
         "auth-login": cmd_auth_login,

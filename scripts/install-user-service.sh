@@ -88,15 +88,16 @@ UNIT
 
     if [ "$WITH_INGEST_TIMER" = 1 ]; then
         cat > "$UNIT_DIR/memogarden-ingest.service" <<UNIT
-# MemoGarden scheduled email ingestion (oldest-N dedup pass + attachments).
-# Idempotent; re-runs skip everything already ingested.
+# MemoGarden scheduled email ingestion: progressive next-N batch (tracks a
+# cursor over the oldest-first window; re-runs skip ingested mail) plus
+# attachment extraction. Serves from the search cache (refreshed 6-hourly).
 [Unit]
 Description=MemoGarden scheduled email ingestion
 
 [Service]
 Type=oneshot
 WorkingDirectory=$DATA_DIR
-ExecStart=$INGEST_VENV/bin/python -m gmail_importer.ingest --account $INGEST_ACCOUNT oldest --limit $INGEST_LIMIT --quiet
+ExecStart=$INGEST_VENV/bin/python -m gmail_importer.ingest --account $INGEST_ACCOUNT next --limit $INGEST_LIMIT --quiet
 ExecStart=$INGEST_VENV/bin/python -m gmail_importer.ingest --account $INGEST_ACCOUNT attachments --quiet
 UNIT
 
