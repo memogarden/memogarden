@@ -65,6 +65,17 @@ Email facts are not modified. NB: Gmail attachment ids are per-fetch
 handles and change between fetches — idempotency is keyed on
 `(email, filename)`, so re-runs skip what is already extracted.
 
+## Integrity verification
+
+```bash
+poetry run python -m gmail_importer.ingest verify
+```
+
+Re-hashes every attachment file against its fact's `sha256` and reports
+missing files, mutated content, and orphaned files no fact claims.
+Read-only, local-only (no Gmail auth), exits non-zero on any problem —
+suitable as a cron gate.
+
 ## Implementation Status
 
 - [x] EmailImporter pipeline reuse (dedup, threading, batching)
