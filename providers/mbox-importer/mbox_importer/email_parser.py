@@ -322,9 +322,12 @@ def validate_email_data(data: dict) -> None:
     required_fields = [
         'rfc_message_id',
         'from_address',
-        'to_addresses',
         'sent_at',
     ]
+    # to_addresses is deliberately NOT required either: Bcc-only sent mail
+    # and some list mail carry no To header. Combined with the subject/body
+    # relaxation this completes the ingestion policy: all mail except
+    # trash and spam.
 
     missing = [f for f in required_fields if not data.get(f)]
     if missing:

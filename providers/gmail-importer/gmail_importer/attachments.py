@@ -96,6 +96,7 @@ class AttachmentExtractor:
         self.verbose = verbose
         self.stats = {
             "emails_scanned": 0,
+            "emails_covered": 0,
             "attachments_found": 0,
             "downloaded": 0,
             "skipped_existing": 0,
@@ -136,6 +137,17 @@ class AttachmentExtractor:
 
             for email in emails:
                 self.stats["emails_scanned"] += 1
+                # Coverage skip: if every filename the email fact declares is
+                # already extracted, refetching the message is pointless —
+                # its attachment set cannot have grown (mail is immutable).
+                # This keeps the pass O(new mail) instead of O(all mail with
+                # attachments) as the mailbox grows.
+                declared = email.data.get("attachment_filenames") or []
+                if declared and all(
+                    (email.uuid, fn) in existing for fn in declared
+                ):
+                    self.stats["emails_covered"] += 1
+                    continue
                 try:
                     message = api.get_message(email.metadata["gmail_message_id"])
                 except Exception as e:

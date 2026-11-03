@@ -299,6 +299,7 @@ def cmd_attachments(args) -> int:
     verb = "would download" if args.dry_run else "downloaded"
     print(
         f"Attachments: {stats['emails_scanned']} emails scanned, "
+        f"{stats.get('emails_covered', 0)} already covered, "
         f"{stats['attachments_found']} found, {stats['downloaded']} {verb}, "
         f"{stats['skipped_existing']} already present, {stats['errors']} errors"
     )

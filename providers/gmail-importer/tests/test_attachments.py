@@ -114,9 +114,12 @@ class TestAttachmentExtractor:
         AttachmentExtractor(importer.soil, store, lambda: FakeAttachmentApi(), verbose=False).extract_all()
         api2 = FakeAttachmentApi()
         stats2 = AttachmentExtractor(importer.soil, store, lambda: api2, verbose=False).extract_all()
-        assert stats2["skipped_existing"] == 1
+        assert stats2["emails_covered"] == 1  # email skipped without refetch
+        assert stats2["skipped_existing"] == 0
         assert stats2["downloaded"] == 0
-        assert api2.fetched_attachments == []  # no binary re-downloaded
+        # coverage skip: zero API calls at all on the rerun
+        assert api2.fetched_messages == []
+        assert api2.fetched_attachments == []
         with importer.soil:
             assert len(importer.soil.list_items(_type="Attachment", limit=10)) == 1
 
@@ -137,9 +140,31 @@ class TestAttachmentExtractor:
                 return msg
 
         AttachmentExtractor(importer.soil, store, lambda: ChurningApi(), verbose=False).extract_all()
-        stats2 = AttachmentExtractor(importer.soil, store, lambda: ChurningApi(), verbose=False).extract_all()
-        assert stats2["skipped_existing"] == 1
+        api2 = ChurningApi()
+        stats2 = AttachmentExtractor(importer.soil, store, lambda: api2, verbose=False).extract_all()
+        assert stats2["emails_covered"] == 1
         assert stats2["downloaded"] == 0
+        assert api2.fetched_messages == []
+        with importer.soil:
+            assert len(importer.soil.list_items(_type="Attachment", limit=10)) == 1
+
+    def test_partial_coverage_refetches_only_missing(self, importer_with_email, store):
+        """If one attachment fact is missing (e.g. a past failure), the email
+        is refetched and only the missing instance is downloaded."""
+        importer, _ = importer_with_email
+        AttachmentExtractor(importer.soil, store, lambda: FakeAttachmentApi(), verbose=False).extract_all()
+        # drop one extracted fact to simulate a past failure
+        with importer.soil:
+            facts = importer.soil.list_items(_type="Attachment", limit=10)
+            conn = importer.soil._get_connection()
+            conn.execute("DELETE FROM system_relation WHERE source = ?", (facts[0].uuid,))
+            conn.execute("DELETE FROM item WHERE uuid = ?", (facts[0].uuid,))
+
+        api2 = FakeAttachmentApi()
+        stats2 = AttachmentExtractor(importer.soil, store, lambda: api2, verbose=False).extract_all()
+        assert stats2["emails_covered"] == 0      # not fully covered anymore
+        assert stats2["downloaded"] == 1          # refilled the gap
+        assert stats2["skipped_existing"] == 0    # duplicate excluded by done set
         with importer.soil:
             assert len(importer.soil.list_items(_type="Attachment", limit=10)) == 1
 

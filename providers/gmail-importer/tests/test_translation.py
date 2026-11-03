@@ -191,3 +191,36 @@ class TestRelaxedValidation:
         assert result["data"]["description"] == ""
         assert result["data"]["content_type"] == "text/plain"
         assert result["data"]["has_attachments"] is True
+
+
+class TestRelaxedValidation:
+    def test_missing_subject_imports_with_empty_title(self, importer):
+        """Emails with no Subject header are valid — empty title, not skipped."""
+        msg = simple_message()
+        msg["payload"]["headers"] = [
+            h for h in msg["payload"]["headers"] if h["name"] != "Subject"
+        ]
+        result = importer.translate_gmail_to_email(msg)
+        assert result is not None
+        assert result["data"]["title"] == ""
+
+    def test_missing_to_imports(self, importer):
+        """Bcc-only sent mail carries no To header — still ingested."""
+        msg = simple_message()
+        msg["payload"]["headers"] = [
+            h for h in msg["payload"]["headers"] if h["name"] != "To"
+        ]
+        result = importer.translate_gmail_to_email(msg)
+        assert result is not None
+        assert result["data"]["to_addresses"] == []
+
+    def test_bodyless_attachment_only_imports(self, importer):
+        """Attachment-only emails (no body parts) import with empty body."""
+        msg = simple_message()
+        parts = msg["payload"]["parts"]
+        msg["payload"]["parts"] = [p for p in parts if p.get("filename")]
+        result = importer.translate_gmail_to_email(msg)
+        assert result is not None
+        assert result["data"]["description"] == ""
+        assert result["data"]["content_type"] == "text/plain"
+        assert result["data"]["has_attachments"] is True
