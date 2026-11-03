@@ -9,6 +9,12 @@ messages ≈ 23 hours at 500/hour, or sooner if the machine logs out).
 historyId-based incremental sync is the mechanism that closes that gap: it
 delivers new mail within the hour at a cost of ~1 API call per run.
 
+**Ingestion policy (user-stated, applies to every pass):** we ingest all
+mail except mail currently in TRASH or SPAM. The backfill already satisfies
+this (Gmail's default list scope excludes both); rescue events (spam →
+inbox) are handled as described below so rescued mail arrives hourly rather
+than waiting for the backfill.
+
 ## How Gmail historyId works
 
 1. Every Gmail account has a monotonically increasing `historyId`. It appears
@@ -35,16 +41,23 @@ between `next` and `attachments`):
    its historyId → done (1 API call). Seeding before any backfill means new
    mail starts flowing immediately while the backfill marches the old end.
 2. If stored historyId exists → `history.list(startHistoryId=stored)`:
-   - Collect message ids from `messagesAdded` records only; ignore
-     label-only records (`labelsAdded`/`labelsDeleted` fire on every read/
-     archive toggle and are noise for our purposes).
-   - Drop messages whose labels include `TRASH`/`SPAM` (matches the
-     oldest-N window's semantics, which exclude them by default).
-   - Filter through the done set (gmail_message_ids already in Soil) — the
-     same set-based selection as the backfill, so dedup is unified.
-   - Fetch + translate + import the remainder (dedicated batch cap — new
-     mail per hour is typically single-digit; the 500 batch cap is for
-     backfill throughput, not this pass).
+   - Collect candidate message ids from `messagesAdded` records **and from
+     `labelsRemoved` records** — the latter covers rescue events (a message
+     moved out of SPAM/TRASH into INBOX), which must be ingested under the
+     all-mail-except-trash-and-spam policy. Pure `labelsAdded` records
+     (archive/read toggles) are noise and ignored.
+   - Deduplicate candidates and filter through the done set
+     (gmail_message_ids already in Soil) — the same set-based selection as
+     the backfill, so dedup is unified.
+   - Fetch each candidate with `get_message` and filter on its **current**
+     labels: skip if TRASH or SPAM is present at fetch time (the record may
+     be stale — a message spammed and rescued within the same window is
+     ingestible). This makes the fetch-time label check the single source
+     of truth for the policy, regardless of which history record surfaced
+     the candidate.
+   - Import the remainder (dedicated batch cap — new mail per hour is
+     typically single-digit; the 500 batch cap is for backfill throughput,
+     not this pass).
 3. On success → store the new historyId (from the history response or
    profile). On **404** (history expired) → log, run the progressive
    oldest-N pass as the resync mechanism, and store a fresh historyId from
