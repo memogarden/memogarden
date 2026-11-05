@@ -88,21 +88,21 @@ UNIT
 
     if [ "$WITH_INGEST_TIMER" = 1 ]; then
         cat > "$UNIT_DIR/memogarden-ingest.service" <<UNIT
-# MemoGarden scheduled email ingestion, three idempotent passes:
-#   next        progressive backfill of the oldest-first window (tracks a
-#               cursor; becomes a no-op once the window is fully ingested —
-#               the switchover point to...)
+# MemoGarden scheduled email ingestion, two idempotent passes:
 #   incremental historyId sync of NEW mail since the stored historyId
 #               (seeds on first run; delivers new mail hourly)
 #   attachments binary extraction for everything newly ingested.
-# Serves from the search cache (refreshed 6-hourly).
+# The progressive backfill (`ingest next`) was retired from the hourly job
+# on 2026-11-05 once it fully ingested the mailbox; it remains the MANUAL
+# recovery path if the incremental sync state is ever lost or ingestion is
+# dark for >30 days (history expiry). Serves from the search cache
+# (refreshed 6-hourly).
 [Unit]
 Description=MemoGarden scheduled email ingestion
 
 [Service]
 Type=oneshot
 WorkingDirectory=$DATA_DIR
-ExecStart=$INGEST_VENV/bin/python -m gmail_importer.ingest --account $INGEST_ACCOUNT next --limit $INGEST_LIMIT --quiet
 ExecStart=$INGEST_VENV/bin/python -m gmail_importer.ingest --account $INGEST_ACCOUNT incremental --limit $INGEST_LIMIT --quiet
 ExecStart=$INGEST_VENV/bin/python -m gmail_importer.ingest --account $INGEST_ACCOUNT attachments --quiet
 UNIT
