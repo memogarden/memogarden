@@ -96,7 +96,7 @@ UNIT
 # MemoGarden scheduled email ingestion, two passes:
 #   heartbeat   POST /api/v1/providers/run — the server runs every due
 #               registered provider in-process (gmail = historyId sync of
-#               NEW mail; the retired progressive backfill `ingest next`
+#               NEW mail; the retired progressive backfill "ingest next"
 #               remains the MANUAL recovery path for lost sync state or
 #               >30-day outages)
 #   attachments binary extraction for everything newly ingested (still a
@@ -109,7 +109,7 @@ Type=oneshot
 WorkingDirectory=$DATA_DIR
 Environment=MEMOGARDEN_DATA_DIR=$DATA_DIR
 EnvironmentFile=$REPO_ROOT/.env
-ExecStart=/usr/bin/curl -sf -X POST -H "X-API-Key: $MEMOGARDEN_API_KEY" -H "Content-Type: application/json" http://127.0.0.1:8600/api/v1/providers/run
+ExecStart=/usr/bin/curl -sf -X POST -H "X-API-Key: \${MEMOGARDEN_API_KEY}" -H "Content-Type: application/json" http://127.0.0.1:8600/api/v1/providers/run
 ExecStart=$INGEST_VENV/bin/python -m gmail_importer.ingest --account $INGEST_ACCOUNT attachments --quiet
 UNIT
 
