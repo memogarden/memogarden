@@ -217,9 +217,67 @@ def _auth_url(client, redirect_uri: str) -> tuple[str, str]:
     return f"{GOOGLE_AUTH_URI}?{urllib.parse.urlencode(params)}", state
 
 
+def _make_importer(args, sync_cache=False):
+    """Shared construction for the ingestion commands."""
+    from system.soil import Soil
+
+    from gmail_importer.importer import GmailImporter
+
+    hacm_path = args.hacm or (args.data_dir / "hacm/credentials.enc")
+    passphrase_file = args.passphrase_file or (hacm_path.parent / "passphrase")
+    passphrase = (
+        passphrase_file.read_text().strip() if passphrase_file.exists() else None
+    )
+
+    soil = Soil(args.data_dir / "soil.db")
+    with soil:
+        # Context covers construction: the base class builds a dedup index.
+        soil.init_schema()  # idempotent; mirrors initialize_system in system.core
+        importer = GmailImporter(
+            soil=soil,
+            account_id=args.account,
+            hacm_path=str(hacm_path),
+            passphrase=passphrase,
+            search_cache_path=(
+                str(args.data_dir / "gmail-search-cache.json") if sync_cache else None
+            ),
+        )
+    return importer, hacm_path, passphrase_file, passphrase
+
+
 def cmd_oldest(args) -> int:
     if not args.account:
         sys.exit("--account is required for oldest")
+    from system.soil import Soil
+
+    from gmail_importer.gmail_api import GmailApiError
+    from gmail_importer.importer import GmailImporter
+
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
+
+    importer, hacm_path, passphrase_file, passphrase = _make_importer(
+        args, sync_cache=args.progressive
+    )
+    try:
+        if args.progressive:
+            stats = importer.import_next(limit=args.limit, verbose=not args.quiet)
+        else:
+            stats = importer.import_oldest(limit=args.limit, verbose=not args.quiet)
+    except GmailApiError as e:
+        print(f"Ingestion failed: {e}", file=sys.stderr)
+        return 1
+    return 0 if stats.get("errors", 0) == 0 else 1
+
+
+def cmd_next(args) -> int:
+    args.progressive = True
+    return cmd_oldest(args)
+
+
+def cmd_incremental(args) -> int:
+    """historyId sync of NEW mail since the stored historyId (seeds on first run)."""
+    if not args.account:
+        sys.exit("--account is required for incremental")
     from system.soil import Soil
 
     from gmail_importer.gmail_api import GmailApiError
@@ -235,31 +293,25 @@ def cmd_oldest(args) -> int:
 
     soil = Soil(args.data_dir / "soil.db")
     with soil:
-        # Context covers construction: the base class builds a dedup index.
-        # import_oldest re-enters the context itself.
-        soil.init_schema()  # idempotent; mirrors initialize_system in system.core
+        soil.init_schema()
         importer = GmailImporter(
             soil=soil,
             account_id=args.account,
             hacm_path=str(hacm_path),
             passphrase=passphrase,
-            # Progressive runs cache the oldest-window search (6h TTL):
-            # hourly passes slice the cached ids and only rerun the full
-            # search every 6h or when the cursor outgrows the cache.
-            search_cache_path=(
-                str(args.data_dir / "gmail-search-cache.json")
-                if args.progressive
-                else None
-            ),
+            sync_state_path=str(args.data_dir / "gmail-sync-state.json"),
         )
     try:
-        if args.progressive:
-            stats = importer.import_next(limit=args.limit, verbose=not args.quiet)
-        else:
-            stats = importer.import_oldest(limit=args.limit, verbose=not args.quiet)
+        stats = importer.import_incremental(limit=args.limit, verbose=not args.quiet)
     except GmailApiError as e:
-        print(f"Ingestion failed: {e}", file=sys.stderr)
+        print(f"Incremental sync failed: {e}", file=sys.stderr)
         return 1
+    if not args.quiet:
+        print(
+            f"Incremental: processed {stats.get('processed', 0)}, "
+            f"imported {stats.get('imported', 0)}, skipped {stats.get('skipped', 0)}, "
+            f"errors {stats.get('errors', 0)}"
+        )
     return 0 if stats.get("errors", 0) == 0 else 1
 
 
@@ -332,13 +384,14 @@ def main(argv: list[str] | None = None) -> int:
         "command",
         nargs="?",
         default="oldest",
-        choices=["oldest", "next", "attachments", "verify", "auth-setup", "auth-login"],
+        choices=["oldest", "next", "incremental", "attachments", "verify", "auth-setup", "auth-login"],
         help=(
             "What to do (default: oldest). oldest = fixed oldest-N window; "
             "next = progressive (ingest the next N oldest not yet in Soil); "
-            "attachments = download binaries for ingested emails into "
-            "<data-dir>/attachments/; verify = re-hash those files against "
-            "the facts (mutation detection)"
+            "incremental = historyId sync of NEW mail since the stored "
+            "historyId; attachments = download binaries for ingested emails "
+            "into <data-dir>/attachments/; verify = re-hash those files "
+            "against the facts (mutation detection)"
         ),
     )
     args = parser.parse_args(argv)
@@ -349,6 +402,8 @@ def main(argv: list[str] | None = None) -> int:
         "auth-setup": cmd_auth_setup,
         "auth-login": cmd_auth_login,
         "oldest": cmd_oldest,
+        "next": cmd_next,
+        "incremental": cmd_incremental,
         "attachments": cmd_attachments,
         "verify": cmd_verify,
     }[args.command](args)

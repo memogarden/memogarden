@@ -13,8 +13,10 @@ plan/email-implementation-plan.md (Q2).
 from __future__ import annotations
 
 import base64
+import json
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Iterator, Optional
 
 from system.soil import Soil
@@ -59,6 +61,7 @@ class GmailImporter(EmailImporter):
         passphrase: Optional[str] = None,
         batch_size: int = 50,
         search_cache_path: Optional[str] = None,
+        sync_state_path: Optional[str] = None,
     ):
         super().__init__(soil, batch_size)
         self.account_id = account_id
@@ -68,6 +71,9 @@ class GmailImporter(EmailImporter):
         # Hourly runs serve slices from the cache and only rerun the full
         # search every 6h (or when the cursor needs ids beyond it).
         self.search_cache_path = search_cache_path
+        # Incremental mode only: path of the historyId sync state
+        # (plan/gmail-incremental-sync-design.md).
+        self.sync_state_path = sync_state_path
         self._limit: Optional[int] = None
 
     # ------------------------------------------------------------------
@@ -142,6 +148,13 @@ class GmailImporter(EmailImporter):
             if exhausted:
                 self._log_progress(verbose, len(done))
                 return
+        elif getattr(self, "_incremental", False):
+            done = getattr(self, "_ingested_ids", set())
+            batch_ids = self._incremental_batch_ids(api, done, self._limit or 500)
+            if not batch_ids:
+                if verbose:
+                    print("[incremental] no new mail since stored historyId")
+                return
         else:
             ids = find_oldest_message_ids(
                 api, target=self._limit or 10, verbose=verbose
@@ -149,12 +162,22 @@ class GmailImporter(EmailImporter):
             batch_ids = list(reversed(ids))[: self._limit]
 
         realized_at = datetime.now(timezone.utc).isoformat()
+        label_filter = getattr(self, "_label_filter", False)
         for message_id in batch_ids:
             try:
                 message = api.get_message(message_id)
             except GmailApiError as e:
                 self.stats["errors"] += 1
                 logger.warning("Failed to fetch message %s: %s", message_id, e)
+                continue
+            if label_filter and (
+                "TRASH" in (message.get("labelIds") or [])
+                or "SPAM" in (message.get("labelIds") or [])
+            ):
+                # Ingestion policy: all mail except what is currently in
+                # TRASH or SPAM — evaluated at fetch time (history records
+                # may be stale, e.g. spammed-then-rescued within a window).
+                self.stats["skipped"] += 1
                 continue
             email_dict = self.translate_gmail_to_email(
                 message, realized_at=realized_at
@@ -216,6 +239,100 @@ class GmailImporter(EmailImporter):
         remaining = [i for i in oldest_first if i not in done]
         return remaining[:limit], not remaining
 
+    # ------------------------------------------------------------------
+    # historyId incremental sync
+    # ------------------------------------------------------------------
+
+    def _load_sync_state(self) -> dict:
+        if not self.sync_state_path:
+            return {}
+        try:
+            doc = json.loads(Path(self.sync_state_path).read_text())
+        except (OSError, ValueError):
+            return {}
+        if doc.get("account") != self.account_id:
+            return {}  # different account — reseed
+        return doc
+
+    def _store_sync_state(self, history_id: str) -> None:
+        state_path = Path(self.sync_state_path)
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        doc = {
+            "account": self.account_id,
+            "history_id": str(history_id),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        tmp = state_path.with_suffix(state_path.suffix + ".tmp")
+        tmp.write_text(json.dumps(doc))
+        tmp.rename(state_path)
+        self._log_verbose_log("sync state advanced to historyId %s" % history_id)
+
+    def _log_verbose_log(self, msg: str) -> None:
+        if getattr(self, "_log_verbose", False):
+            print(f"[incremental] {msg}")
+
+    def _incremental_batch_ids(
+        self, api: GmailApiClient, done: set[str], limit: int
+    ) -> list[str]:
+        """Gmail message ids to ingest this run, per the stored historyId.
+
+        Candidates = messagesAdded + labelsRemoved records (rescue events).
+        Returns ids oldest-change-first, filtered through the done set and
+        capped at `limit`; when the cap truncates candidates, the returned
+        history id is None so the sync state is NOT advanced (the remainder
+        is re-delivered next run and absorbed by dedup).
+        """
+        state = self._load_sync_state()
+        profile = api.get_profile()
+        current = str(profile.get("historyId") or "")
+        stored = state.get("history_id")
+
+        if not stored:
+            self._pending_history_id = current
+            self._log_verbose_log(
+                f"seeded history sync at {current} — new mail flows from the next run"
+            )
+            return []
+
+        candidates: list[str] = []
+        token: Optional[str] = None
+        resp: Optional[dict] = None
+        try:
+            for _ in range(20):  # 20 pages = very generous burst budget
+                resp = api.history_list(stored, token)
+                for record in resp.get("history") or []:
+                    for entry in record.get("messagesAdded") or []:
+                        candidates.append(entry["message"]["id"])
+                    for entry in record.get("labelsRemoved") or []:
+                        candidates.append(entry["message"]["id"])
+                token = resp.get("nextPageToken")
+                if not token:
+                    break
+            else:
+                raise GmailApiError("history page budget exceeded (>20 pages)")
+        except GmailApiError as e:
+            if e.status_code == 404:
+                # History expired: reseed at the current id. The gap mail is
+                # still inside the progressive backfill window (it covers
+                # the whole mailbox up to 20k), so nothing is lost.
+                self._log_verbose_log(
+                    f"history since {stored} expired — reseeded at {current}"
+                )
+                self._pending_history_id = current
+                return []
+            raise
+
+        fully_processed = len(candidates) <= limit
+        remaining = [i for i in candidates if i not in done]
+        if fully_processed:
+            self._pending_history_id = str(resp.get("historyId") or current)
+        else:
+            self._pending_history_id = None  # partial: re-diff next run
+        self._log_verbose_log(
+            f"{len(candidates)} history candidates, {len(remaining)} new"
+        )
+        return remaining[:limit]
+
     def import_oldest(self, limit: int = 10, verbose: bool = True) -> dict:
         """Import the `limit` oldest messages (dedup + threading via base class).
 
@@ -256,6 +373,46 @@ class GmailImporter(EmailImporter):
         finally:
             self._progressive = False
             self._ingested_ids = None
+            self._limit = None
+
+    def import_incremental(self, limit: int = 500, verbose: bool = True) -> dict:
+        """historyId-based incremental sync (plan/gmail-incremental-sync-
+        design.md): fetch mail NEW since the stored historyId.
+
+        First run seeds: stores the profile's current historyId and imports
+        nothing — mail arriving after seeding appears in later diffs. The
+        sync state is advanced only after a successful import, and only
+        when every candidate fit the batch (a burst larger than `limit`
+        leaves the state untouched, so the remainder is re-delivered next
+        run and absorbed by dedup). Candidates come from messagesAdded AND
+        labelsRemoved history records (rescue events); the ingestion policy
+        (all mail except what is currently in TRASH or SPAM) is evaluated
+        at fetch time. On history expiry (404) the pass reseeds at the
+        current historyId and logs — the gap is covered by the progressive
+        backfill window.
+        """
+        self._limit = limit
+        self._verbose = verbose
+        self._log_verbose = verbose
+        self._incremental = True
+        self._label_filter = True
+        try:
+            with self.soil:
+                self._ingested_ids = {
+                    (f.metadata or {}).get("gmail_message_id")
+                    for f in self.soil.list_items(_type="Email", limit=1_000_000)
+                    if (f.metadata or {}).get("gmail_message_id")
+                }
+            stats = self.import_all(verbose=verbose)
+            pending = getattr(self, "_pending_history_id", None)
+            if pending is not None and self.sync_state_path:
+                self._store_sync_state(pending)
+            return stats
+        finally:
+            self._incremental = False
+            self._label_filter = False
+            self._ingested_ids = None
+            self._pending_history_id = None
             self._limit = None
 
     def translate_gmail_to_email(

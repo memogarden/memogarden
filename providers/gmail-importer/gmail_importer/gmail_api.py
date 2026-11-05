@@ -31,7 +31,15 @@ _ENUM_PAGES = 12  # 6,000 messages — a full window any personal mailbox prefix
 
 
 class GmailApiError(RuntimeError):
-    """Raised when the Gmail API returns an error we can't handle."""
+    """Raised when the Gmail API returns an error we can't handle.
+
+    status_code carries the HTTP status when the error came from a
+    response (e.g. 404 for expired history in history.list).
+    """
+
+    def __init__(self, message: str, status_code: Optional[int] = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class GmailApiClient:
@@ -55,7 +63,8 @@ class GmailApiClient:
             )
         if response.status_code != 200:
             raise GmailApiError(
-                f"Gmail API error {response.status_code} on {path}: {response.text[:300]}"
+                f"Gmail API error {response.status_code} on {path}: {response.text[:300]}",
+                status_code=response.status_code,
             )
         return response.json()
 
@@ -81,6 +90,27 @@ class GmailApiClient:
     def get_attachment(self, message_id: str, attachment_id: str) -> dict:
         """Attachment resource — `data` (base64url) is a TOP-LEVEL field."""
         return self._get(f"/messages/{message_id}/attachments/{attachment_id}")
+
+    def get_profile(self) -> dict:
+        """Mailbox profile: emailAddress, messagesTotal, historyId, ..."""
+        return self._get("/profile")
+
+    def history_list(
+        self,
+        start_history_id: str,
+        page_token: Optional[str] = None,
+    ) -> dict:
+        """Change records since a historyId.
+
+        Returns {history: [{messagesAdded|messagesDeleted|labelsAdded|
+        labelsRemoved: [{message: {id, ...}}]}], nextPageToken?, historyId}.
+        A 404 (GmailApiError.status_code == 404) means the start historyId
+        is too old — history expired and a full resync is required.
+        """
+        params: dict = {"startHistoryId": str(start_history_id)}
+        if page_token:
+            params["pageToken"] = page_token
+        return self._get("/history", params)
 
     def iter_message_ids(self, query: Optional[str] = None, max_pages: int = _ENUM_PAGES) -> list[str]:
         """Enumerate ALL message ids for a query, newest-first, up to max_pages.
