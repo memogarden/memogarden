@@ -1,6 +1,9 @@
 # Gmail Incremental Sync — Design Review (historyId)
 
-**Status:** Proposed — for review
+**Status:** Implemented 2026-11-05 (feature/historyid-incremental-sync, live:
+seeded at historyId 12515023; hourly timer runs next → incremental →
+attachments; switchover to incremental is automatic when the backfill
+window is fully ingested)
 **Date:** 2026-11-03
 **Context:** The progressive oldest-N backfill (batch 500/hour) marches from
 the old end of the mailbox; new mail arrives at the *newest* end, where the
