@@ -77,6 +77,11 @@ Environment=MEMOGARDEN_PID_FILE=%t/memogarden/memogarden.pid
 Environment=MEMOGARDEN_ACCESS_LOG=$STATE_DIR/access.log
 Environment=MEMOGARDEN_ERROR_LOG=$STATE_DIR/error.log
 Environment=MEMOGARDEN_WORKERS=1
+# Pin the data dir explicitly: gunicorn --chdir overrides WorkingDirectory,
+# and without this the resolver's CWD fallback points the server at the
+# repo pair while the ingest unit uses $DATA_DIR (split-brain, fixed 2026-11-05).
+Environment=MEMOGARDEN_DATA_DIR=$DATA_DIR
+Environment=MEMOGARDEN_PROVIDER_ROOTS=$DATA_DIR/providers:$REPO_ROOT/providers
 WorkingDirectory=$DATA_DIR
 RuntimeDirectory=memogarden
 Restart=on-failure
@@ -88,22 +93,23 @@ UNIT
 
     if [ "$WITH_INGEST_TIMER" = 1 ]; then
         cat > "$UNIT_DIR/memogarden-ingest.service" <<UNIT
-# MemoGarden scheduled email ingestion, two idempotent passes:
-#   incremental historyId sync of NEW mail since the stored historyId
-#               (seeds on first run; delivers new mail hourly)
-#   attachments binary extraction for everything newly ingested.
-# The progressive backfill (`ingest next`) was retired from the hourly job
-# on 2026-11-05 once it fully ingested the mailbox; it remains the MANUAL
-# recovery path if the incremental sync state is ever lost or ingestion is
-# dark for >30 days (history expiry). Serves from the search cache
-# (refreshed 6-hourly).
+# MemoGarden scheduled email ingestion, two passes:
+#   heartbeat   POST /api/v1/providers/run — the server runs every due
+#               registered provider in-process (gmail = historyId sync of
+#               NEW mail; the retired progressive backfill `ingest next`
+#               remains the MANUAL recovery path for lost sync state or
+#               >30-day outages)
+#   attachments binary extraction for everything newly ingested (still a
+#               CLI pass until binaries join the provider contract).
 [Unit]
 Description=MemoGarden scheduled email ingestion
 
 [Service]
 Type=oneshot
 WorkingDirectory=$DATA_DIR
-ExecStart=$INGEST_VENV/bin/python -m gmail_importer.ingest --account $INGEST_ACCOUNT incremental --limit $INGEST_LIMIT --quiet
+Environment=MEMOGARDEN_DATA_DIR=$DATA_DIR
+EnvironmentFile=$REPO_ROOT/.env
+ExecStart=/usr/bin/curl -sf -X POST -H "X-API-Key: $MEMOGARDEN_API_KEY" -H "Content-Type: application/json" http://127.0.0.1:8600/api/v1/providers/run
 ExecStart=$INGEST_VENV/bin/python -m gmail_importer.ingest --account $INGEST_ACCOUNT attachments --quiet
 UNIT
 
