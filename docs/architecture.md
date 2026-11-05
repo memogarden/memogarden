@@ -1,7 +1,7 @@
 # MemoGarden Architecture Overview
 
-**Last Updated:** 2026-02-14
-**Version:** 0.1.0
+**Last Updated:** 2026-11-05
+**Version:** 0.2.0
 
 Complete architectural reference for MemoGarden platform.
 
@@ -29,6 +29,7 @@ MemoGarden is a **belief-based transaction capture and reconciliation system** d
 3. **Mutable Snapshot, Immutable Memory** - Current state can change, but all changes are logged via deltas
 4. **Document-Centric Traceability** - Transactions link to immutable artifacts in Soil (emails, invoices, receipts)
 5. **Agent-First Design** - Humans and agents use the same APIs
+6. **Client-Server Process Model** - A persistent server backend owns the databases; clients (CLI, apps, agents) talk to its API — see the PRD "Process Model and Service Units"
 
 ### Two-Layer Architecture
 
@@ -93,13 +94,15 @@ MemoGarden is a **belief-based transaction capture and reconciliation system** d
 
 ### Repository Structure
 
-MemoGarden consists of **three separate git repositories**:
+The MemoGarden production system is built from **three core git repositories** (the
+workspace also contains additional sibling repos — `memogarden-client`, `memogarden-utils`,
+`mg-project-studio`, `mars`, `mush` — see the [root README](/README.md)):
 
 ```
 memogarden/                    # Root repository
 ├── plan/                      # Planning documents
 │   ├── memogarden_prd_v0_11_0.md
-│   ├── memogarden-implementation-plan.md
+│   ├── memogarden-implementation-plan.md   # retired 2026-10-08 (historical)
 │   └── rfc_*.md              # RFC-001 through RFC-009
 ├── docs/                      # Documentation
 ├── scripts/                    # Automation scripts

@@ -1,8 +1,8 @@
 # MemoGarden Deployment Guide
 
-**Last Updated:** 2026-02-11
-**Version:** 1.0
-**Status:** Session 14 - RFC-004 Deployment
+**Last Updated:** 2026-11-05
+**Version:** 1.1
+**Status:** Session 14 - RFC-004 Deployment; user-session mode + provider ingestion added 2026-11
 
 ## Overview
 
@@ -348,8 +348,7 @@ systemctl --user status memogarden
 ### Direct Execution (Development)
 
 ```bash
-# From source directory
-cd memogarden/memogarden-api
+# From the repository root
 ./scripts/run.sh
 ```
 
@@ -388,10 +387,9 @@ sudo journalctl -u memogarden -n 50 --no-pager
 
 ### Database Issues
 
-**Check database integrity:**
+**Diagnose installation issues:**
 ```bash
-cd /opt/memogarden
-./scripts/debug.sh diagnose
+/opt/memogarden/scripts/debug-memogarden.sh
 ```
 
 **Rebuild database (WARNING: Deletes data):**

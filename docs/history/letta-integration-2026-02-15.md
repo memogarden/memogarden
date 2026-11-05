@@ -1,5 +1,11 @@
 # Letta Integration Guide
 
+> **ARCHIVED 2026-10-08:** The `memogarden-letta` package this document describes was
+> deprecated and removed from the workspace on 2026-05-23 (root commit `e1da042`,
+> "Remote repository no longer exists"). The Letta API integration never shipped.
+> Kept for historical reference only. The `letta/` and `letta-python/` directories
+> remain as read-only vendored references.
+
 This document provides reference information about the Letta codebase and how MemoGarden integrates with it.
 
 ## Letta Codebases

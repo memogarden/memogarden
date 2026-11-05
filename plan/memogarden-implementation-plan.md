@@ -1,9 +1,26 @@
 # MemoGarden Implementation Plan
 
-**Version:** 1.24
-**Status:** Active Development
+**Version:** 1.25
+**Status:** ⚠️ RETIRED 2026-10-08 — historical record only
 **Created:** 2026-02-07
-**Last Updated:** 2026-02-14
+**Last Updated:** 2026-10-08 (retired; content frozen at v1.24, 2026-02-14)
+
+> ## This plan is retired
+>
+> This document tracked the MemoGarden platform core (`memogarden-system`,
+> `memogarden-api`) through Session 14 and was last updated at Session 15
+> (2026-02-14). Work continued past that point on a separate session numbering
+> that was never merged back here (Scopes, fragments, artifact deltas, the fold
+> verb, SSE, the Python SDK — sessions 15–25), and active development later
+> moved to separate projects with their own plans and repos.
+>
+> **Do not use this document to determine current state.** Instead:
+> - Platform state: each repo's git history (`memogarden-system/`, `memogarden-api/`, `memogarden-client/`)
+> - Active projects: `mg-project-studio/` (see `plan/project_studio_implementation_plan.md`), `mars/`, `mush/`
+> - Workspace overview: [README](/README.md)
+>
+> Test counts, compliance percentages, and "next steps" below are snapshots from
+> 2026-02-14, not current status.
 
 ## Executive Summary
 
@@ -654,6 +671,7 @@ This document tracks implementation progress for MemoGarden across multiple code
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.25 | 2026-10-08 | RETIRE plan: sessions 15+ ran outside this document (repo git histories, per-project plans); kept as historical record |
 | 1.24 | 2026-02-14 | Mark Session 15 complete: API docs, Architecture overview, Troubleshooting guide |
 | 1.23 | 2026-02-11 | Mark Session 14 complete: RFC-004 resolve_context(), RuntimeContext, env var precedence, deployment docs. Update test count to 286 |
 | 1.22 | 2026-02-11 | Compact implementation plan: move technical details to docs, update test count to 256, add documentation references |
@@ -682,7 +700,7 @@ This document tracks implementation progress for MemoGarden across multiple code
 
 ---
 
-**Status:** Active Development - Session 15 Complete
+**Status:** RETIRED 2026-10-08 (was: Active Development - Session 15 Complete)
 
 **Test Status:** 286 tests passing (220 API + 66 system)
 

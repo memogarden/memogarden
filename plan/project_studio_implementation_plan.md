@@ -1590,7 +1590,7 @@ const highlights = generateHighlights(parsed);
 - **RFC-003 v4**: Context Mechanism [`plan/rfc_003_context_mechanism_v4.md`](plan/rfc_003_context_mechanism_v4.md)
 - **RFC-009 v1**: MemoGarden Application Model [`plan/rfc_009_memogarden_apps_v1.md`](plan/rfc_009_memogarden_apps_v1.md)
 - **JCE Whitepaper v1.0**: [`plan/jce_whitepaper_v1_0.md`](plan/jce_whitepaper_v1_0.md)
-- **Current Implementation Plan**: [`plan/memogarden-implementation-plan.md`](plan/memogarden-implementation-plan.md)
+- **Core Implementation Plan** (retired 2026-10-08, historical): [`plan/memogarden-implementation-plan.md`](plan/memogarden-implementation-plan.md)
 
 ### Codebases
 

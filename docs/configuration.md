@@ -1,6 +1,6 @@
 # MemoGarden Configuration Reference
 
-**Last Updated:** 2026-02-11
+**Last Updated:** 2026-11-05
 **Version:** RFC-004 v2
 
 Complete reference for MemoGarden environment variables and configuration.
@@ -46,9 +46,33 @@ Complete reference for MemoGarden environment variables and configuration.
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `MEMOGARDEN_ENCRYPTION` | String | `disabled` | Encryption mode: `disabled`, `optional`, `required` |
-| `FLASK_SECRET_KEY` | String | (auto-generated) | Flask session signing key |
-| `JWT_SECRET_KEY` | String | (auto-generated) | JWT token signing key |
-| `API_KEY_*` | String | - | API keys for external access |
+
+The JWT signing secret is **not** an environment variable: set `security.jwt_secret_key` in the TOML config file. API keys are database records managed via `POST /api-keys/` (prefix `mg_sk_`), not environment variables.
+
+### Gunicorn / Service Variables (user-session units)
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `MEMOGARDEN_BIND` | Host:Port | `127.0.0.1:5000` | gunicorn bind (gunicorn.conf.py reads this, not TOML) |
+| `MEMOGARDEN_WORKERS` | Int | `2` | gunicorn workers (user-session unit sets `1`) |
+| `MEMOGARDEN_PID_FILE` | Path | `/var/run/memogarden/memogarden.pid` | appliance default; user-session overrides to `/run/user/<uid>/memogarden/` |
+| `MEMOGARDEN_ACCESS_LOG` | Path | `/var/log/memogarden/access.log` | appliance default; user-session overrides to `~/.local/state/memogarden/logs/` |
+| `MEMOGARDEN_ERROR_LOG` | Path | `/var/log/memogarden/error.log` | appliance default; user-session overrides likewise |
+| `MEMOGARDEN_TIMEOUT` / `MEMOGARDEN_GRACEFUL_TIMEOUT` | Int | `30` / `10` | worker timeouts |
+
+The installed user-session unit (`scripts/install-user-service.sh`) sets
+`MEMOGARDEN_BIND=127.0.0.1:8600` (8600, not the dev server's 5000 nor the
+OAuth callback's 8080) and injects the API key for its heartbeat from
+`$REPO_ROOT/.env` via `EnvironmentFile`.
+
+### Provider / Ingestion Config
+
+Registered providers live in the `providers` core.db table (registered via
+`memogarden register provider` or `POST /api/v1/providers`); per-provider
+config JSON is passed to the provider constructor at run time. The gmail
+provider's config keys (account, hacm_path, passphrase_file,
+sync_state_path, excluded_ids_path, soil_path, batch_limit) are documented
+in [memogarden-gmail-provider](https://github.com/memogarden/memogarden-gmail-provider).
 
 ### Precedence Order (RFC-004)
 
@@ -136,8 +160,6 @@ Security settings:
 encryption = "disabled"
 jwt_secret_key = "change-me-in-production"
 jwt_expiry_days = 30
-bypass_localhost_check = false
-bcrypt_work_factor = 12
 ```
 
 #### `[api]` Section

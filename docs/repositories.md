@@ -1,13 +1,15 @@
 # MemoGarden Repository Structure
 
-**Last Updated:** 2026-02-11
+**Last Updated:** 2026-10-08
 **Status:** Session 14+
 
 Complete reference for MemoGarden repositories and their structure.
 
 ## Core Repositories
 
-MemoGarden consists of three core repositories that form the production system.
+These repositories form the production system. (Additional sibling repositories —
+`memogarden-client`, `memogarden-utils`, `mg-project-studio`, `mars`, `mush` — are
+described in the root [README](/README.md).)
 
 ---
 
@@ -17,14 +19,24 @@ MemoGarden consists of three core repositories that form the production system.
 
 **Contains:**
 - `plan/` - Planning documents
-  - `memogarden-implementation-plan.md` - Implementation roadmap
+  - `memogarden-implementation-plan.md` - Implementation roadmap (retired 2026-10-08 — historical)
   - `memogarden_prd_v0_11_0.md` - Platform PRD
   - `budget_prd.md` - Budget app requirements
   - `rfc_*.md` - RFC documents (RFC-001 through RFC-009)
+- `providers/` - Ingestion providers (tracked in this repo)
+  - `gmail-importer/` - Gmail ingestion provider (historyId incremental sync,
+    progressive backfill, Provider Protocol implementation; published
+    standalone as [memogarden-gmail-provider](https://github.com/memogarden/memogarden-gmail-provider))
+  - `mbox-importer/` - Google Takeout mbox importer (published standalone as
+    [memogarden-mbox-importer](https://github.com/memogarden/memogarden-mbox-importer))
+- `gmail-oauth/` - Gmail OAuth 2.0 flow (tokens stored in HACM)
 - `scripts/` - Development automation
-  - `run.sh` - Start API server
-  - `test.sh` - Run tests
+  - `run.sh` - Start API development server
+  - `install-user-service.sh` - Install user-session systemd units (server + ingestion heartbeat)
+  - `test_entrypoint.sh` - Centralized test runner (used by each project's `run_tests.sh`)
   - `lint.sh` - Run ruff linter
+  - `debug-memogarden.sh` - RPi installation diagnostics
+  - `deploy-memogarden.sh` - Deployment script
   - `pre-commit` - Pre-commit hook
 - `docs/` - User and developer documentation
   - `quickstart.md` - Getting started guide

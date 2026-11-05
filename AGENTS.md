@@ -16,43 +16,57 @@ This document provides context and guidelines for AI assistants (Claude, GPT, et
 
 ## Repository Structure
 
-⚠️ **CRITICAL:** MemoGarden has **three separate git repositories**. Always check which repository you're working in before committing changes.
+⚠️ **CRITICAL:** MemoGarden is a **multi-repository workspace**. Always check which repository you're working in before committing changes.
 
-### Core Repositories
+### Sibling Repositories (own git history, gitignored by root)
 
-1. **Root** (`/`) - Planning, scripts, agent configuration
+1. **Root** (`/`) - Planning, docs, schemas, scripts, agent configuration, `providers/` (gmail + mbox ingestion providers), `gmail-oauth/`, published standalone repos `memogarden-gmail-provider` + `memogarden-mbox-importer`
 2. **System** (`memogarden-system/`) - Core library (Soil + Core layers)
-3. **API** (`memogarden-api/`) - Flask REST + Semantic API
+3. **API** (`memogarden-api/`) - Flask REST + Semantic API + SSE
+4. **Client** (`memogarden-client/`) - Python SDK (`mg_client`) for the MemoGarden API
+5. **Utils** (`memogarden-utils/`) - Shared utilities (uid, hashing, config, recurrence) — NOTE: also tracked in the root repo (files appear in both; treat root as source of truth for now)
+6. **Project Studio** (`mg-project-studio/`) - Svelte web app (RFC-009 MemoGarden App)
+7. **MUSH** (`mush/`) - Multi-User Session Host (PTY daemon for human-agent shared terminals)
+8. **CD** (`memogarden-devcd/`) - Webhook-based deployment automation
+9. `memogarden.github.io/` - Documentation site
 
-### Related Repositories
+### Submodules (pinned in root repo as gitlinks)
 
-- `app-budget/` - Budget app (Flutter) - Future development
-- `memogarden-devcd/` - CD/automation for deployment
-- `memogarden.github.io/` - Documentation site
-- `hacm/` - Headless Agent Credential Manager
+- `mars/` - MARS (MemoGarden Agent Runtime System): Python agent runtime with NiceGUI/Flutter GUIs
+- `hacm/` - Headless Agent Credential Manager (encrypted credential store)
+- `app-budget/` - Budget app (Flutter); developed through Jan 2026, currently paused
+- `collection-claude-code-source-code/` - External reference archive
+
+### Tracked Directories (part of the root repo)
+
+- `gmail-oauth/` - Gmail OAuth flow, stores credentials in HACM
+- `providers/` - Email importers (`mbox-importer` working, `gmail-importer` stub)
+- `schemas/` - Canonical data model (YAML, SQL, JSON Schema)
 
 **For detailed repository structure, file listings, and module breakdowns, see [docs/repositories.md](docs/repositories.md).**
 
 ### ⚠️ Git Repository Boundaries
 
-**Each repository has its own git history:**
+**Every directory listed under "Sibling Repositories" has its own git history.** Submodules are pinned in the root repo: after committing inside a submodule, the root repo sees the pointer change.
 
 1. **Root Repository** (`/`)
-   - Contains: Planning documents, automation scripts, agent skills
+   - Contains: Planning documents, docs, schemas, automation scripts, agent skills, gmail-oauth
    - Git command: `git status` (from root directory)
-   - Commits here affect: docs, plans, scripts, .claude/
+   - Commits here affect: docs, plans, schemas, scripts, .claude/, gmail-oauth/
 
 2. **API Repository** (`memogarden-api/`)
-   - Contains: Flask application, Semantic API, tests
+   - Contains: Flask application, Semantic API, SSE events, tests
    - Git command: `git status` (from memogarden-api directory)
    - Commits here affect: api/, tests/
    - **Separate from root repository!**
 
 3. **System Repository** (`memogarden-system/`)
-   - Contains: Database operations, utilities, exceptions
+   - Contains: Database operations, business logic, exceptions
    - Git command: `git status` (from memogarden-system directory)
-   - Commits here affect: system/
+   - Commits here affect: system/, tests/
    - **Separate from root repository!**
+
+The same applies to `memogarden-client/`, `memogarden-utils/`, `mg-project-studio/`, `mush/`, `memogarden-devcd/`, and `memogarden.github.io/`. Run `git status` inside whichever directory you changed.
 
 ### ⚠️ Before Committing: Always Verify
 
@@ -110,7 +124,7 @@ The `.claude/skills/` directory contains task-specific skills that provide detai
 and guidance. Claude loads these skills automatically when relevant to your task.
 
 **Available Skills:**
-- **continue-implementation** - Implementation plan execution workflow: unpack session, execute, test, review, commit, improve
+- **continue-implementation** - Session execution workflow: unpack session, execute, test, review, commit, improve (core plan retired; retained for per-project plans)
 - **memogarden-development** - Development environment setup, architectural constraints, anti-patterns, shell command best practices, working with the implementation plan
 - **memogarden-testing** - Testing philosophy, running tests, writing tests, debugging test failures
 - **memogarden-api-endpoint** - Workflow for creating new API endpoints
@@ -119,6 +133,13 @@ and guidance. Claude loads these skills automatically when relevant to your task
 - **memogarden-refactor** - Code refactoring and test optimization (duplication analysis, test profiling, mock audit, test cleanup)
 - **process-improvement** - Review session errors/mistakes and propose systemic improvements (tests, tools, skills)
 - **change-commit** - Commit changes to git repository (use AFTER reviews)
+- **feature-development** - Complete feature development workflow from issue to PR
+- **bugfix** - Complete bugfix workflow from investigation to PR
+- **gh** - GitHub operations workflow (issues, PRs, Actions)
+- **claude-code-reference** - Reference for Claude Code features, hooks, slash commands, and capabilities
+- **railway** - Railway CLI usage for cloud deployments, services, databases, and environment variables
+- **test-dashboard** - Testing the Jupyter Telemetry Dashboard API (Flask)
+- **jupyter-telemetry-assignments** - Assignment tagging workflow for Jupyter notebook telemetry
 
 These skills allow AGENTS.md to focus on project context while providing detailed, task-specific
 guidance on-demand. See [Claude Code Skills documentation](https://code.claude.com/docs/en/skills)
@@ -138,10 +159,9 @@ Before working on any task, read these documents in order:
    - Financial transaction model
    - Read only when working on Budget app features
 
-3. **[plan/memogarden-implementation-plan.md](plan/memogarden-implementation-plan.md)** - Implementation Plan
-   - Current step and progress
-   - Detailed substeps for active work
-   - Architecture decisions and rationale
+3. **[plan/memogarden-implementation-plan.md](plan/memogarden-implementation-plan.md)** - Implementation Plan — **RETIRED 2026-10-08**
+   - Historical record of platform-core Sessions 1–14 (Feb 2026); not a source of current state
+   - For current state: each repo's git history, and per-project plans (`mg-project-studio`, `mars`, `mush`)
 
 ## Technology Stack
 
@@ -155,11 +175,10 @@ Before working on any task, read these documents in order:
 - **Package Manager**: Poetry with poetry-plugin-shell
 - **Production Server**: gunicorn
 
-### Frontend (app-budget)
-- **Framework**: Flutter
-- **Platforms**: Web + Android
-- **State Management**: TBD (Riverpod or Provider)
-- **API Client**: http package
+### Frontend
+- **mg-project-studio**: Svelte 5 + TypeScript + Vite + Tailwind; RFC-009 MemoGarden App for artifact-centric collaboration (SSE observe mode)
+- **app-budget**: Flutter (Web + Android); transaction capture UI, development paused since Jan 2026
+- **mars/flutter_apps/**: Flutter GUI clients for the MARS agent runtime
 
 ### Deployment
 - **Local**: Development and testing
@@ -211,8 +230,8 @@ Before working on any task, read these documents in order:
 
 **Agent note:** If you need functionality not supported by `run_tests.sh`, alert a human to improve `scripts/test_entrypoint.sh` centrally rather than using ad-hoc bash commands.
 
-**Legacy method (deprecated):**
-The old `scripts/test.sh` script still exists but is deprecated. It will be removed in a future version.
+**Legacy method (removed):**
+The old `scripts/test.sh` script no longer exists; use `run_tests.sh` in each project.
 
 See [`memogarden-api/tests/README.md`](memogarden-api/tests/README.md) for complete testing documentation.
 
@@ -262,7 +281,7 @@ When working with the user:
 2. **Be specific** - Reference file paths and line numbers
 3. **Explain trade-offs** - When multiple approaches exist
 4. **Follow the plan** - Don't suggest jumping ahead unless critical
-5. **Update docs** - Keep implementation.md current
+5. **Update docs** - Keep project docs and per-project plans current
 
 ## Project Values
 
@@ -277,13 +296,13 @@ When working with the user:
 If stuck or unsure:
 
 1. Re-read the PRD for context
-2. Check memogarden-implementation-plan.md for current scope
+2. Check the workspace README and the relevant project's own plan/docs for current scope
 3. Look at existing code patterns
 4. Ask the user with specific questions
 5. Propose options with trade-offs
 
 ---
 
-**Last Updated**: 2026-02-11
+**Last Updated**: 2026-10-08
 **For**: AI agents working on MemoGarden
 **Maintained by**: Project contributors

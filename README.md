@@ -1,273 +1,72 @@
-# MemoGarden System
+# MemoGarden
 
-**MemoGarden System** provides the core business logic layers for MemoGarden: the **Soil** layer (immutable records) and **Core** layer (mutable beliefs about transactions and entities).
+**MemoGarden** is a personal memory system for financial transactions. It's not traditional
+budgeting software — it's a belief-based transaction capture and reconciliation system
+designed for both human users and AI agents.
 
-This is the foundational system package. For the HTTP API, see [memogarden-api](https://github.com/memogarden/memogarden-api).
+**Core philosophy:**
 
-## Overview
+1. **Transactions Are Beliefs** — a transaction represents the user's understanding at the time of payment, not the bank's ledger
+2. **Single Source of Truth** — all transactions flow through the MemoGarden Core API
+3. **Mutable Snapshot, Immutable Memory** — current state can change, but all changes are logged via deltas
+4. **Document-Centric Traceability** — transactions link to immutable artifacts in Soil (emails, invoices, statements)
+5. **Agent-First Design** — humans and agents use the same APIs
 
-MemoGarden is a personal memory system for financial transactions. It's not traditional budgeting software—it's a belief-based transaction capture and reconciliation system designed for both human users and AI agents.
+## Workspace Map
 
-### Architecture
+This workspace contains multiple git repositories. See [AGENTS.md](AGENTS.md) for the
+committing rules — every directory below has its own git history unless noted otherwise.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      MemoGarden Platform                      │
-├─────────────────────────────────────────────────────────────┤
-│                                                               │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │  memogarden-api (HTTP Interface)                      │   │
-│  │  ├── Flask application                                  │   │
-│  │  ├── Authentication (JWT + API Keys)                   │   │
-│  │  └── API endpoints                                     │   │
-│  └──────────────────────┬────────────────────────────────┘   │
-│                         │ depends on                            │
-│  ┌──────────────────────▼────────────────────────────────┐   │
-│  │  memogarden-system (This Repository)                   │   │
-│  │  ├── system.soil (Immutable Records Layer)             │   │
-│  │  │   ├── Items (Notes, Emails, Messages...)             │   │
-│  │  │   ├── SystemRelations (cites, replies_to...)        │   │
-│  │  │   └── Soil Database                                 │   │
-│  │  ├── system.core (Mutable Beliefs Layer)               │   │
-│  │  │   ├── Entities (global registry)                     │   │
-│  │  │   ├── UserRelations (engagement signals)             │   │
-│  │  │   └── ContextFrames (attention tracking)             │   │
-│  │  └── system.utils (UUID, hashing, validation)          │   │
-│  └────────────────────────────────────────────────────────┘   │
-│                                                               │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │  providers/ (Email Importers)                          │   │
-│  │  ├── mbox-importer (Google Takeout format)            │   │
-│  │  └── gmail-importer (Gmail API - stub)                 │   │
-│  └────────────────────────────────────────────────────────┘   │
-│                                                               │
-└───────────────────────────────────────────────────────────────┘
-```
+### Platform (the production system)
 
-## Packages in This Repository
+| Repository | What it is |
+|-----------|------------|
+| `memogarden-system/` | Core library: **Soil** (immutable facts) + **Core** (mutable beliefs). SQLite, raw SQL, no ORM |
+| `memogarden-api/` | Flask HTTP API: Semantic API (`POST /mg`), REST v1, auth + API keys, SSE events |
+| `memogarden-client/` | Python SDK (`mg_client`): Semantic API operations incl. artifact deltas, conversations, SSE |
+| `memogarden-utils/` | Shared utilities: uid, hashing, config, recurrence, formatting |
+| `schemas/` | Canonical data model: YAML, SQL schemas, JSON Schema types *(part of root repo)* |
+| `providers/` | Email ingestion providers: `gmail-importer` (historyId incremental sync + progressive backfill; published standalone as [memogarden-gmail-provider](https://github.com/memogarden/memogarden-gmail-provider)) and `mbox-importer` (Google Takeout; published as [memogarden-mbox-importer](https://github.com/memogarden/memogarden-mbox-importer)) *(root repo)* |
 
-### memogarden-system (Main Package)
+### Apps & Agent Ecosystem (newer work)
 
-The core system package containing Soil and Core layers:
+| Repository | What it is |
+|-----------|------------|
+| `mg-project-studio/` | Svelte 5 web app (RFC-009 MemoGarden App): scope management, artifact delta editing, SSE observe mode |
+| `mars/` | MARS (MemoGarden Agent Runtime System) — submodule; task-oriented agents whose memory lives in storage, not context |
+| `mush/` | MUSH (Multi-User Session Host) — PTY daemon for safe human–agent shared terminal control |
+| `hacm/` | Headless Agent Credential Manager — submodule; encrypted credential storage for headless agent loops |
+| `gmail-oauth/` | Gmail OAuth 2.0 flow, stores refresh tokens in HACM *(root repo)* |
+| `app-budget/` | Budget app (Flutter) — submodule; development paused since Jan 2026 |
 
-- **system.soil** - Immutable record storage
-  - Items: Notes, Emails, Messages with strict data/metadata separation
-  - SystemRelations: Immutable structural facts (cites, replies_to, triggers)
-  - Email import utilities and deduplication
+### Infrastructure & Reference
 
-- **system.core** - Mutable belief layer
-  - Entity registry with hash-based change tracking
-  - UserRelation: Engagement signals with time-based decay
-  - ContextFrame: Attention tracking per RFC-003
-
-- **system.utils** - Shared utilities
-  - UUID generation (Soil and Core prefixes)
-  - Hash chain utilities for change tracking
-  - Domain types (Timestamp, Date, etc.)
-
-### providers/ (Optional Importers)
-
-Email importers that depend on memogarden-system:
-
-- **mbox-importer** - Import emails from mbox files (Google Takeout)
-- **gmail-importer** - Import emails from Gmail API (stub for future OAuth)
-
-## Installation
-
-This is a library package. Install it via [Poetry](https://python-poetry.org/):
-
-```bash
-# From project root
-cd memogarden-system
-poetry install
-```
-
-Or via pip:
-
-```bash
-pip install memogarden-system
-```
-
-## Usage
-
-### Using the Soil Layer (Immutable Records)
-
-```python
-from system.soil import Soil, Item, generate_soil_uuid
-from datetime import datetime, timezone
-
-# Open Soil database
-soil = Soil("soil.db")
-soil.init_schema()
-
-# Create an Item
-item = Item(
-    uuid=generate_soil_uuid(),
-    _type="Note",
-    realized_at=datetime.now(timezone.utc).isoformat(),
-    canonical_at=datetime.now(timezone.utc).isoformat(),
-    fidelity="full",
-    data={
-        "description": "Remember to buy milk"
-    },
-    metadata={
-        "source": "user_input"
-    }
-)
-
-# Store it
-soil.create_item(item)
-
-# Create relations between items
-from system.soil import SystemRelation
-
-relation = SystemRelation(
-    uuid=generate_soil_uuid(),
-    kind="cites",
-    source=item.uuid,
-    source_type="item",
-    target=other_item.uuid,
-    target_type="item",
-    created_at=2230,  # Days since epoch
-    evidence={
-        "source": "user_stated",
-        "confidence": 1.0
-    }
-)
-soil.create_relation(relation)
-```
-
-### Using the Core Layer (Mutable Beliefs)
-
-```python
-from system.core import Core, Entity, generate_core_uuid
-
-# Open Core database
-core = Core("core.db")
-core.init_schema()
-
-# Create an entity
-entity = Entity(
-    uuid=generate_core_uuid(),
-    type="transaction",
-    data={
-        "amount": -15.50,
-        "currency": "SGD",
-        "description": "Coffee at Starbucks"
-    }
-)
-
-# Store it
-core.create_entity(entity)
-
-# Query entities
-transactions = core.list_entities(type="transaction", limit=10)
-```
-
-### Using Email Importers
-
-```python
-from system.soil import Soil
-from mbox_importer import MboxImporter
-
-# Open Soil database
-soil = Soil("soil.db")
-soil.init_schema()
-
-# Import from mbox file
-importer = MboxImporter(soil, mbox_path="emails.mbox")
-stats = importer.import_mbox(verbose=True)
-print(stats)
-# Output: Processed: 1500, Imported: 1200, Skipped: 300 (duplicates)
-```
-
-## Development
-
-### Running Tests
-
-```bash
-# From project root
-PYTHONPATH=memogarden-system python -m pytest tests/ -v
-```
-
-**Test Coverage:** 30/30 tests passing (100%)
-
-### Project Structure
-
-```
-memogarden-system/
-├── system/                    # Main package (import as "system")
-│   ├── __init__.py
-│   ├── soil/                 # Immutable records layer
-│   │   ├── __init__.py
-│   │   ├── item.py           # Item, Evidence classes
-│   │   ├── relation.py       # SystemRelation class
-│   │   └── database.py        # Soil class
-│   ├── core/                 # Mutable beliefs layer
-│   │   ├── __init__.py
-│   │   ├── entity.py         # Entity operations
-│   │   ├── user_relation.py  # UserRelation operations
-│   │   ├── context_frame.py  # ContextFrame operations
-│   │   └── database.py        # Core class
-│   ├── schemas/              # SQL schemas (bundled during build)
-│   │   ├── sql/
-│   │   │   ├── soil.sql
-│   │   │   └── core.sql
-│   │   └── types/
-│   │       ├── items/
-│   │       └── entities/
-│   └── utils/                # Shared utilities
-│       ├── __init__.py
-│       ├── uid.py            # UUID generation
-│       ├── hashing.py        # Hash chain utilities
-│       └── validation.py     # JSON Schema validation
-├── providers/                # Email importers (optional)
-│   ├── mbox-importer/        # Google Takeout import
-│   └── gmail-importer/       # Gmail API import (stub)
-├── tests/                    # Characterization tests
-│   └── soil_characterization_tests.py
-├── schemas/                  # Schema source files
-│   ├── sql/
-│   └── types/
-├── scripts/                  # Development utilities
-├── plan/                     # RFCs and planning docs
-└── README.md
-```
-
-## Technology Stack
-
-- **Language**: Python 3.13
-- **Database**: SQLite (no ORM - raw SQL only)
-- **Package Manager**: Poetry
-
-## Core Philosophy
-
-1. **Transactions Are Beliefs** - A transaction represents the user's understanding at the time of payment, not the bank's ledger
-2. **Single Source of Truth** - All entities flow through memogarden-system
-3. **Immutable Snapshot, Mutable Memory** - Current state can change, but all changes are logged via deltas
-4. **Document-Centric Traceability** - Transactions link to immutable artifacts (emails, invoices, statements)
-5. **Agent-First Design** - Humans and agents use the same APIs
-
-## Design Principles
-
-- **Synchronous Execution** - SQLite for simplicity and deterministic debugging
-- **No ORM** - Raw SQL queries with parameterized statements
-- **Entity Registry** - Global metadata table for all entity types
-- **UTC Everywhere** - All timestamps in ISO 8601 UTC format
-- **Test-Driven** - Behavior-focused tests (no mocks)
-
-## Related Packages
-
-- **[memogarden-api](https://github.com/memogarden/memogarden-api)** - HTTP API layer
-- **[mbox-importer](https://github.com/memogarden/mbox-importer)** - Email importer for Google Takeout
-- **[gmail-importer](https://github.com/memogarden/gmail-importer)** - Email importer for Gmail API
+| Directory | What it is |
+|-----------|------------|
+| `memogarden-devcd/` | Webhook-based CD for Raspberry Pi deployment |
+| `memogarden.github.io/` | Documentation site |
+| `letta/`, `letta-python/` | Vendored Letta (MemGPT) reference code (gitignored, read-only) |
+| `claudecode-webui/`, `multi-agent-dev/`, `collection-claude-code-source-code/` | External tooling and reference archives |
+| `shrub/` | Personal Logseq knowledge base (gitignored) |
 
 ## Documentation
 
-- **[RFC-004: Package Structure & Deployment](plan/rfc_004_package_deployment_v1.md)** - Architecture and deployment profiles
-- **[RFC-003: Context Capture Mechanism](plan/rfc_003_context_mechanism_v2.md)** - Attention tracking
-- **[PRD v0.10.0](plan/memogarden_prd_v0_10_0.md)** - Complete platform requirements
-- **[Architecture Guide](memogarden-system/docs/architecture.md)** - Technical patterns and conventions
+- **[AGENTS.md](AGENTS.md)** — start here; agent guide with repo boundaries, skills, and workflows
+- **[docs/](docs/)** — [quickstart](docs/quickstart.md), [API reference](docs/api.md),
+  [deployment](docs/deployment.md), [configuration](docs/configuration.md),
+  [architecture](docs/architecture.md), [troubleshooting](docs/troubleshooting.md)
+- **[plan/](plan/)** — PRD (`memogarden_prd_v0_11_0.md`), RFC-001 through RFC-009, implementation plans
+- **Per-project docs** — `mars/`, `mush/`, and `mg-project-studio/` have their own docs and plans
+
+> ⚠️ The `docs/` folder was written at "Session 15" (Feb 2026) and covers the core platform
+> as of that date. Features added later — Scopes, artifact deltas, conversations, SSE — are
+> documented in the RFCs and in the per-project docs instead.
+
+## Status
+
+- **Platform** (`memogarden-system` / `-api` / `-client`): stable; Gmail ingestion is live — the registered gmail provider runs hourly in the API server (historyId incremental sync + a fully-ingested progressive backfill); ~510 tests across the packages
+- **Active development**: `mars` (agent runtime), `mush` (terminal sharing), `mg-project-studio`
+- **Deployment**: user-session systemd units on the daily-driver laptop (`scripts/install-user-service.sh`), Raspberry Pi appliance via `memogarden-devcd` / `install.sh`; see [docs/deployment.md](docs/deployment.md)
 
 ## License
 

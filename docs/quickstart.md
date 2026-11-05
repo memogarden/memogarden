@@ -1,6 +1,6 @@
 # MemoGarden Quickstart Guide
 
-**Last Updated:** 2026-02-11
+**Last Updated:** 2026-11-05
 
 Get started with MemoGarden in 5 minutes.
 
@@ -46,11 +46,11 @@ poetry install
 ### 3. Run the Server
 
 ```bash
-cd memogarden-api
+# From the repository root
 ./scripts/run.sh
 ```
 
-The API will be available at `http://localhost:5000`
+The development server (Flask) is available at `http://localhost:5000`. (Production gunicorn uses the port from TOML `[network] bind_port`, default 8080 — see [configuration.md](configuration.md).)
 
 ---
 
@@ -58,13 +58,15 @@ The API will be available at `http://localhost:5000`
 
 ### Create an Admin User
 
+Registration is **localhost-only and first-run only** — it fails once an admin exists.
+Passwords need at least 8 characters, with at least one letter and one digit.
+
 ```bash
-curl -X POST http://localhost:5000/api/v1/auth/register \
+curl -X POST http://localhost:5000/admin/register \
   -H "Content-Type: application/json" \
   -d '{
     "username": "admin",
-    "password": "changeme",
-    "is_admin": true
+    "password": "changeme123"
   }'
 ```
 
@@ -80,11 +82,11 @@ curl -X POST http://localhost:5000/api/v1/auth/register \
 ### Login and Get Token
 
 ```bash
-curl -X POST http://localhost:5000/api/v1/auth/login \
+curl -X POST http://localhost:5000/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "username": "admin",
-    "password": "changeme"
+    "password": "changeme123"
   }'
 ```
 
@@ -253,11 +255,36 @@ curl -X POST http://localhost:5000/mg \
 
 ---
 
+## Email Ingestion (Gmail Provider)
+
+Ingest your Gmail into the timeline as immutable Email facts (all mail
+except what is currently in TRASH or SPAM; attachments as metadata with
+content-addressed binaries on disk):
+
+```bash
+# Register the provider + verify OAuth (token stored in HACM)
+memogarden register provider --name gmail \
+    --module gmail_importer.provider --class GmailProvider \
+    --interval 3600 --config account=you@gmail.com ...
+
+# Hourly ingestion runs automatically once installed:
+./scripts/install-user-service.sh install \
+    --with-ingest-timer --ingest-account you@gmail.com --ingest-limit 1000
+
+# Verify integrity of the attachment store anytime
+cd providers/gmail-importer && poetry run python -m gmail_importer.ingest verify
+```
+
+See [memogarden-gmail-provider](https://github.com/memogarden/memogarden-gmail-provider)
+and [Deployment Guide](deployment.md) (user-session mode) for the full setup.
+
+---
+
 ## Next Steps
 
 1. **Read the API Documentation:** See [API Reference](api.md) for all endpoints
 2. **Explore Semantic API:** See `/mg` endpoint for advanced operations
-3. **Set Up Deployment:** See [Deployment Guide](deployment.md) for production setup
+3. **Set Up Deployment:** See [Deployment Guide](deployment.md) — user-session mode (laptop) or appliance mode (always-on server)
 4. **Review RFCs:** See `plan/` directory for architecture decisions
 
 ---
@@ -268,12 +295,12 @@ curl -X POST http://localhost:5000/mg \
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/v1/auth/register` | POST | Register user |
-| `/api/v1/auth/login` | POST | Login and get token |
+| `/admin/register` | POST | One-time admin registration (localhost, first run) |
+| `/auth/login` | POST | Login and get token |
 | `/api/v1/transactions` | POST | Create transaction |
 | `/api/v1/transactions` | GET | List transactions |
 | `/api/v1/transactions/{uuid}` | GET | Get single transaction |
-| `/api/v1/transactions/{uuid}` | PATCH | Edit transaction |
+| `/api/v1/transactions/{uuid}` | PUT | Edit transaction |
 | `/api/v1/transactions/{uuid}` | DELETE | Delete transaction |
 | `/health` | GET | Health check |
 
@@ -297,11 +324,12 @@ curl -X POST http://localhost:5000/mg \
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `MEMOGARDEN_SOIL_DB` | Soil database path | `./soil.db` |
-| `MEMOGARDEN_CORE_DB` | Core database path | `./core.db` |
-| `MEMOGARDEN_DATA_DIR` | Data directory | (current dir) |
-| `FLASK_SECRET_KEY` | Session signing | (auto-generated) |
-| `JWT_SECRET_KEY` | JWT signing | (auto-generated) |
+| `MEMOGARDEN_SOIL_DB` | Soil database path | `{data_dir}/soil.db` (verb-based, RFC-004) |
+| `MEMOGARDEN_CORE_DB` | Core database path | `{data_dir}/core.db` (verb-based, RFC-004) |
+| `MEMOGARDEN_DATA_DIR` | Data directory | verb-based, e.g. `~/.local/share/memogarden` for `run` |
+
+The JWT secret is configured via TOML (`[security] jwt_secret_key`), not an environment
+variable. See [configuration.md](configuration.md).
 
 ---
 

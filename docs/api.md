@@ -1,6 +1,6 @@
 # MemoGarden API Documentation
 
-**Last Updated:** 2026-02-14
+**Last Updated:** 2026-11-05
 **Version:** 0.1.0
 
 Complete reference for MemoGarden APIs - Semantic API, REST API, and Authentication.
@@ -20,7 +20,7 @@ Complete reference for MemoGarden APIs - Semantic API, REST API, and Authenticat
 
 ## API Overview
 
-MemoGarden provides two API interfaces:
+MemoGarden provides three API interfaces:
 
 ### Semantic API (`/mg`) - Primary Interface
 
@@ -41,10 +41,32 @@ The **REST API** provides predictable, resource-based endpoints for fixed-schema
 **Benefits:**
 - Traditional RESTful patterns
 - Predictable URL structure
-- Standard HTTP methods (GET, POST, PATCH, DELETE)
+- Standard HTTP methods (GET, POST, PUT, DELETE)
 - Easy integration with REST clients
 
 **Use for:** Web apps, mobile apps, simple integrations
+
+### Providers API (`/api/v1/providers`) — Ingestion Registry
+
+Registered providers are executed in-process by the server when due
+(heartbeat via the hourly `memogarden-ingest.timer`). Authentication for
+these endpoints: `X-API-Key: mg_sk_agent_...` header (API keys are **not**
+accepted as Bearer tokens — Bearer is JWT-only).
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/providers` | GET | List registered providers |
+| `/api/v1/providers` | POST | Register a provider (`{name, module, class, interval, config, ...}`) |
+| `/api/v1/providers/{name}` | GET | Provider manifest + last run status/detail |
+| `/api/v1/providers/{name}/run` | POST | Trigger a run (async 202, single-flight lock) |
+| `/api/v1/providers/{name}/run` | DELETE | Cancel a running run |
+| `/api/v1/providers/run` | POST | Run all due providers (heartbeat endpoint) |
+
+Registration requires the provider module to be importable in the server
+environment and its class to implement the Provider Protocol
+(`cls(config)` + `sync(since)` yielding Facts; optional
+`create_relations(fact)`). The gmail provider is published at
+[memogarden/memogarden-gmail-provider](https://github.com/memogarden/memogarden-gmail-provider).
 
 ---
 
@@ -134,7 +156,7 @@ curl http://localhost:8080/api/v1/transactions \
 | `/auth/login` | POST | Login and get JWT token |
 | `/auth/logout` | POST | Logout (no-op for stateless JWT) |
 | `/auth/me` | GET | Get current user info |
-| `/auth/register` | POST | Register new user (admin only) |
+| `/admin/register` | POST | One-time admin registration (localhost only, first run) |
 | `/api-keys/` | GET | List API keys |
 | `/api-keys/` | POST | Create new API key |
 | `/api-keys/<id>` | DELETE | Revoke API key |
@@ -579,7 +601,7 @@ curl -X POST http://localhost:8080/api/v1/transactions \
 
 **Update transaction:**
 ```bash
-curl -X PATCH http://localhost:8080/api/v1/transactions/core_xxx \
+curl -X PUT http://localhost:8080/api/v1/transactions/core_xxx \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -711,7 +733,7 @@ All timestamps use ISO 8601 format: `2026-02-14T10:30:00Z`
 | Type | Description |
 |------|-------------|
 | `Message` | Conversation message |
-| `Email` | Imported email |
+| `Email` | Imported email (gmail provider / mbox importer) |
 | `Note` | User note |
 | `ToolCall` | Agent tool invocation |
 
@@ -759,6 +781,7 @@ curl http://localhost:8080/status
 ## See Also
 
 - [Quickstart Guide](quickstart.md)
-- [Deployment Guide](deployment.md)
+- [Deployment Guide](deployment.md) — user-session mode and the ingestion heartbeat
 - [Configuration Reference](configuration.md)
+- [memogarden-gmail-provider](https://github.com/memogarden/memogarden-gmail-provider) — gmail ingestion provider
 - RFC-005 v7: API Design

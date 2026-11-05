@@ -481,7 +481,11 @@ JSON schemas in `fact_schemas.json` and `entity_schemas.json` serve as authorita
 
 ## Provider Plugin Interface
 
-**Conceptual design** (not yet implemented):
+**Implemented 2026-11-05** — registry (`providers` table in core.db),
+in-server runtime (single-flight lock, async runs, heartbeat
+`POST /api/v1/providers/run`), registration via the `memogarden` CLI
+(`memogarden register provider`), first provider: gmail (historyId
+incremental sync). Provider Protocol as designed:
 
 ```python
 class Provider(Protocol):
@@ -662,9 +666,11 @@ class EncryptionConfig:
 - Android app for comprehensive data capture
 
 **Implemented (post-v0.11):**
-- User-session systemd service units (login-scoped server + optional hourly
-  ingestion timer; `scripts/install-user-service.sh`; see Process Model and
-  Service Units)
+- User-session systemd service units (login-scoped server + hourly
+  provider-heartbeat timer; `scripts/install-user-service.sh`; see Process
+  Model and Service Units)
+- Provider Plugin Interface (core.db registry + in-server runtime +
+  `memogarden register provider`; gmail provider first)
 - Staging area architecture (external information processing)
 - Protective agents (toxic/sensitive content handling)
 - Project Studio integration

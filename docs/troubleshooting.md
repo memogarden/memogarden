@@ -115,10 +115,11 @@ sqlite3.OperationalError: database is locked
    sudo systemctl start memogarden
    ```
 
-3. **Increase timeout:**
+3. **Reduce lock contention:**
    ```bash
-   # Set longer timeout in environment
-   export MEMOGARDEN_DB_TIMEOUT=30
+   # The SQLite busy timeout is fixed in code (not configurable via env var).
+   # To avoid contention during maintenance, stop other writers first:
+   sudo systemctl stop memogarden
    ```
 
 ### Database corruption
@@ -298,7 +299,7 @@ curl -X POST http://localhost:8080/mg \
 
 3. **Secret key changed:**
    ```bash
-   # If JWT_SECRET_KEY changed, all tokens are invalidated
+   # If security.jwt_secret_key (TOML) changed, all tokens are invalidated
    # Users must login again
    ```
 
@@ -311,24 +312,20 @@ Permission denied: Only admins can create users
 
 **Solution:**
 ```bash
-# 1. Create admin user first (if none exists)
-# Visit http://localhost:8080/admin/register
+# 1. Create the admin user (localhost + first-run only; fails once an admin exists)
+curl -X POST http://localhost:8080/admin/register \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "changeme123"}'
 
 # 2. Login as admin
 curl -X POST http://localhost:8080/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username": "admin", "password": "changeme"}'
-
-# 3. Create user via API
-curl -X POST http://localhost:8080/api/v1/auth/register \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "newuser",
-    "password": "password123",
-    "is_admin": false
-  }'
+  -d '{"username": "admin", "password": "changeme123"}'
 ```
+
+**Note:** There is currently no API endpoint for creating additional users — the only
+registration route is the one-time, localhost-only admin registration. For agent or
+machine access, create an API key instead (`POST /api-keys/` with a Bearer token).
 
 ---
 
@@ -447,6 +444,46 @@ export MEMOGARDEN_BIND_ADDRESS=0.0.0.0
 [network]
 bind_address = "0.0.0.0"
 ```
+
+---
+
+## Gmail Ingestion (provider runtime)
+
+### Hourly timer fails instantly — "Result: resources" / service masked
+
+A 0-byte unit file at `~/.config/systemd/user/memogarden-ingest.service` is
+treated by systemd as a **mask** (symptom: timer fails at each fire with
+`Unit memogarden-ingest.service is masked`, provider `last_run` never
+advances). Regenerate the unit and reset the failed state:
+
+```bash
+./scripts/install-user-service.sh install --with-ingest-timer \
+    --ingest-account you@gmail.com --ingest-limit 1000
+systemctl --user reset-failed memogarden-ingest.service memogarden-ingest.timer
+```
+
+(Seen 2026-11-05: the installer heredoc referenced an env var that is only
+defined at runtime via `EnvironmentFile`, aborting the write mid-way.)
+
+### `invalid_grant` / 401 from Gmail
+
+The OAuth refresh token expired or was revoked. Re-authorize:
+`cd providers/gmail-importer && poetry run python -m gmail_importer.ingest auth-login`
+(follows the consent URL in a browser; token lands in HACM).
+
+### "Missing required Email data fields" skips
+
+Validation requires `rfc_message_id`, `from_address`, `sent_at` only —
+subject/body/To are deliberately optional. A message failing THESE is
+genuinely un-ingestible (e.g. no Message-ID → cannot deduplicate) and is
+retried each run by the set-based cursor; it occupies one batch slot but
+never blocks progress.
+
+### Messages deleted in Gmail mid-sync
+
+Fetch 404s are treated as mail lifecycle: the id is added to
+`gmail-excluded-ids.json` and never fetched again; `messagesDeleted`
+history records exclude proactively. Neither counts as an error.
 
 ---
 
