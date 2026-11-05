@@ -51,7 +51,8 @@ applications          (budget app, etc.)
 
 ### 2.1 Repository Layout
 
-MemoGarden uses a multi-repo structure with three separate Git repositories:
+MemoGarden uses a multi-repo structure with several separate Git repositories
+(listed in the workspace `AGENTS.md`; the three below predate the others):
 
 **memogarden (Root Repository)** - Planning, scripts, meta-configuration
 ```
@@ -122,6 +123,33 @@ MemoGarden uses a multi-repo structure with three separate Git repositories:
 â"‚   â"”â"€â"€ schemas/                     # Request/response schemas
 â"”â"€â"€ tests/
 ```
+
+**memogarden-client (Client SDK)** - Python SDK and `memogarden` CLI
+```
+/memogarden-client/                   # Git root: https://github.com/memogarden/memogarden-client
+├── pyproject.toml                    # Package configuration;
+│                                     #   [tool.poetry.scripts] memogarden = "mg_client.cli:main"
+├── mg_client/                         # Import as "mg_client"
+│   ├── client.py                     # MemoGardenClient / SyncMemoGardenClient
+│   ├── auth.py                       # API-key authentication (mg_sk_ keys, Bearer)
+│   ├── semantic.py                   # Semantic API (/mg) verb wrappers
+│   ├── providers.py                  # Provider registry API (/api/v1/providers) wrapper
+│   └── cli.py                        # `memogarden` CLI (verb-first grammar)
+└── tests/
+```
+
+**Command surfaces:** the `memogarden` name has two distinct surfaces. Domain
+verbs (`memogarden register provider`, …) live in **memogarden-client** and
+talk to a running server over its API — the CLI is a client like any other.
+Server-lifecycle verbs (`memogarden serve|run|deploy`, §3.1) resolve to the
+server package's venv (the systemd unit invokes them); they are not part of
+the client SDK. The client CLI is placed on PATH by
+`scripts/install-cli.sh` (`install`/`uninstall`/`status`; default method
+`uv tool install --editable` — no versioning, always current with the
+checkout — with a symlink-into-`~/.local/bin` fallback). Server-lifecycle
+verbs have no entry point yet; when introduced they will share the
+`memogarden` name via verb routing (bare `serve|run|deploy|repair` → server,
+`<verb> <noun>` → client), replacing the retired `memogarden-wrapper.sh`.
 
 **Note:** Schemas are bundled into `memogarden-system` during build via `scripts/copy-schemas.sh`. They are not a separate directory in the root repository.
 
@@ -693,7 +721,9 @@ def load_config(path: Path) -> Config:
    - **Deferred:** Will address in Schema Migration RFC (future work)
 
 3. **Provider registration**: Should providers be discovered via entry points or explicit configuration?
-   - **Recommendation:** Entry points for discovery, config for enabling/disabling
+   - **Resolved (2026-11-05):** Neither — registration is an API resource backed by a
+     server-side registry, and providers execute in-process in the server. See §12.2
+     (supersedes the entry-point discovery sketch previously in §12.2).
 
 4. **Wheel bundling**: Should we provide meta-packages that install system + api together?
    - **Recommendation:** Yes, create `memogarden` meta-package for convenience
@@ -716,15 +746,70 @@ system/schemas/migrations/
 â””â”€â”€ 003_add_context_frames.sql
 ```
 
-### 12.2 Provider Plugin System
+### 12.2 Provider Registration (supersedes entry-point discovery)
 
-Entry point-based provider discovery:
+Providers execute **inside the server process** — the process that owns the
+databases per the PRD's client-server process model. They are not sidecar
+processes and never open the SQLite files directly. Registration is an **API
+resource**, not a config file or a packaging entry point.
 
-```toml
-# provider package pyproject.toml
-[project.entry-points."memogarden.providers"]
-gmail = "gmail_provider:GmailProvider"
+**Registry:** `providers` table in core.db — an infrastructure table alongside
+`api_keys`, explicitly outside the entity/delta machinery (deployment config,
+not user state). Columns: name, module, class, interval, enabled, description,
+config JSON, plus server-owned bookkeeping (registered_at, last_run_at,
+last_status, next_due_at).
+
+**Endpoints** (auth: existing JWT / API-key middleware):
+
+| Endpoint | Meaning |
+|----------|---------|
+| `POST /api/v1/providers` | Register a provider |
+| `GET /api/v1/providers` | List providers with status |
+| `GET /api/v1/providers/{name}` | Single provider status |
+| `PATCH /api/v1/providers/{name}` | Enable/disable, update config/interval |
+| `POST /api/v1/providers/run` | Run all due providers (heartbeat entry point; 202 + triggered run ids) |
+| `POST /api/v1/providers/{name}/run` | Trigger a run (async: 202 + run id; single-flight lock per provider) |
+
+**Execution:** systemd timers remain the heartbeat (per the PRD process model,
+scheduled ingestion runs as user timers). A timer pokes the run endpoint; the
+server decides due-ness from each provider's `interval` against `last_run_at`
+and executes due providers in-process. Provider credentials stay in HACM; the
+registry stores references only.
+
+**CLI:** `memogarden register provider` (memogarden-client) is a thin
+authenticated client of these endpoints, using the verb-first grammar that
+mirrors RFC-005 semantic verbs (`memogarden <verb> <noun> …`).
+
+**Registration request schema** (`POST /api/v1/providers`):
+
+```json
+{
+  "name": "gmail",                         // required; slug ^[a-z][a-z0-9_-]{0,63}$
+  "module": "gmail_importer.provider",     // required; importable Python module
+  "class": "GmailProvider",                // required; conforms to Provider Protocol (PRD)
+  "interval": 3600,                        // optional; seconds between runs, >= 60 (default 3600)
+  "enabled": true,                         // optional; default true
+  "description": "Gmail inbox ingestion",  // optional; human-readable
+  "config": { }                            // optional; provider-specific JSON object
+}
 ```
+
+Constraints:
+
+- `config` is opaque to the server (PRD: Core does not know provider-specific
+  schemas). It MUST contain **references, not secrets** — credential material
+  stays in HACM; file paths (`~`-form allowed) are expanded with the server
+  process's HOME, which is mode-dependent per §3.2 (`run` vs `serve`).
+- At registration the server imports `module`, verifies `class` conforms to
+  the Provider Protocol, and derives `capabilities` (e.g.
+  `["sync", "create_relations"]`). A provider module that fails to import at
+  server startup degrades to disabled + diagnostic and never blocks startup
+  (PRD always-available-startup).
+- Registering an already-registered `name` returns **409 Conflict**; changes
+  go through `PATCH`.
+
+**Response (201)** echoes the request fields plus server-assigned ones:
+`capabilities`, `registered_at`, `last_run_at`, `last_status`, `next_due_at`.
 
 ### 12.3 Multi-Platform Binary Distribution
 
@@ -751,6 +836,7 @@ gmail = "gmail_provider:GmailProvider"
 |---------|------|---------|
 | 1.0 | 2026-01-30 | Initial draft |
 | 2.0 | 2026-02-02 | **Major revision**: Verb-based deployment, explicit resource profiles, removed hardware detection, added systemd unit templates, clarified config structure |
+| 2.1 | 2026-11-05 | Provider registration resolved: server-side registry + API-resource registration + in-process execution (§12.2, supersedes entry-point discovery); added memogarden-client repo and `memogarden` CLI entry point to §2.1; documented client vs server command surfaces |
 
 ---
 
