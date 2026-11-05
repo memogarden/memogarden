@@ -23,6 +23,8 @@ from system.soil import Soil
 from system.soil.fact import Fact, generate_soil_uuid
 from system.soil.relation import SystemRelation
 
+from gmail_importer.gmail_api import GmailApiError
+
 from gmail_importer.importer import GmailImporter
 
 logger = logging.getLogger(__name__)
@@ -97,8 +99,10 @@ class AttachmentExtractor:
         self.stats = {
             "emails_scanned": 0,
             "emails_covered": 0,
+            "emails_deleted": 0,
             "attachments_found": 0,
             "downloaded": 0,
+            "attachments_missing": 0,
             "skipped_existing": 0,
             "errors": 0,
         }
@@ -150,6 +154,16 @@ class AttachmentExtractor:
                     continue
                 try:
                     message = api.get_message(email.metadata["gmail_message_id"])
+                except GmailApiError as e:
+                    if e.status_code == 404:
+                        # message deleted at the source since ingestion — its
+                        # already-extracted attachments remain valid history
+                        self.stats["emails_deleted"] += 1
+                        logger.info("Email %s deleted at source; skipping attachments", email.uuid)
+                        continue
+                    self.stats["errors"] += 1
+                    logger.warning("Refetch failed for %s: %s", email.uuid, e)
+                    continue
                 except Exception as e:
                     self.stats["errors"] += 1
                     logger.warning("Refetch failed for %s: %s", email.uuid, e)
@@ -172,6 +186,13 @@ class AttachmentExtractor:
                         self._extract_one(api, email, attachment_id, filename, part)
                         existing[(email.uuid, filename)] = "new"
                         self.stats["downloaded"] += 1
+                    except GmailApiError as e:
+                        if e.status_code == 404:
+                            self.stats["attachments_missing"] += 1
+                            logger.warning("Attachment %s/%s deleted at source", email.uuid, filename)
+                        else:
+                            self.stats["errors"] += 1
+                            logger.warning("Extraction failed for %s/%s: %s", email.uuid, filename, e)
                     except Exception as e:
                         self.stats["errors"] += 1
                         logger.warning("Extraction failed for %s/%s: %s", email.uuid, filename, e)

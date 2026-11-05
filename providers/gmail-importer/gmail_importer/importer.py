@@ -62,6 +62,7 @@ class GmailImporter(EmailImporter):
         batch_size: int = 50,
         search_cache_path: Optional[str] = None,
         sync_state_path: Optional[str] = None,
+        excluded_ids_path: Optional[str] = None,
     ):
         super().__init__(soil, batch_size)
         self.account_id = account_id
@@ -74,6 +75,10 @@ class GmailImporter(EmailImporter):
         # Incremental mode only: path of the historyId sync state
         # (plan/gmail-incremental-sync-design.md).
         self.sync_state_path = sync_state_path
+        # All modes: gmail message ids that are gone at the source (deleted,
+        # purged) — persisted so they stop being selected for fetch. They are
+        # NOT in the done set: they were never ingested, and never will be.
+        self.excluded_ids_path = excluded_ids_path
         self._limit: Optional[int] = None
 
     # ------------------------------------------------------------------
@@ -142,15 +147,18 @@ class GmailImporter(EmailImporter):
         # flows through instance state set by import_oldest()/import_next().
         verbose = getattr(self, "_verbose", verbose)
 
+        self.stats.setdefault("deleted", 0)
         if getattr(self, "_progressive", False):
             done = getattr(self, "_ingested_ids", set())
-            batch_ids, exhausted = self._next_batch_ids(api, done, self._limit or 100)
+            excluded = getattr(self, "_excluded_ids", set())
+            batch_ids, exhausted = self._next_batch_ids(api, done | excluded, self._limit or 100)
             if exhausted:
                 self._log_progress(verbose, len(done))
                 return
         elif getattr(self, "_incremental", False):
             done = getattr(self, "_ingested_ids", set())
-            batch_ids = self._incremental_batch_ids(api, done, self._limit or 500)
+            excluded = getattr(self, "_excluded_ids", set())
+            batch_ids = self._incremental_batch_ids(api, done | excluded, self._limit or 500)
             if not batch_ids:
                 if verbose:
                     print("[incremental] no new mail since stored historyId")
@@ -163,10 +171,25 @@ class GmailImporter(EmailImporter):
 
         realized_at = datetime.now(timezone.utc).isoformat()
         label_filter = getattr(self, "_label_filter", False)
+        excluded = getattr(self, "_excluded_ids", None)
         for message_id in batch_ids:
             try:
                 message = api.get_message(message_id)
             except GmailApiError as e:
+                if e.status_code == 404:
+                    # 404 on fetch = the message was deleted at the source
+                    # after being listed (or user-purged). Exclude it
+                    # permanently so it stops occupying batch slots, and do
+                    # NOT count it as an error — this is mail lifecycle.
+                    self._exclude_ids([message_id], "deleted_at_source")
+                    if excluded is not None:
+                        excluded.add(message_id)
+                    self.stats["deleted"] += 1
+                    logger.info(
+                        "Message %s deleted at source — excluded from future batches",
+                        message_id,
+                    )
+                    continue
                 self.stats["errors"] += 1
                 logger.warning("Failed to fetch message %s: %s", message_id, e)
                 continue
@@ -197,6 +220,8 @@ class GmailImporter(EmailImporter):
     def _next_batch_ids(
         self, api: GmailApiClient, done: set[str], limit: int
     ) -> tuple[list[str], bool]:
+        """`done` here is the combined skip set: ingested ids plus ids
+        excluded as deleted-at-source."""
         """Ids of up to `limit` oldest messages NOT in the done set.
 
         The done set is the gmail_message_ids of every Email fact already in
@@ -243,6 +268,38 @@ class GmailImporter(EmailImporter):
     # historyId incremental sync
     # ------------------------------------------------------------------
 
+    def _load_excluded_ids(self) -> set[str]:
+        """gmail message ids known gone at the source (deleted/purged)."""
+        if not self.excluded_ids_path:
+            return set()
+        try:
+            doc = json.loads(Path(self.excluded_ids_path).read_text())
+        except (OSError, ValueError):
+            return set()
+        ids = doc.get("ids")
+        return set(ids) if isinstance(ids, list) else set()
+
+    def _exclude_ids(self, ids: list[str], reason: str) -> None:
+        if not self.excluded_ids_path or not ids:
+            return
+        try:
+            doc = json.loads(Path(self.excluded_ids_path).read_text())
+        except (OSError, ValueError):
+            doc = {"ids": []}
+        known = {i for i in doc.get("ids", []) if isinstance(i, str)}
+        added = [i for i in ids if i not in known]
+        if not added:
+            return
+        doc["ids"] = sorted(known | set(added))
+        reasons = doc.setdefault("reasons", {})
+        reasons[reason] = reasons.get(reason, 0) + len(added)
+        doc["updated_at"] = datetime.now(timezone.utc).isoformat()
+        state_path = Path(self.excluded_ids_path)
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = state_path.with_suffix(state_path.suffix + ".tmp")
+        tmp.write_text(json.dumps(doc))
+        tmp.rename(state_path)
+
     def _load_sync_state(self) -> dict:
         if not self.sync_state_path:
             return {}
@@ -274,6 +331,8 @@ class GmailImporter(EmailImporter):
     def _incremental_batch_ids(
         self, api: GmailApiClient, done: set[str], limit: int
     ) -> list[str]:
+        """`done` here is the combined skip set: ingested ids plus ids
+        excluded as deleted-at-source."""
         """Gmail message ids to ingest this run, per the stored historyId.
 
         Candidates = messagesAdded + labelsRemoved records (rescue events).
@@ -305,6 +364,10 @@ class GmailImporter(EmailImporter):
                         candidates.append(entry["message"]["id"])
                     for entry in record.get("labelsRemoved") or []:
                         candidates.append(entry["message"]["id"])
+                    for entry in record.get("messagesDeleted") or []:
+                        # Gmail-native deletion signal: exclude before fetch
+                        self._exclude_ids([entry["message"]["id"]], "messagesDeleted")
+                        done.add(entry["message"]["id"])
                 token = resp.get("nextPageToken")
                 if not token:
                     break
@@ -362,6 +425,8 @@ class GmailImporter(EmailImporter):
         self._verbose = verbose
         self._log_verbose = verbose
         self._progressive = True
+        self._excluded_ids = self._load_excluded_ids()
+        self.stats.setdefault("deleted", 0)
         try:
             with self.soil:
                 self._ingested_ids = {
@@ -373,6 +438,7 @@ class GmailImporter(EmailImporter):
         finally:
             self._progressive = False
             self._ingested_ids = None
+            self._excluded_ids = None
             self._limit = None
 
     def import_incremental(self, limit: int = 500, verbose: bool = True) -> dict:
@@ -396,6 +462,7 @@ class GmailImporter(EmailImporter):
         self._log_verbose = verbose
         self._incremental = True
         self._label_filter = True
+        self._excluded_ids = self._load_excluded_ids()
         try:
             with self.soil:
                 self._ingested_ids = {
@@ -412,6 +479,7 @@ class GmailImporter(EmailImporter):
             self._incremental = False
             self._label_filter = False
             self._ingested_ids = None
+            self._excluded_ids = None
             self._pending_history_id = None
             self._limit = None
 
