@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# TENTATIVE (memogarden/memogarden#1): installation procedure not finalised;
+# uv-tool default and symlink fallback both verified manually on one machine.
 # Install the `memogarden` CLI (memogarden-client) onto PATH.
 #
 # Scope (deliberate, see RFC-004 §2.1 "Command surfaces"):

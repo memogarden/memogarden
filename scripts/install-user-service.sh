@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# TENTATIVE (memogarden/memogarden#1): this script works on the dev machine
+# but the installation procedure is not finalised — fresh-machine install
+# has never been rehearsed end to end. Expect churn.
 # Install MemoGarden as a user-session systemd service (PRD: Process Model
 # and Service Units — user-session mode).
 #
