@@ -759,7 +759,9 @@ not user state). Columns: name, module, class, interval, enabled, description,
 config JSON, plus server-owned bookkeeping (registered_at, last_run_at,
 last_status, next_due_at).
 
-**Endpoints** (auth: existing JWT / API-key middleware):
+**Endpoints** (auth: existing JWT / API-key middleware; API keys travel
+via the `X-API-Key` header per docs/api.md — Bearer-for-API-keys is
+undecided, memogarden-api issue #19):
 
 | Endpoint | Meaning |
 |----------|---------|
@@ -808,6 +810,28 @@ Constraints:
 - Registering an already-registered `name` returns **409 Conflict**; changes
   go through `PATCH`.
 
+**Origin pin (the arbitrary-code boundary):** registration executes
+`importlib` — without limits, an API-key holder could load any module on
+the server's `sys.path` as the server user. The server therefore accepts
+only modules whose origin resolves under an allowlisted **provider root**
+(2026-11-05, api PR #14):
+
+- Roots: `MEMOGARDEN_PROVIDER_ROOTS` (os.pathsep-separated) overrides;
+  default `$MEMOGARDEN_DATA_DIR/providers` when the data dir is pinned;
+  nothing configured = unpinned (development mode).
+- A **plugin-dir loader** loads `<root>/<name>.py` or
+  `<root>/<name>/__init__.py` by bare module name — dropping a provider
+  file into a root and registering it needs no venv work. Installed
+  providers (Poetry path-dep checkouts, e.g. the future
+  `memogarden-gmail-provider`) import normally with their checkout under
+  a configured root.
+- Realpath both sides (symlinked editable installs); namespace packages
+  rejected. Execution re-checks the origin at run time — tightening the
+  roots between registration and run fails the run, it never executes.
+- This is activation control, **not** a sandbox: the operator decides
+  what code exists in the roots. Genuinely untrusted providers would
+  need process-level isolation, deliberately out of scope.
+
 **Response (201)** echoes the request fields plus server-assigned ones:
 `capabilities`, `registered_at`, `last_run_at`, `last_status`, `next_due_at`.
 
@@ -837,6 +861,7 @@ Constraints:
 | 1.0 | 2026-01-30 | Initial draft |
 | 2.0 | 2026-02-02 | **Major revision**: Verb-based deployment, explicit resource profiles, removed hardware detection, added systemd unit templates, clarified config structure |
 | 2.1 | 2026-11-05 | Provider registration resolved: server-side registry + API-resource registration + in-process execution (§12.2, supersedes entry-point discovery); added memogarden-client repo and `memogarden` CLI entry point to §2.1; documented client vs server command surfaces |
+| 2.2 | 2026-11-05 | §12.2 origin pin: registration activates operator-placed code only (provider roots, plugin-dir loader, runtime re-check); auth transport note (X-API-Key canonical, Bearer-for-API-keys undecided) |
 
 ---
 
