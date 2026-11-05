@@ -241,6 +241,7 @@ def _make_importer(args, sync_cache=False):
             search_cache_path=(
                 str(args.data_dir / "gmail-search-cache.json") if sync_cache else None
             ),
+            excluded_ids_path=str(args.data_dir / "gmail-excluded-ids.json"),
         )
     return importer, hacm_path, passphrase_file, passphrase
 
@@ -300,6 +301,7 @@ def cmd_incremental(args) -> int:
             hacm_path=str(hacm_path),
             passphrase=passphrase,
             sync_state_path=str(args.data_dir / "gmail-sync-state.json"),
+            excluded_ids_path=str(args.data_dir / "gmail-excluded-ids.json"),
         )
     try:
         stats = importer.import_incremental(limit=args.limit, verbose=not args.quiet)
