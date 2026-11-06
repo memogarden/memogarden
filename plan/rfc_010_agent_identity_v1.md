@@ -1,7 +1,7 @@
 # RFC-010: Agent Identity & Attribution
 
-**Version:** 1.0
-**Status:** Draft
+**Version:** 1.1
+**Status:** Implemented (feat/agent-identity)
 **Author:** JS
 **Date:** 2026-11-06
 
@@ -315,7 +315,7 @@ Authorization: Bearer <JWT>
 }
 ```
 
-Errors: `401` not JWT; `409` label collision with an existing agent; `422`
+Errors: `401` not JWT; `409` label collision with an existing agent; `400`
 schema violation.
 
 ### 6.2 List Agents
@@ -365,8 +365,8 @@ Response unchanged from today plus, when bound:
 }
 ```
 
-Errors: `404` unknown agent; `403` agent owned by another user; `422`
-malformed `agent_id`.
+Errors: `404` unknown or malformed agent id; `403` agent owned by another
+user; `400` malformed request.
 
 This is the rotation and multi-machine path: mint key, bind to the *same*
 agent, history stays continuous (G2).
@@ -487,6 +487,11 @@ Implementation may vary; these must not.
 **INV-1. Read-only authentication.** No request, authenticated or not,
 ever creates or modifies an identity row (`entity` type Agent/ApiKey,
 `api_keys`). Identity writes occur only in JWT-gated management endpoints.
+Carve-out (pre-existing, spec-sanctioned): `update_last_seen` timestamps a
+key on successful authentication — it creates nothing and conveys no
+identity; it remains the shared-key forensic signal (§9). Identity entity
+types are additionally blocked from Semantic API create/edit/forget so no
+verb can mint or mutate identity either.
 
 **INV-2. Issuance is attributed.** Every Agent entity's creation is
 traceable to a JWT-authenticated operator action (an Action fact with
@@ -686,3 +691,4 @@ Per `memogarden-testing` conventions (`run_tests.sh`, pytest) in
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | 2026-11-06 | Initial draft. Agent entity + key binding; explicit operator-gated issuance (INV-1–7); attribution pipeline with actor_type; /auth/me introspection; explicit-binding migration. Lazy backfill rejected (§2). |
+| 1.1 | 2026-11-06 | Implementation revision after review. INV-1 gains the last_seen carve-out and the Semantic-API identity-type block (Agent/Operator rejected in create/edit/forget — a pre-existing baseline entry would otherwise let any key mint identity). Mint/bind write operator Action facts (INV-2 realized via the `register`/`bind` operations). Fact-data equality filters added to `query` so §7.2's traceability queries are executable. Status codes aligned to implementation (403 foreign owner; 400 validation; 404 unknown/malformed id; 409 conflicts). |

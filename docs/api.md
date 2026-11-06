@@ -155,17 +155,30 @@ automated clients — `agent` is the only key type (every key looks like
 `mg_sk_agent_<64 hex>`). The flow: the human operator logs in (JWT) and
 mints **one key per agent** via `POST /api-keys/`, naming it after the agent
 (e.g. `{"name": "claude-code"}`); the name shows up in key listings
-(`GET /api-keys/`) so operators can tell agents apart.
-Agents never see a login flow — they hold a key and send it as
-`X-API-Key`. Key-management endpoints accept JWT only, so a key holder
-cannot list, create, or revoke keys. Keys carry the full authority of the
-owning user; there are no per-key scopes.
+(`GET /api-keys/`) so operators can tell agents apart. Agents never see a
+login flow — they hold a key and send it as `X-API-Key`. Key-management
+endpoints accept JWT only, so a key holder cannot list, create, or revoke
+keys. Keys carry the full authority of the owning user; there are no
+per-key scopes.
 
-Attribution note: Semantic API operations are audited on Action facts with
-`actor` set to the owning **user's username** — the key name is not
-recorded. RFC-005 envisions `actor` referencing an Agent entity for
-per-agent traceability; until that lands, per-agent attribution is limited
-to key management metadata (`last_seen` per key).
+**Agent identity (RFC-010):** keys can be *bound* to an `Agent` entity —
+minted by the operator via `POST /agents`. Bound keys attribute their
+operations to the agent: Action facts and the `/mg` response envelope
+carry `actor = core_<agent uuid>` + `actor_type = "agent"`; unbound keys
+keep `actor = username` with `actor_type = "api_key"` (a queryable
+attribution-gap marker); JWT sessions use `actor_type = "operator"`.
+Identity issuance is explicit and operator-gated — no code path in
+authentication creates identity state. Bind at key creation
+(`agent_id` field) or later via `PATCH /api-keys/<id>`; rotation and
+multi-machine = new keys bound to the same agent. Agents introspect
+their canonical identity via `GET /auth/me` with their key. See
+[RFC-010](../plan/rfc_010_agent_identity_v1.md) for the full spec.
+
+| Auth state | `actor` | `actor_type` |
+|------------|---------|--------------|
+| Key bound to agent | `core_<agent uuid>` | `agent` |
+| Key unbound | owning username | `api_key` |
+| JWT session | username | `operator` |
 
 **Create API key:**
 ```bash
@@ -198,11 +211,56 @@ curl http://localhost:8080/api/v1/transactions \
 |----------|--------|-------------|
 | `/auth/login` | POST | Login and get JWT token |
 | `/auth/logout` | POST | Logout (no-op for stateless JWT) |
-| `/auth/me` | GET | Get current user info |
+| `/auth/me` | GET | Identity introspection — user info (JWT) or agent identity (key); includes `actor_type`/`actor` |
 | `/admin/register` | POST | One-time admin registration (localhost only, first run) |
-| `/api-keys/` | GET | List API keys |
-| `/api-keys/` | POST | Create new API key |
+| `/api-keys/` | GET | List API keys (includes `agent_id`) |
+| `/api-keys/` | POST | Create new API key (optional `agent_id` to bind, RFC-010) |
+| `/api-keys/<id>` | PATCH | Bind / re-bind / unbind an Agent entity (RFC-010) |
 | `/api-keys/<id>` | DELETE | Revoke API key |
+| `/agents` | POST | Mint an Agent entity (JWT only, RFC-010) |
+| `/agents` | GET | List agents with bound key prefixes (JWT only, RFC-010) |
+
+### Agent Identity (RFC-010)
+
+```bash
+# Mint an agent (JWT)
+curl -X POST http://localhost:8080/agents \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"label": "claude-code", "description": "ZCode sessions on the laptop"}'
+# → 201 {"agent_id": "core_...", "label": "claude-code", ...}
+
+# Bind at key creation (rotation / multi-machine: new key, same agent_id)
+curl -X POST http://localhost:8080/api-keys/ \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "claude-code", "agent_id": "core_..."}'
+
+# Bind an existing key (the migration path; null unbinds)
+curl -X PATCH http://localhost:8080/api-keys/<key-id> \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id": "core_..."}'
+
+# An agent discovers its canonical identity
+curl http://localhost:8080/auth/me -H "X-API-Key: mg_sk_agent_..."
+# → {"actor_type": "agent", "actor": "core_...", "label": "claude-code", ...}
+```
+
+Per-agent traceability via the Semantic API `query` verb (fact-data
+equality filters):
+
+```bash
+# One agent's operations
+curl -X POST http://localhost:8080/mg -H "X-API-Key: mg_sk_agent_..." \
+  -d '{"op": "query", "target_type": "fact", "type": "Action",
+       "filters": {"actor": "core_..."}, "count": 50}'
+
+# Attribution gaps (key authority without agent identity)
+curl -X POST http://localhost:8080/mg -H "X-API-Key: mg_sk_agent_..." \
+  -d '{"op": "query", "target_type": "fact", "type": "Action",
+       "filters": {"actor_type": "api_key"}, "count": 50}'
+```
 
 ---
 
