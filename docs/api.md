@@ -1,6 +1,6 @@
 # MemoGarden API Documentation
 
-**Last Updated:** 2026-11-05
+**Last Updated:** 2026-11-06
 **Version:** 0.1.0
 
 Complete reference for MemoGarden APIs - Semantic API, REST API, and Authentication.
@@ -68,6 +68,32 @@ environment and its class to implement the Provider Protocol
 `create_relations(fact)`). The gmail provider is published at
 [memogarden/memogarden-gmail-provider](https://github.com/memogarden/memogarden-gmail-provider).
 
+**CLI:** the `memogarden` CLI ([memogarden-client](../memogarden-client/README.md))
+wraps registration — `memogarden register provider` posts to this endpoint:
+
+```bash
+export MEMOGARDEN_URL=http://localhost:8600
+export MEMOGARDEN_API_KEY=mg_sk_agent_...
+
+# Field flags (name, module, class are required)
+memogarden register provider \
+    --name gmail \
+    --module gmail_importer.provider \
+    --class GmailProvider \
+    --interval 3600 \
+    --config batch_limit=1000
+
+# Or a JSON payload file / stdin ('-' reads stdin)
+memogarden register provider --file payload.json
+```
+
+Optional flags: `--interval` (seconds, >= 60, default 3600),
+`--description`, `--disabled`, `--config KEY=VALUE` (repeatable; VALUE is
+parsed as JSON when possible). `--file` takes a JSON object with the same
+fields and cannot be combined with field flags. Exit codes: 0 success,
+1 error, 2 usage error. Run listing/runs via the endpoints above (no CLI
+verbs yet — the grammar is `memogarden <verb> <noun>`, RFC-005 verbs).
+
 ---
 
 ## Authentication
@@ -123,6 +149,23 @@ curl http://localhost:8080/api/v1/transactions \
 1. Create API key via API or UI
 2. Include key in `X-API-Key` header
 3. Keys never expire (unless revoked)
+
+**Agent auth model:** API keys are the intended credentials for agents and
+automated clients — `agent` is the only key type (every key looks like
+`mg_sk_agent_<64 hex>`). The flow: the human operator logs in (JWT) and
+mints **one key per agent** via `POST /api-keys/`, naming it after the agent
+(e.g. `{"name": "claude-code"}`); the name shows up in key listings
+(`GET /api-keys/`) so operators can tell agents apart.
+Agents never see a login flow — they hold a key and send it as
+`X-API-Key`. Key-management endpoints accept JWT only, so a key holder
+cannot list, create, or revoke keys. Keys carry the full authority of the
+owning user; there are no per-key scopes.
+
+Attribution note: Semantic API operations are audited on Action facts with
+`actor` set to the owning **user's username** — the key name is not
+recorded. RFC-005 envisions `actor` referencing an Agent entity for
+per-agent traceability; until that lands, per-agent attribution is limited
+to key management metadata (`last_seen` per key).
 
 **Create API key:**
 ```bash
