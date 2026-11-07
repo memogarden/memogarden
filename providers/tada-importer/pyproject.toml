@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "tada-importer"
+version = "0.1.0"
+description = "MemoGarden tada Importer — task history from tada's HTTP API into Soil as Task facts"
+authors = ["MemoGarden Contributors"]
+readme = "README.md"
+packages = [{include = "tada_importer"}]
+
+[tool.poetry.dependencies]
+python = "^3.13"
+memogarden-system = {path = "../../memogarden-system", develop = true}
+
+# HTTP transport is stdlib urllib — no runtime deps beyond memogarden-system.
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

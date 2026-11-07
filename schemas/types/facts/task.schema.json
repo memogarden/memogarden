@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.memogarden.net/items/task.schema.json",
+  "title": "Task",
+  "description": "Generic task-completion record from any task source. Extends the base Item directly (no description body — content lives in linked Note facts). Provider-specific extensions live in metadata.",
+  "allOf": [
+    {
+      "$ref": "item.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "_type": {
+          "const": "Task"
+        },
+        "source_id": {
+          "type": "string",
+          "description": "Native task id in the source system (dedup key; the Task analogue of Email.rfc_message_id)",
+          "examples": ["01a1a5fc-52cf-768a-8261-e3b94da7972a"]
+        },
+        "title": {
+          "type": "string",
+          "description": "Task title at resolution time",
+          "examples": ["Export bank statements"]
+        },
+        "kind": {
+          "type": "string",
+          "description": "Entry kind; documented convention 'task' | 'event', free string",
+          "examples": ["task"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["completed", "cancelled", "skipped"],
+          "description": "Terminal state of the task ('skipped' reserved for sources that record skips)",
+          "examples": ["completed"]
+        },
+        "status_updated_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the task reached this status (completion / don't-do decision / skip decision time)",
+          "examples": ["2026-11-06T10:41:00+00:00"]
+        },
+        "start_at": {
+          "type": "string",
+          "description": "Scheduled slot, if any (ISO 8601 UTC)",
+          "examples": ["2026-11-06T01:30:00+00:00"]
+        },
+        "duration": {
+          "type": "string",
+          "description": "ISO-8601 duration, as given by the source",
+          "examples": ["PT1H"]
+        },
+        "tags": {
+          "type": "array",
+          "description": "Tags at resolution time",
+          "items": {
+            "type": "string"
+          },
+          "examples": [["buy"]]
+        }
+      },
+      "required": ["source_id", "title", "status", "status_updated_at"]
+    }
+  ]
+}

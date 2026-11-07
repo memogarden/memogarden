@@ -1,0 +1,162 @@
+# MemoGarden Task Item Schema
+# Language-agnostic definition for Task items in Soil
+
+# ==============================================================================
+# ITEM TYPE
+# ==============================================================================
+type: Task
+extends: Item (base)
+description: >
+  Generic task-completion record from any task source (tada now; other task
+  systems later). One Task fact = a task's terminal state as recorded by its
+  source system, immutable once realized. Provider-specific extensions live in
+  METADATA — data carries only generic task fields.
+  Content (item notes) is stored in separate Note facts linked via a
+  `contained_by` relation (mirroring the Attachment→Email precedent), so this
+  type extends the base Item directly rather than Note: it carries a title but
+  no description body.
+
+# ==============================================================================
+# DATA FIELDS (Source-Agnostic Task Model)
+# ==============================================================================
+# These fields are stored in Item.data JSON and represent the core task.
+# All task providers should map their native format to these fields.
+
+data:
+  # Identity and deduplication
+  source_id:
+    type: string
+    required: true
+    description: Native task id in the source system. The dedup key — the
+      Task analogue of Email.rfc_message_id. Every task source has one;
+      cross-source uniqueness is guarded by metadata.source.
+    example: "01a1a5fc-52cf-768a-8261-e3b94da7972a"
+
+  # Content
+  title:
+    type: string
+    required: true
+    description: Task title at resolution time
+    example: "Export bank statements"
+
+  kind:
+    type: string
+    required: false
+    description: Entry kind; documented convention 'task' | 'event' (free
+      string, extensible by schema revision)
+    example: "task"
+
+  # Terminal state
+  status:
+    type: string
+    required: true
+    enum: ["completed", "cancelled", "skipped"]
+    description: >
+      Terminal state of the task. Live/open tasks stay out of scope until the
+      mutable-item supersession story exists. 'skipped' is reserved for
+      sources that record skips (tada does not — an abandoned occurrence
+      leaves no trace there).
+    example: "completed"
+
+  status_updated_at:
+    type: string
+    required: true
+    description: >
+      When the task reached this status (ISO 8601 UTC). For completed tasks
+      the completion time; for cancelled tasks the don't-do decision moment;
+      for future skipped entries the skip decision time. Mirrors tada's
+      snapshot-entry `at` field.
+    example: "2026-11-06T10:41:00+00:00"
+
+  # Timing (optional; source naive-local times are converted to UTC by the
+  # provider using the zone reported by the source API)
+  start_at:
+    type: string
+    required: false
+    description: Scheduled slot, if any (ISO 8601 UTC)
+    example: "2026-11-06T01:30:00+00:00"
+
+  duration:
+    type: string
+    required: false
+    description: ISO-8601 duration, as given by the source
+    example: "PT1H"
+
+  tags:
+    type: array
+    items: string
+    required: false
+    description: Tags at resolution time
+    example: ["buy"]
+
+# ==============================================================================
+# METADATA FIELDS (Provider-Specific)
+# ==============================================================================
+# Everything source-shaped lives here, per the "no per-provider data fields"
+# rule. Stored in Item.metadata JSON.
+
+metadata:
+  source:
+    type: string
+    required: true
+    enum: ["tada"]
+    description: Source system of the Task; grows with future task providers
+
+  day:
+    type: string
+    required: true
+    description: Local calendar day (source zone) the resolution was ingested
+      from — provenance for the day-walk sync
+    example: "2026-11-06"
+
+  follows_from:
+    type: string
+    required: false
+    description: >
+      Native source_id of the task this one follows on from (tada: written on
+      the successor only). Stored as the NATIVE id, not a Soil uuid, so the
+      reference never dangles regardless of ingest order; the reverse
+      direction (followers) is derivable by query and deliberately not
+      stored. Candidates for promotion to 'continues' relations later.
+
+  tada_source:
+    type: string
+    required: false
+    description: tada's own item provenance (e.g. 'ticktick' for imported
+      items), when the source API exposes it
+
+# ==============================================================================
+# RELATIONS
+# ==============================================================================
+# contained_by   Note --contained_by--> Task   (task notes; mirrors the
+#                Attachment --contained_by--> Email precedent). One Note fact
+#                per task with non-empty notes; Note.metadata.task_source_id
+#                resolves the Task.
+
+# ==============================================================================
+# canonical_at RULE
+# ==============================================================================
+# completed  -> status_updated_at (when it finished)
+# cancelled / skipped -> start_at (the slot the task was meant for — the
+#                       honest "when it happened" for a task that didn't
+#                       happen), falling back to status_updated_at when the
+#                       task had no slot.
+
+# ==============================================================================
+# EXAMPLE
+# ==============================================================================
+example:
+  _type: "Task"
+  realized_at: "2026-11-06T18:45:12+00:00"
+  canonical_at: "2026-11-06T10:41:00+00:00"
+  fidelity: "full"
+  data:
+    source_id: "01a1ab6b-be1e-701a-b7d5-8c09a7a62938"
+    title: "roller blinds 1.8m"
+    kind: "task"
+    status: "completed"
+    status_updated_at: "2026-11-06T10:41:00+00:00"
+    tags: ["buy"]
+  metadata:
+    source: "tada"
+    day: "2026-11-06"

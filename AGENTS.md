@@ -40,7 +40,7 @@ This document provides context and guidelines for AI assistants (Claude, GPT, et
 ### Tracked Directories (part of the root repo)
 
 - `gmail-oauth/` - Gmail OAuth flow, stores credentials in HACM
-- `providers/` - Email importers (`mbox-importer` working, `gmail-importer` stub)
+- `providers/` - Ingestion providers (`mbox-importer`, `gmail-importer` email ingestion; `tada-importer` task ingestion → Task facts, see `schemas/task.yaml`)
 - `schemas/` - Canonical data model (YAML, SQL, JSON Schema)
 
 **For detailed repository structure, file listings, and module breakdowns, see [docs/repositories.md](docs/repositories.md).**

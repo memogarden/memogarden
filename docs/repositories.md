@@ -29,6 +29,9 @@ described in the root [README](/README.md).)
     standalone as [memogarden-gmail-provider](https://github.com/memogarden/memogarden-gmail-provider))
   - `mbox-importer/` - Google Takeout mbox importer (published standalone as
     [memogarden-mbox-importer](https://github.com/memogarden/memogarden-mbox-importer))
+  - `tada-importer/` - tada task-history importer (day-walk over tada's HTTP
+    command bridge → generic Task facts + linked Note facts; see
+    `schemas/task.yaml`)
 - `gmail-oauth/` - Gmail OAuth 2.0 flow (tokens stored in HACM)
 - `scripts/` - Development automation
   - `run.sh` - Start API development server
