@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://schemas.memogarden.net/entities/agent.schema.json",
   "title": "Agent",
-  "description": "AI agent in the system. Lives in System scope for introspection. Subagents have parent_agent field set.",
+  "description": "AI agent in the system. Subagents have parent_agent field set.",
   "allOf": [
     {
       "$ref": "entity.schema.json"
@@ -63,13 +63,13 @@
               "items": {
                 "type": "string"
               },
-              "description": "Scope UUIDs this agent can access"
+              "description": "Grant envelope mirror (RFC-011): scopes this agent is granted to enter. Descriptive only — enforcement reads the bound API keys' grants."
             }
           }
         },
         "delegation_scope": {
           "type": ["object", "null"],
-          "description": "For subagents: what subset of capabilities delegated from parent",
+          "description": "For subagents: what subset of capabilities and context scopes delegated from parent (RFC-003 fork semantics)",
           "properties": {
             "allowed_tools": {
               "type": "array",

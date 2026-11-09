@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://schemas.memogarden.net/entities/operator.schema.json",
   "title": "Operator",
-  "description": "Human operator/user in the system. Lives in System scope for introspection.",
+  "description": "Human operator/user in the system.",
   "allOf": [
     {
       "$ref": "entity.schema.json"

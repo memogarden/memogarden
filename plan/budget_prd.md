@@ -72,6 +72,7 @@ MemoGarden uses **separate UUID namespaces** for different systems:
 - Relations (document linking)
 - Deltas (change tracking)
 - Email parsing and classification
+- Scope grants & triage (RFC-011) — statements are access-scoped; reconciliation agents need grants on the Finances scope
 
 Budget MVP is user-manual only. Agents will be considered in future iterations.
 

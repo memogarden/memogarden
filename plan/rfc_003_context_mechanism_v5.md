@@ -1,9 +1,9 @@
-# RFC-003: Context Mechanism v4
+# RFC-003: Context Mechanism v5
 
 **Status:** Draft  
-**Version:** 4.0  
-**Date:** 2026-02-06  
-**Supersedes:** RFC-003 v3
+**Version:** 5.0  
+**Date:** 2026-11-09  
+**Supersedes:** RFC-003 v4
 
 ---
 
@@ -19,6 +19,8 @@ The mechanism consists of three core components:
 This revision focuses on **behavioral invariants** rather than implementation details, enabling optimization while maintaining semantic correctness.
 
 **v4.0 changes:** Verb alignment with RFC-005 v6 (enter/leave/focus/rejoin).
+
+**v5.0 changes:** RFC-011 alignment — scopes are access boundaries: `enter` is grant-gated (RFC-011 §4.3); activation is EXCLUSIVE (one scope at a time, no co-activation); `enter` while inside a scope is an atomic, audited switch; the `focus` verb is retired; the ContextFrame's scope state is a singular `active_scope`.
 
 ---
 
@@ -124,10 +126,10 @@ Each View has exactly ONE UUID. When an action occurs in scope context, the SAME
 ### 3.2 Context Update Synchronization
 
 **INV-2: Synchronized Append**  
-When user visits object while scoped to project(s):
+When user visits an object while inside a scope:
 - ONE View created (single UUID)
 - View appended to user's ContextFrame
-- View appended to ALL active scope ContextFrames
+- View appended to the active scope's ContextFrame (at most one — INV-11a)
 - All appends occur atomically (appear in all streams or none)
 
 ---
@@ -195,21 +197,23 @@ ViewMerge extends View with:
 ### 3.7 Scope Activation
 
 **INV-11: Explicit Scope Control**  
-Scope activation is EXPLICIT via `enter`, `leave`, `focus` verbs:
-- `enter`: Add scope to user's active set
-- `leave`: Remove scope from user's active set
-- `focus`: Switch primary scope among active scopes
+Scope activation is EXPLICIT via `enter` and `leave` verbs:
+- `enter`: Adopt a scope as the principal's active scope (grant required — INV-11b)
+- `leave`: Release the active scope; the principal returns to unscoped operation
 - System MAY suggest scope activation (object belongs to scope A)
 - User MUST confirm activation
-- Object in multiple scopes â†’ user chooses which to activate
-- System MUST display active scopes to user
+- Object in multiple scopes → user chooses which to activate
+- System MUST display the active scope to user
 - Users control scope through clear object boundaries
 
-**INV-11a: Focus Separation**  
-Entering a scope does NOT automatically make it primary. User must explicitly `focus` to change primary scope. This enables easier audit of scope transitions.
+**INV-11a: Exclusive Activation**  
+A principal is in AT MOST ONE scope at any moment. Scopes do NOT co-activate. `enter` while already inside a scope is an ATOMIC SWITCH: implicit `leave` of the current scope followed by `enter` of the target, logged as a single `scope_switch` action. (The v4 `focus` verb is retired: with one active scope, primary = active. Implementations keep `focus` as a deprecated no-op alias during the migration window.)
 
-**INV-11b: Implied Focus**  
-Focus is implied when:
+**INV-11b: Grant-Gated Entry**  
+`enter` requires the principal to hold a GRANT on the target scope (operator-issued, JWT-gated; RFC-011 §4.3). Denied entries are audited (Action fact, result = failure). Access to a scope's items requires ACTIVE membership — holding a grant without entering authorizes nothing (RFC-011 §4.5). Every transition (enter, leave, switch, denial) emits an Action fact: transitions are security-relevant, not advisory.
+
+**INV-11c: Implied Activation**  
+Initial active scope is implied when the principal has exactly one available:
 - Subagent is created (has only one scope)
 - User first registered (has only one scope)
 
@@ -326,32 +330,32 @@ Context verbs are part of the Core bundle (RFC-005 v6):
 
 ### 4.1 Semantic API Verbs
 
-**enter** - Add scope to active set
+**enter** - Adopt a scope as the principal's exclusive active scope (grant required, RFC-011)
 ```json
 {
   "op": "enter",
   "scope": "scp_xxx"
 }
 ```
-Response: `{scope, active_scopes: [...]}`
+Response: `{scope, previous_scope, active_scope}` — `previous_scope` present only when the enter was an atomic switch (INV-11a). Denied (no grant): error, audited.
 
-**leave** - Remove scope from active set
+**leave** - Release the active scope
 ```json
 {
   "op": "leave", 
   "scope": "scp_xxx"
 }
 ```
-Response: `{scope, active_scopes: [...]}`
+Response: `{scope, active_scope}` — `active_scope` is `null` after leave. `scope` must match the currently active scope.
 
-**focus** - Switch primary scope
+**focus** - RETIRED (v5 / RFC-011)
 ```json
 {
   "op": "focus",
   "scope": "scp_xxx"
 }
 ```
-Response: `{scope, primary_scope, active_scopes: [...]}`
+Deprecated no-op alias during the migration window; responds with the current `{scope, active_scope}` without changing state.
 
 **rejoin** - Merge subordinate context back to parent
 ```json
@@ -365,13 +369,13 @@ Response: `{merged_at, child_scope, parent_scope}`
 
 ```python
 def enter_scope(self, scope_id: str) -> dict:
-    """Add scope to active set."""
+    """Adopt scope as the exclusive active scope (grant-gated; atomic switch if already inside one)."""
 
 def leave_scope(self, scope_id: str) -> dict:
-    """Remove scope from active set."""
+    """Release the active scope."""
 
 def focus_scope(self, scope_id: str) -> dict:
-    """Switch primary scope among active scopes."""
+    """RETIRED (RFC-011): deprecated alias; returns current active scope, no state change."""
 
 def rejoin(self) -> dict:
     """Merge subordinate context back to parent."""
@@ -382,11 +386,8 @@ def context_break(self) -> None:
 def get_context(self) -> list[str]:
     """Return current context (LRU-N)."""
 
-def get_active_scopes(self) -> list[str]:
-    """Return list of active scope IDs."""
-
-def get_primary_scope(self) -> Optional[str]:
-    """Return primary scope ID or None."""
+def get_active_scope(self) -> Optional[str]:
+    """Return the active scope ID or None (exclusive — RFC-011)."""
 ```
 
 ### 4.3 Visit Tracking
@@ -473,6 +474,13 @@ Context mechanisms add background tasks:
 - Context GC (cleanup destroyed subordinate contexts)
 - View compression (fossilization)
 
+### 6.4 RFC-011: Scopes, Grants, and Attention-Gated Access
+
+Scopes are access boundaries (RFC-011):
+- `enter` requires a grant; activation is exclusive (INV-11a/11b)
+- Access to a scope's items requires active membership (RFC-011 §4.5)
+- Agent runtimes SHOULD load the scope's charter on enter — the API audits and gates fetches, the runtime makes the intention real
+
 ---
 
 ## 7. Future Work (Deferred)
@@ -522,7 +530,8 @@ Dashboard showing:
 
 - [ ] Scope entity definition
 - [ ] Dual-append implementation
-- [ ] `enter`/`leave`/`focus` verb implementation
+- [ ] `enter`/`leave` verb implementation (grant-gated, exclusive; `focus` kept as deprecated alias)
+- [ ] Grants integration (RFC-011): grant check at enter, Action-fact audit of transitions and denials
 - [ ] Active scope display in UI
 
 ### Phase 3: Fork/Merge
@@ -548,9 +557,9 @@ Dashboard showing:
 **View:** Immutable record of actions within a time window  
 **View-Stream:** Chronological sequence of Views forming timeline  
 **Primary Context:** The contextually-relevant ContextFrame for an operation  
-**Primary Scope:** The currently-focused scope among active scopes  
-**Active Scopes:** Set of scopes user has entered but not left  
-**Scope:** First-class MemoGarden entity for organizing work (not "Project")  
+**Active Scope:** The single scope a principal is currently inside (exclusive; scopes do not co-activate — RFC-011)  
+**Grant:** Standing operator-issued permission for a principal to enter a specific scope (RFC-011)  
+**Scope:** First-class MemoGarden entity for organizing work (not "Project"); also the access boundary — entering requires a grant, and access to a scope's items requires active membership (RFC-011)  
 **Visit:** Operation that accesses object content and updates context  
 **Substantive Object:** Object type added to context when visited  
 **Primitive Object:** Object type excluded from context (metadata only)  
@@ -568,6 +577,7 @@ Dashboard showing:
 - **RFC-002 v5:** Relation Time Horizon & Fossilization
 - **RFC-005 v6:** API Design (Semantic Verbs & Options Schemas)
 - **RFC-007 v1:** Runtime Operations
+- **RFC-011 v1.1:** Scopes, Grants, and Attention-Gated Access
 - **PRD v0.10.0:** MemoGarden Core Ontology
 
 ### Influences
@@ -587,6 +597,7 @@ Dashboard showing:
 | 2.0 | 2025-01-20 | Simplification: removed ViewLinkIndex, ContextLink auto-generation, made View ephemeral |
 | 3.0 | 2026-02-03 | **Invariant-focused revision:** 26 behavioral invariants, scope continuity, fork/merge semantics, dual-append clarification, context break specification, fossilization compression, deferred implementation details |
 | 4.0 | 2026-02-06 | **Verb alignment with RFC-005 v6:** Added `focus` verb for explicit primary scope switching. Clarified enter/leave/focus separation (INV-11a, INV-11b). Updated API section with complete verb definitions. Context verbs bundled with Core. Added terminology for primary scope vs active scopes. |
+| 5.0 | 2026-11-09 | **RFC-011 alignment:** Scopes are access boundaries. INV-11 rewritten: activation via `enter`/`leave` only; INV-11a exclusive activation (atomic `scope_switch`, no co-activation); INV-11b grant-gated entry with audited denials; INV-11c implied initial activation; `focus` verb retired (deprecated alias). INV-2 dual-append → user + the active scope. §4 verb definitions and internal methods updated to singular `active_scope`. Terminology updated. |
 
 ---
 
@@ -595,7 +606,7 @@ Dashboard showing:
 1. Review invariants with stakeholders
 2. Implement ContextFrame + View schema in Core
 3. Add context tracking to internal API operations
-4. Implement `enter`/`leave`/`focus`/`rejoin` verbs
+4. Implement `enter`/`leave`/`rejoin` verbs (grant-gated, exclusive — RFC-011; `focus` kept as deprecated alias)
 5. Build scope activation UI
 6. Test fork/merge with real agent delegation
 7. Tune context size (N) based on usage data

@@ -1,9 +1,9 @@
 # RFC-010: Agent Identity & Attribution
 
-**Version:** 1.1
+**Version:** 1.2
 **Status:** Implemented (feat/agent-identity)
 **Author:** JS
-**Date:** 2026-11-06
+**Date:** 2026-11-09
 
 ---
 
@@ -103,7 +103,8 @@ authentication or any other operation
 **G5. Honest unbound state:** keys without agents are a first-class,
 queryable condition — not an error to be silently auto-fixed
 **G6. Attribution, not authorization:** agent identity partitions the audit
-trail, never permissions (scopes explicitly deferred; see §14)
+trail, never permissions (authorization resolved separately by RFC-011 grants;
+see §14)
 
 ---
 
@@ -637,10 +638,11 @@ Per `memogarden-testing` conventions (`run_tests.sh`, pytest) in
 
 ## 14. Non-Goals & Future Work
 
-- **Scopes/permissions per agent** — deferred (G6). Extension path anchors
-  RFC-001 §4.2's scope model (`<resource>:<action>[:<specifier>]`) to the
-  Agent entity: capability manifest in entity data or a scopes column,
-  with §4.3-style time-limited grants.
+- **Scopes/permissions per agent** — RESOLVED by RFC-011 (2026-11-09; this G6
+  deferral is consumed). Grants are operator-issued and JWT-gated, stored on the
+  key record (`api_keys.grants`); `agent.data.allowed_scopes` is the descriptive
+  grant-envelope mirror (enforcement reads the key, never the entity).
+  RFC-001 §4.2's capability grammar remains reserved headroom.
 - **Operator entities** — humans stay username-attributed in v1. When they
   land (same invariant: minted explicitly, e.g. at `/admin/register`), all
   actors become entity uuids and attribution is uniform.
@@ -677,6 +679,8 @@ Per `memogarden-testing` conventions (`run_tests.sh`, pytest) in
 - RFC-005 v7.1 — Action Fact Schema (additively extended by this RFC);
   Semantic API envelope
 - RFC-003 v4 — context/contributor model that agent handover assumes
+- RFC-011 v1.1 — scopes, grants, attention-gated access (resolves the G6
+  deferral; `allowed_scopes` = grant envelope mirror)
 - RFC-008 v1.2 — transaction philosophy this RFC's invariant style follows
 - RFC-004 v2.2 §12.2 — provider registry (contrast case for §4.4)
 - `docs/api.md` — agent auth model as documented (commit b8005ae)
@@ -692,3 +696,4 @@ Per `memogarden-testing` conventions (`run_tests.sh`, pytest) in
 |---------|------|---------|
 | 1.0 | 2026-11-06 | Initial draft. Agent entity + key binding; explicit operator-gated issuance (INV-1–7); attribution pipeline with actor_type; /auth/me introspection; explicit-binding migration. Lazy backfill rejected (§2). |
 | 1.1 | 2026-11-06 | Implementation revision after review. INV-1 gains the last_seen carve-out and the Semantic-API identity-type block (Agent/Operator rejected in create/edit/forget — a pre-existing baseline entry would otherwise let any key mint identity). Mint/bind write operator Action facts (INV-2 realized via the `register`/`bind` operations). Fact-data equality filters added to `query` so §7.2's traceability queries are executable. Status codes aligned to implementation (403 foreign owner; 400 validation; 404 unknown/malformed id; 409 conflicts). |
+| 1.2 | 2026-11-09 | RFC-011 alignment: G6 deferral consumed — authorization specified by RFC-011 (grants on keys, attention-gated access; `agent.data.allowed_scopes` = descriptive grant envelope). Identity and attribution behavior unchanged. |

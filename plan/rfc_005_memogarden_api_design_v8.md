@@ -1,9 +1,9 @@
 # RFC 005: MemoGarden API Design
 
-**Version:** 7.1  
+**Version:** 8.0  
 **Status:** Draft  
 **Author:** JS  
-**Date:** 2026-02-07
+**Date:** 2026-11-09
 
 ## Summary
 
@@ -326,6 +326,10 @@ UUID prefix indicates target type and table (`fct_`, `ent_`, `rel_`, `scp_`).
 
 ### Context Verbs
 
+Scopes are access boundaries (RFC-011): `enter` requires a grant; activation is
+exclusive (one active scope per principal); every transition and denial is
+audited as an Action fact.
+
 #### enter
 
 ```json
@@ -335,7 +339,11 @@ UUID prefix indicates target type and table (`fct_`, `ent_`, `rel_`, `scp_`).
 }
 ```
 
-**Response:** `{scope, active_scopes: [...]}`
+**Response:** `{scope, previous_scope, active_scope}`
+
+Grant-gated (RFC-011 §4.3/§4.4): without a grant the enter fails and is audited.
+Entering while already inside a scope is an atomic switch — implicit leave of the
+current scope, then enter; `previous_scope` is present only on a switch.
 
 #### leave
 
@@ -346,22 +354,18 @@ UUID prefix indicates target type and table (`fct_`, `ent_`, `rel_`, `scp_`).
 }
 ```
 
-**Response:** `{scope, active_scopes: [...]}`
+**Response:** `{scope, active_scope}`
+
+`active_scope` is `null` after a successful leave. `scope` must match the
+currently active scope.
 
 #### focus
 
-```json
-{
-  "op": "focus",
-  "scope": "scp_xxx"
-}
-```
+**RETIRED (v8 / RFC-011).** With exclusive activation there is no
+primary-vs-active distinction. The verb remains a deprecated no-op alias during
+the migration window and responds `{scope, active_scope}`.
 
-**Response:** `{scope, primary_scope, active_scopes: [...]}`
-
-Focus implies the scope is already in active set. Entering a scope does NOT automatically make it primary.
-
-**Implied focus:** When subagent is created (has only one scope) or when user first registered (has only one scope).
+**Implied activation:** When a subagent is created (has only one scope) or when user first registered (has only one scope).
 
 #### rejoin
 
@@ -498,6 +502,7 @@ Tree format handles "diamond ancestry" naturally.
 | `limit` | no | Max results |
 | `threshold` | no | Minimum similarity score |
 | `continuation` | no | Pagination token from previous search |
+| `scope` | no | Restrict to a scope UUID — convenience filter ONLY; access enforcement is automatic and independent (RFC-011) |
 
 **Coverage levels:**
 - `names` Ã¢â‚¬â€ title/name fields only (fast)
@@ -519,6 +524,12 @@ Tree format handles "diamond ancestry" naturally.
   "continuation": "tok_def"
 }
 ```
+
+**Scope enforcement (RFC-011):** results are filtered to the principal's access
+BEFORE matching — items outside the principal's active scope never appear as
+matches, at any coverage level or strategy (a filename hit on a scoped item is
+itself a leak). The `scope` request field is a convenience filter, never the
+enforcement mechanism.
 
 ### Explore Verb
 
@@ -933,6 +944,24 @@ DELETE /apps/{app_id}/relations/{uuid}
 GET    /capabilities
 ```
 
+### Grants Management (RFC-011)
+
+**Purpose:** Operator-issued authorization for principals to enter scopes.
+
+**Auth:** JWT only — API keys cannot mint, modify, or revoke grants, including
+their own (RFC-010 issuance invariant).
+
+```
+POST   /grants                      # {key_id | agent_id, scope_uuid, expires_at?}
+DELETE /grants/{grant_id}           # revoke immediately; next gated operation fails
+GET    /grants?key_id=|agent_id=    # enumerate
+```
+
+For `agent_id`, the grant applies to all keys currently bound to that agent and
+is recorded as the agent's grant envelope (`agent.data.allowed_scopes`); future
+bindings inherit the envelope at bind time. `/auth/me` (RFC-010 §7.3) reports
+the key's grants, the bound agent's envelope, and the current active scope.
+
 ### Semantic API
 
 **Purpose:** Primary interface for MemoGarden Apps via SDKs
@@ -1059,7 +1088,7 @@ char* mg_get_capabilities(mg_handle* mg);
 5. **Schema system** - Full design for registration, inheritance, validation enforcement
 6. **Configuration management** - Runtime config, environment variables, precedence rules
 7. **Multi-handle coordination** - Concurrent access patterns, lock contention handling
-8. **Authentication/authorization** - For HTTP APIs (REST and Semantic)
+8. ~~**Authentication/authorization**~~ - **RESOLVED v8.0**: authentication = JWT + X-API-Key (implemented; RFC-010); authorization = RFC-011 grants with attention-gated scope access
 9. **Rate limiting** - Per-app, per-operation policies
 10. **Async wrappers** - For internal API (sync core + async wrappers)
 
@@ -1087,6 +1116,8 @@ char* mg_get_capabilities(mg_handle* mg);
 - RFC-006 v1: Error Handling & Diagnostics
 - RFC-008 v1: Transaction Semantics
 - RFC-009 v1: MemoGarden Application Model
+- RFC-010 v1.2: Agent Identity & Attribution
+- RFC-011 v1.1: Scopes, Grants, and Attention-Gated Access
 - PRD v0.10.0: MemoGarden Personal Information System
 - SQLite C API: https://www.sqlite.org/c3ref/intro.html
 - Python DB-API 2.0: https://peps.python.org/pep-0249/
@@ -1106,6 +1137,7 @@ char* mg_get_capabilities(mg_handle* mg);
 | 5.0 | 2026-02-04 | Semantic verb definitions: 12 core verbs with explicit meanings. Added Context bundle. Removed validate from semantic API. Deferred parameter design. |
 | 6.0 | 2026-02-06 | **Complete verb options schemas**: All 17 verbs with request/response formats. Added `focus` (context), `explore` (relations). Response envelope with `actor`. Edit uses `set`/`unset` semantics. Query filter DSL with operators. Search split into `search` (content-based) and `explore` (graph-based). Track returns tree format. Null semantics clarified as "Unknown". Context verbs moved to Core bundle. Resolved open questions 1-4. |
 | 7.0 | 2026-02-07 | **Audit facts specification**: Added Action and ActionResult fact schemas for complete API operation audit trail. System relation "result_of" links Actionâ†’ActionResult. Enables crash recovery, hung operation detection, agent behavior tracing, and performance analysis. |
+| 8.0 | 2026-11-09 | **RFC-011 alignment (authorization):** Context verbs rewritten — exclusive activation, grant-gated `enter` (atomic switch; `previous_scope` in response), `leave` returns `active_scope: null`, `focus` retired as deprecated alias. Search: scope enforcement pre-match + optional convenience `scope` field. Added Grants Management endpoints (`POST/DELETE/GET /grants`, operator JWT-gated) and `/auth/me` extension (grants, agent envelope, active scope). Open question 8 resolved. |
 
 ---
 

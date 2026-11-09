@@ -33,7 +33,7 @@ This plan tracks implementation of **Project Studio v0.4.0** as a MemoGarden App
 
 ### A.1 Scopes as Project Containers
 
-**Decision**: Use MemoGarden's Scope entity (RFC-003 v4) instead of defining new Project entity.
+**Decision**: Use MemoGarden's Scope entity (RFC-003 v5) instead of defining new Project entity.
 
 **Rationale**:
 - Scopes are first-class MemoGarden entities with ContextFrame ownership
@@ -1587,7 +1587,7 @@ const highlights = generateHighlights(parsed);
 
 - **Project Studio Specification v0.4.0**: [`plan/project_studio_specification_v0_4_0.md`](plan/project_studio_specification_v0_4_0.md)
 - **MemoGarden PRD v0.11.1**: [`plan/memogarden_prd_v0_11_0.md`](plan/memogarden_prd_v0_11_0.md)
-- **RFC-003 v4**: Context Mechanism [`plan/rfc_003_context_mechanism_v4.md`](plan/rfc_003_context_mechanism_v4.md)
+- **RFC-003 v5**: Context Mechanism [`plan/rfc_003_context_mechanism_v5.md`](plan/rfc_003_context_mechanism_v5.md)
 - **RFC-009 v1**: MemoGarden Application Model [`plan/rfc_009_memogarden_apps_v1.md`](plan/rfc_009_memogarden_apps_v1.md)
 - **JCE Whitepaper v1.0**: [`plan/jce_whitepaper_v1_0.md`](plan/jce_whitepaper_v1_0.md)
 - **Core Implementation Plan** (retired 2026-10-08, historical): [`plan/memogarden-implementation-plan.md`](plan/memogarden-implementation-plan.md)

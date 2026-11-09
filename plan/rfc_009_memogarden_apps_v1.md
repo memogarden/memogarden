@@ -1,9 +1,9 @@
 # RFC 009: MemoGarden Application Model
 
-**Version:** 1.0  
+**Version:** 1.1  
 **Status:** Draft  
 **Author:** JS  
-**Date:** 2026-02-04
+**Date:** 2026-11-09
 
 ## Summary
 
@@ -123,6 +123,12 @@ Apps can subscribe to push notifications:
 | `context_activated` | `{context_id, scope}` | Operator attention shifted |
 | `context_deactivated` | `{context_id}` | Operator left context |
 | `operator_preference_changed` | `{key, value}` | Settings relevant to app changed |
+
+**Scope filtering (RFC-011):** notifications about scoped items are delivered to
+principals inside that scope only; everyone else receives the reference without
+content (uuid + type + change_type). Content-bearing channels (SSE observe
+streams) filter scoped payloads the same way — an app needing the content enters
+the scope (grant required).
 
 ### GUI Integration
 
@@ -477,6 +483,7 @@ Studios define *patterns of collaboration*; apps provide *tools for execution*.
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | 2026-02-04 | Initial specification |
+| 1.1 | 2026-11-09 | RFC-011 alignment: scope-filtering note on notification events and observe streams — scoped content reaches only principals inside the scope. |
 
 ---
 

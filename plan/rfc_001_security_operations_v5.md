@@ -1,10 +1,10 @@
 # RFC-001: MemoGarden Security & Operations Architecture
 
-**Version:** 4.1  
+**Version:** 5.0  
 **Status:** Draft  
 **Author:** MemoGarden Project  
 **Created:** 2025-01-09  
-**Last Updated:** 2026-02-06
+**Last Updated:** 2026-11-09
 
 ## Abstract
 
@@ -226,13 +226,12 @@ MemoGarden uses opaque API keys with database-backed validation.
 
 **Key record fields:**
 - `key_hash`: SHA256 of key (key never stored)
-- `participant_id`: Agent or service identifier
+- `participant_id`: Agent or service identifier (anchored to Agent entities per RFC-010)
 - `operator_id`: Which operator's data (system profile with multi-operator)
-- `baseline_scopes`: Permanent permissions
-- `allowable_scopes`: Can be granted temporarily
+- `grants`: Scopes the key may enter — `[{scope_uuid, granted_at, expires_at|null}]` (RFC-011 §4.3). Operator-issued via JWT-gated endpoints; never minted at auth time. Supersedes the v4 `baseline_scopes`/`allowable_scopes` fields.
 - `expires_at`: Auto-rotation (30 days default)
 
-### 4.2 Scope Model
+### 4.2 Capability Grammar (Reserved)
 
 **Syntax:** `<resource>:<action>[:<specifier>]`
 
@@ -243,9 +242,15 @@ MemoGarden uses opaque API keys with database-backed validation.
 
 **Deny takes precedence** over allow.
 
+**v5 note:** The operative authorization model is RFC-011's grants — scope-entry
+permission per principal, attention-gated access. This grammar is RETAINED AS
+RESERVED HEADROOM for future resource-level capability needs. The v4 use of
+"scope" to mean a permission set on a key is retired vocabulary (RFC-011 §3);
+"scope" now means the RFC-003 intention container exclusively.
+
 ### 4.3 Time-Limited Grants
 
-Scopes beyond baseline require explicit grants with expiration. Grants are linked to `participant_id`, surviving key rotation.
+Grants authorize entering scopes and may carry expiration; they are linked to the key (and its bound Agent per RFC-010), surviving key rotation. Specification of record: RFC-011 §4.3/§6 — operator-issued, JWT-gated, never minted at auth time.
 
 ### 4.4 Multi-Operator Authorization (System Profile)
 
@@ -748,6 +753,7 @@ The following concepts from earlier designs have been removed:
 | 3.0 | 2025-01-19 | Multi-profile architecture (high/mid/low availability), cross-platform support, multi-operator considerations |
 | 4.0 | 2025-01-20 | **Design review integration:** System profile as default target; Device adds watchdog layer; Encryption default = disabled (availability priority); Progressive decryption eliminated; Profile names changed (Device/System/Personal); Single-operator optimization; Agent budget as operator policy |
 | 4.1 | 2026-02-06 | Added Section 11.5: Audit Trail specification with Action facts and three-layer observability model |
+| 5.0 | 2026-11-09 | **RFC-011 alignment:** §4.1 key fields — `baseline_scopes`/`allowable_scopes` replaced by `grants` (RFC-011 §4.3); `participant_id` anchored to RFC-010 Agent entities. §4.2 capability grammar retained as reserved headroom (operative model = RFC-011 grants + attention-gated access); §4.3 points to RFC-011 as specification of record. |
 
 ---
 
