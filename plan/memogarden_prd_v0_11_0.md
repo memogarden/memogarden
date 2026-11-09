@@ -638,6 +638,15 @@ class EncryptionConfig:
 - Explicit control locks for human oversight
 - Observe/Approve modes for sensitive operations
 
+### Access Control
+
+- Scopes are access boundaries: entering a scope requires a grant, and
+  access to a scope's items requires active membership (attention-gated)
+- Grants are operator-issued, JWT-gated, optionally time-limited
+- Unscoped items are the global space, accessible to every authenticated
+  principal; the operator's own keys always see everything
+- Full specification in RFC-011 (Scopes, Grants, and Attention-Gated Access)
+
 ### Privacy
 
 - Local-first: Data stays on operator's hardware by default
@@ -686,6 +695,8 @@ class EncryptionConfig:
   - RFC-002: Relations and Time-Horizon (fossilization, lifecycle management)
   - RFC-003: Context Mechanism (attention tracking, ContextFrame)
   - RFC-004: Package Deployment (schema versioning, migration)
+  - RFC-010: Agent Identity & Attribution
+  - RFC-011: Scopes, Grants, and Attention-Gated Access
 
 - **Schemas:**
   - `soil-schema.sql`: Soil database structure
