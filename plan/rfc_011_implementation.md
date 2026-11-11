@@ -30,7 +30,11 @@ material**.
 
 ### P0 — before any financial labeling happens
 
-1. **Relabel governance** (§4.5, §4.7, SG-8) — OPEN.
+1. **Relabel governance** (§4.5, §4.7, SG-8) — **DONE** (api `feat/rfc011-p0`
+   `88a3c97`, 336 passed, unmerged): amend diffs old/new `metadata.scopes`
+   and requires a grant on every label added OR removed (D2 symmetric
+   rule); denials carry the attempted change in Action-fact details and
+   the before-state persists in the superseded fact (SG-8).
    No relabel verb exists; `amend` merges metadata, so passing
    `metadata.scopes` *is* a relabel — ungoverned in both directions:
    an unscoped key can widen an item into a scope (no target-grant
@@ -39,16 +43,15 @@ material**.
    (distinguish inherited labels from changed ones), relabel-specific
    Action facts (actor, old labels, new labels), and the triage
    workflow this unlocks.
-2. **Advisory-mode flag semantics** (§8 step 2) — OPEN.
-   RFC: flag off ⇒ advisory (enter/leave advisory, labels may be
-   written, nothing filtered). Implementation diverges: `enter` and
-   explicit-label adds are grant-checked with the flag off, and
-   auto-labeling is flag-gated off — so the advisory period (a)
-   hard-requires grants, breaking the staged rollout, and (b) leaves
-   items created inside scopes silently global, corrupting the corpus
-   before activation. Work: flag-gate the grant checks and run
-   auto-labeling in advisory mode.
-3. **RFC-011 amendment** (decisions D1 + D2 below), then implement.
+2. **Advisory-mode flag semantics** (§8 step 2) — **DONE** (same commit):
+   enter grant-check and explicit-label checks are enforcement-gated
+   (flag off = advisory, unchecked); create auto-labeling runs advisory
+   too — the labeling corpus is correct before the flag flips.
+3. **RFC-011 amendment** — **DONE** (RFC-011 → **v1.2**): D1 scope-minting
+   operator-gated, D2 symmetric label grants, §4.9(5) resolved to
+   suppress (open question 2 closed). Decisions ratified 2026-11-12.
+   Implementation: scope-minting gate landed (api `88a3c97`); SSE
+   suppress implementation remains in P2 item 7.
 
 ### P1 — before the statement pipeline goes live
 
@@ -98,20 +101,15 @@ material**.
     already in as bytes via the gmail attachments pass (SG-7 exempt);
     the missing path is non-email sources (portal downloads, scans).
 
-## Pending policy decisions (RFC amendment inputs)
+## Policy decisions — RESOLVED 2026-11-12 (ratified; in RFC-011 v1.2)
 
-- **D1 — scope-minting authority.** Proposal: scope creation moves to
-  operator-gated issuance (RFC-010's invariant applied to security
-  boundaries): minted via a JWT-gated endpoint or operator JWT only;
-  Semantic `create` rejects `_type: "Scope"` from keys. Consequence:
-  Studio's scope-creation flows must go through the operator.
-- **D2 — de-scope-to-global rule.** Proposal: removing labels (the
-  exposure-widening direction) requires operator authority or write
-  membership *plus* an explicit narrowing grant — strictly stronger
-  than today's write predicate. Cheapest coherent rule: label *changes*
-  require a grant on every label added OR removed (so de-scope requires
-  a grant on the label being removed — i.e. you must hold the scope to
-  un-file something from it), all logged per SG-8.
+- **D1 — scope-minting authority:** operator-gated (Semantic create
+  rejects Scope from API keys; operator JWT mints via the same verb;
+  RFC-010 invariant applied to boundaries). Landed in `88a3c97`.
+- **D2 — de-scope rule:** symmetric grants — any label added or removed
+  requires a grant on that label's scope. Landed in `88a3c97`.
+- **SSE payloads (P2 rider):** suppress — non-members receive nothing
+  for scoped-item events. Implementation remains in P2 item 7.
 
 ## Operational rollout (after P0)
 

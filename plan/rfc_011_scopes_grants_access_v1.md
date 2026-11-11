@@ -1,6 +1,6 @@
 # RFC-011: Scopes, Grants, and Attention-Gated Access
 
-**Version:** 1.1
+**Version:** 1.2
 **Status:** Accepted
 **Author:** MemoGarden Project
 **Created:** 2026-11-09
@@ -234,10 +234,13 @@ I has scopes S        → allowed iff P.active_scope ∈ S
   and event streams (§4.9).
 - Writes (edit, supersede, tombstone, relation edits on scoped items): same
   predicate — be inside one of the item's scopes.
-- **Relabeling** a item into scope *T* requires a grant on *T* (or operator
-  authority). Rationale: the grant is the trust boundary; a principal trusted to
-  sort material into Finances is trusted with Finances. Requiring the target
-  grant keeps one rule and one place to reason (§4.7).
+- **Relabeling** — symmetric grants (v1.2, D2): any label **added or removed**
+  by a non-sovereign principal requires a grant on that label's scope (operator
+  JWT bypasses, SG-11). Adding the Finances label and removing it are the same
+  privilege — you must hold the compartment to re-file something in or out of
+  it. Rationale: removal is the exposure-widening direction (a de-scoped item
+  falls back to global), and one symmetric rule keeps a single place to reason
+  (§4.7).
 - There is no read-only/write-only grant distinction in v1. A grant to enter a
   scope is full access within it. Simplicity is deliberate (§10).
 
@@ -265,7 +268,9 @@ I has scopes S        → allowed iff P.active_scope ∈ S
   grant, which the operator bestows knowingly.
 - Every relabel is logged with actor, old labels, new labels, and result (SG-8).
   Downgrades (restricting) and upgrades (widening) are equally visible in the
-  audit trail.
+  audit trail. Under v1.2's symmetric rule (D2), both directions are also
+  grant-gated: removing a scope's label requires holding that scope's grant,
+  because de-scoping is the exposure-widening direction.
 - Items arriving before enforcement activates, or from providers under
   `unscoped` policy, sit in global space until triaged. This window is
   acknowledged and accepted (§9); providers may close it at the source (§4.8).
@@ -302,9 +307,11 @@ All of the following enforce §4.5 server-side, by default, without opt-in:
    relation to an inaccessible item is presented as an unresolved reference, not
    omitted silently (distinguishable from a dangling relation only in that the
    count is reported truthfully).
-5. Event streams (SSE observe mode, RFC-009): scoped item payloads are delivered
-   only to principals inside the scope; others receive the reference without
-   payload.
+5. Event streams (SSE observe mode, RFC-009): scoped item payloads are
+   delivered only to principals inside the scope. **v1.2 (rider): suppress**
+   — non-members receive nothing for scoped-item events, not even the
+   reference; the reference itself reveals that a scoped item exists and
+   changed. Global (unscoped) events flow to all subscribers as before.
 6. Any future binary/file-serving endpoint: scope gates from its first commit.
 
 **Accepted metadata leak:** an unscoped parent item (e.g., an email) still lists
@@ -353,6 +360,13 @@ partitions what *keys and agents* reach, never what the operator reaches.
 
 All endpoints JWT-gated (operator only), consistent with RFC-010's issuance
 model. API keys cannot mint, modify, or revoke grants — including their own.
+
+**Scope creation is operator-gated too (v1.2, D1).** Scopes are security
+boundaries; RFC-010's invariant applies: boundary issuance is explicit and
+operator-gated, never a side effect of ordinary writes. The Semantic
+create verb rejects `_type: "Scope"` from API keys (mirroring the
+identity-type rejection); operator JWT sessions mint scopes through the
+same verb under sovereignty. Builtin scopes are seeded at startup (§4.1).
 
 - `POST /grants` — `{key_id | agent_id, scope_uuid, expires_at?}`. For
   `agent_id`, applies to all keys currently bound to that agent and is recorded
@@ -495,9 +509,10 @@ implemented, per the RFC-010 precedent).
 1. **Scope charter format.** What a runtime loads on enter (a Scope entity data
    field? referenced Artifact?) is deliberately unspecified here; to be settled
    with mars/MUSH runtime work.
-2. **SSE granularity.** §4.9(5) delivers references-without-payload to outsiders.
-   Alternative: suppress scoped events entirely. Chosen default favors RFC-009
-   Observe-mode liveness; revisit if reference presence itself proves leaky.
+2. ~~**SSE granularity.**~~ — **RESOLVED v1.2 (rider): suppress.** Non-members
+   receive nothing for scoped-item events. The gap audit found fact payloads
+   routing by conversation scope rather than item labels; existence itself is
+   a leak, so the liveness argument loses.
 3. **Slug identifiers.** Grants and policies reference Scope UUIDs; human-facing
    slugs (e.g., `finances`) can be added to the Scope entity later without
    breaking anything. Deferred.
@@ -518,6 +533,7 @@ implemented, per the RFC-010 precedent).
 |---------|------|---------|
 | 1.0 | 2026-11-09 | Initial draft. Unifies RFC-003 scopes with access control via grants and exclusive activation; retires "scope" as a permission term; defines provider labeling, triage workflow, enforcement points, rollout. |
 | 1.1 | 2026-11-09 | Ratified. §11 amendments executed: RFC-003 → v5, RFC-005 → v8, RFC-001 → v5, RFC-010 → v1.2, RFC-009 → v1.1, entity schema descriptions, Budget PRD prerequisite note; §11 converted to executed-amendment log. |
+| 1.2 | 2026-11-10 | **Gap-audit amendment.** D1: scope creation is operator-gated (Semantic create rejects Scope from API keys; RFC-010 invariant applied to boundaries). D2: symmetric label grants — removing a label requires the same grant as adding it (de-scope is the exposure-widening direction). Rider: §4.9(5) resolved to suppress — non-members receive nothing for scoped-item events. Open question 2 closed. |
 
 ---
 
