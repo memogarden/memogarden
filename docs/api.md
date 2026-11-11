@@ -11,10 +11,11 @@ Complete reference for MemoGarden APIs - Semantic API, REST API, and Authenticat
 
 1. [API Overview](#api-overview)
 2. [Authentication](#authentication)
-3. [Semantic API (`/mg`)](#semantic-api)
-4. [REST API (`/api/v1/`)](#rest-api)
-5. [Error Handling](#error-handling)
-6. [Common Data Types](#common-data-types)
+3. [Scopes & Grants (RFC-011)](#scopes--grants-rfc-011)
+4. [Semantic API (`/mg`)](#semantic-api)
+5. [REST API (`/api/v1/`)](#rest-api)
+6. [Error Handling](#error-handling)
+7. [Common Data Types](#common-data-types)
 
 ---
 
@@ -158,8 +159,11 @@ mints **one key per agent** via `POST /api-keys/`, naming it after the agent
 (`GET /api-keys/`) so operators can tell agents apart. Agents never see a
 login flow — they hold a key and send it as `X-API-Key`. Key-management
 endpoints accept JWT only, so a key holder cannot list, create, or revoke
-keys. Keys carry the full authority of the owning user; there are no
-per-key scopes.
+keys. **Key authority is scoped by grants (RFC-011):** a key holds a set of
+scope grants — scopes it may *enter* — and starts with none (unscoped-only:
+it sees the global space of unlabeled items and nothing else). JWT operator
+sessions are sovereign: implicit all-grants, no filtering. See
+[Scopes & Grants](#scopes--grants-rfc-011) below.
 
 **Agent identity (RFC-010):** keys can be *bound* to an `Agent` entity —
 minted by the operator via `POST /agents`. Bound keys attribute their
@@ -211,7 +215,7 @@ curl http://localhost:8080/api/v1/transactions \
 |----------|--------|-------------|
 | `/auth/login` | POST | Login and get JWT token |
 | `/auth/logout` | POST | Logout (no-op for stateless JWT) |
-| `/auth/me` | GET | Identity introspection — user info (JWT) or agent identity (key); includes `actor_type`/`actor` |
+| `/auth/me` | GET | Identity introspection — user info (JWT) or agent identity (key); includes `actor_type`/`actor`, `grants`, `active_scope` (RFC-011) |
 | `/admin/register` | POST | One-time admin registration (localhost only, first run) |
 | `/api-keys/` | GET | List API keys (includes `agent_id`) |
 | `/api-keys/` | POST | Create new API key (optional `agent_id` to bind, RFC-010) |
@@ -219,6 +223,9 @@ curl http://localhost:8080/api/v1/transactions \
 | `/api-keys/<id>` | DELETE | Revoke API key |
 | `/agents` | POST | Mint an Agent entity (JWT only, RFC-010) |
 | `/agents` | GET | List agents with bound key prefixes (JWT only, RFC-010) |
+| `/grants` | POST | Issue a scope grant to a key or agent (JWT only, RFC-011) |
+| `/grants` | GET | List grants for `?key_id=` or `?agent_id=` (JWT only, RFC-011) |
+| `/grants/<grant_id>` | DELETE | Revoke a grant (JWT only, RFC-011) |
 
 ### Agent Identity (RFC-010)
 
@@ -261,6 +268,76 @@ curl -X POST http://localhost:8080/mg -H "X-API-Key: mg_sk_agent_..." \
   -d '{"op": "query", "target_type": "fact", "type": "Action",
        "filters": {"actor_type": "api_key"}, "count": 50}'
 ```
+
+---
+
+## Scopes & Grants (RFC-011)
+
+MemoGarden's access model is **attention-gated**: a scope is an intention,
+entering it declares that intention, and access follows attention.
+
+**The model in five lines:**
+
+1. Items without a scope label are the **global space** — readable and
+   writable by every authenticated principal.
+2. Items carry scope labels in `metadata.scopes` (a list of Scope UUIDs; an
+   item may be in several). Scopes are **restricted by default**: entering
+   one requires a grant.
+3. **Access = granted ∧ entered.** A scoped item is readable/writable only
+   by principals whose *active scope* is one of the item's labels. A grant
+   held without entering authorizes nothing.
+4. **One scope at a time** — scopes do not co-activate. Entering a second
+   scope is an atomic switch; the first is left.
+5. JWT operator sessions are sovereign: implicit all-grants, never
+   filtered. Grants partition what *keys and agents* reach, never what the
+   operator reaches.
+
+**Issuing grants (JWT only — keys cannot mint grants, even their own):**
+
+```bash
+# Grant a key (the agent holding it may then enter the scope)
+curl -X POST http://localhost:8080/grants \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"key_id": "660e8400-...", "scope_uuid": "core_1c9d...", \
+       "expires_at": "2026-12-31T23:59:59Z"}'
+# → 201 {"grants": [{"grant_id": "...", "scope_uuid": "...", ...}], "count": 1}
+
+# Grant an agent instead: applies to ALL keys bound to it; keys bound
+# later inherit the envelope at bind time
+curl -X POST http://localhost:8080/grants \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id": "core_6b0f...", "scope_uuid": "core_1c9d..."}'
+
+# List / revoke
+curl "http://localhost:8080/grants?key_id=660e8400-..." -H "Authorization: Bearer $TOKEN"
+curl -X DELETE http://localhost:8080/grants/<grant_id> -H "Authorization: Bearer $TOKEN"
+```
+
+Revocation is immediate for future operations (grants are re-read per
+request); an in-flight session is not retroactively ejected — revoke the
+*key* itself for that.
+
+**Labeling:** items created via `add` are auto-labeled with the creator's
+active scope when enforcement is on; explicitly supplied
+`metadata.scopes` require grants for those scopes. Derived facts inherit
+their source's labels (amend merges metadata, so the superseding fact
+carries the original's labels).
+
+**Enforcement flag:** `MEMOGARDEN_SCOPE_ENFORCEMENT` (default **off**).
+While off, reads are unfiltered and the rollout is provisioning-only.
+When on, every read path (get, query, search, events) excludes items
+outside the requester's active scope; search filtering happens before
+results are returned — scoped items never surface as matches.
+
+**Current limitations (v1, tracked in
+[RFC-011 implementation progress](../plan/rfc_011_implementation.md)):**
+entity and relation reads are not yet scope-enforced (facts are);
+relabeling has no dedicated verb and amend's label changes are not yet
+grant-checked; query filtering happens after pagination (pages can be
+short). Providers are never scope-gated — they label at creation per
+operator policy (`unscoped | triage | rules`).
 
 ---
 
@@ -577,11 +654,16 @@ curl -X POST http://localhost:8080/mg \
 
 ---
 
-### Context Bundle Operations (RFC-003)
+### Context Bundle Operations (RFC-003 v5 / RFC-011)
 
 #### enter
 
-Enter a scope (add to active set).
+Adopt a scope as your exclusive active scope (RFC-011 §4.4). Requires a
+grant on the scope (JWT operator sessions bypass). Entering while inside
+another scope is an **atomic switch** — `previous_scope` in the response
+reports what you left; re-entering your active scope is an idempotent
+no-op. Every transition (and every denied enter) is audited as an Action
+fact.
 
 ```bash
 curl -X POST http://localhost:8080/mg \
@@ -593,9 +675,12 @@ curl -X POST http://localhost:8080/mg \
   }'
 ```
 
+**Response:** `{"scope": "core_xxx", "previous_scope": null | "core_prev", "active_scope": "core_xxx"}`
+
 #### leave
 
-Leave a scope (remove from active set).
+Release your active scope (the named scope must be the one you are in).
+Afterwards you operate unscoped — global space only.
 
 ```bash
 curl -X POST http://localhost:8080/mg \
@@ -607,19 +692,14 @@ curl -X POST http://localhost:8080/mg \
   }'
 ```
 
+**Response:** `{"scope": "core_xxx", "active_scope": null}`
+
 #### focus
 
-Focus a scope (set as primary).
-
-```bash
-curl -X POST http://localhost:8080/mg \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "op": "focus",
-    "scope": "core_xxx"
-  }'
-```
+**Retired verb** (RFC-011): with exclusive activation there is no
+primary-vs-active distinction. Kept as a no-op alias during the migration
+window — responds with your current `active_scope`, changes nothing.
+Migrate to `enter`.
 
 ---
 
@@ -885,4 +965,7 @@ curl http://localhost:8080/status
 - [Deployment Guide](deployment.md) — user-session mode and the ingestion heartbeat
 - [Configuration Reference](configuration.md)
 - [memogarden-gmail-provider](https://github.com/memogarden/memogarden-gmail-provider) — gmail ingestion provider
-- RFC-005 v7: API Design
+- RFC-005 v8: API Design
+- RFC-010 v1.2: Agent Identity & Attribution
+- RFC-011 v1.1: Scopes, Grants, and Attention-Gated Access
+- [RFC-011 implementation progress](../plan/rfc_011_implementation.md)
