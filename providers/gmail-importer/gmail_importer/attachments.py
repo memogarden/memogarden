@@ -137,7 +137,12 @@ class AttachmentExtractor:
         }
 
     def extract_all(self, dry_run: bool = False) -> dict:
-        api = self._api_factory()
+        # The Gmail client decrypts its HACM store on construction, and HACM
+        # derives keys with Argon2id at MEMLIMIT_SENSITIVE (~1 GiB transient).
+        # Build it only when an uncovered email forces a refetch — a
+        # covered-only pass (the steady-state hourly case) skips the KDF
+        # entirely.
+        api = None
         # Everything (index build, listing, facts) happens inside one Soil
         # context; the API calls are slow but the connection tolerates it.
         with self.soil:
@@ -180,6 +185,8 @@ class AttachmentExtractor:
                     self.stats["errors"] += 1
                     logger.warning("Email %s vanished mid-scan; skipping attachments", email_uuid)
                     continue
+                if api is None:
+                    api = self._api_factory()
                 try:
                     message = api.get_message(gmail_id)
                 except GmailApiError as e:
