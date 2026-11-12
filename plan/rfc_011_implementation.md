@@ -55,11 +55,19 @@ material**.
 
 ### P1 — before the statement pipeline goes live
 
-4. **Provider `scope_policy` hook** (§4.8, SG-7) — OPEN.
-   Framework-level policy (`unscoped | triage | rules` with
-   provider-defined matchers) so items are labeled at creation; apply
-   to gmail (sender/doc-class rules → triage for finance senders).
-   Without it, statement PDFs land global and triage is retroactive.
+4. **Provider `scope_policy` hook** (§4.8, SG-7) — DECIDED
+   2026-11-12, implementation OPEN. Rules-based: an ordered,
+   provider-defined matcher list with a **default catch-all rule that
+   routes all provider ingestion through triage** (fail-closed);
+   operator-customisable at the provider registry. Applied by the
+   runtime at fact creation (framework-wrapped, SG-7 — providers cannot
+   forget to label), covering child facts (Attachments alongside
+   Emails). Applies at creation going forward. Nested sub-choice
+   (operator's call at rollout): retroactive application to the legacy
+   corpus would push all ~11.8k emails into triage; the calibrated lean
+   is backfilling **explicit rules only** (finance senders → triage,
+   capturing the 362 statements' emails) and leaving unmatched legacy
+   mail global.
 5. **§4.9 read-path completion** — OPEN.
    - Relation traversal (`explore`) filtering with
      unresolved-reference semantics (§4.9(4)) — the statement flow
