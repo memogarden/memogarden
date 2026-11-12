@@ -209,9 +209,13 @@ class GmailProvider:
     # ------------------------------------------------------------------
 
     def _ingested_gmail_ids(self) -> set[str]:
+        # Projected in SQL (same pattern as the tada provider's id sets):
+        # materializing every Email fact here cost ~700 MB per hourly sync
+        # and left the worker's arenas at that size between runs.
         with self._soil as soil:
-            return {
-                (f.metadata or {}).get("gmail_message_id")
-                for f in soil.list_items(_type="Email", limit=1_000_000)
-                if (f.metadata or {}).get("gmail_message_id")
-            }
+            rows = soil._get_connection().execute(
+                """SELECT json_extract(metadata, '$.gmail_message_id') AS mid
+                   FROM item
+                   WHERE _type = 'Email'"""
+            ).fetchall()
+        return {row["mid"] for row in rows if row["mid"]}

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -117,14 +118,23 @@ class AttachmentExtractor:
         NB: Gmail attachment IDs are NOT stable — the same message's
         attachment gets a different id on every fetch — so they identify a
         download session, never an extracted instance. Filename is stable.
+
+        Projected in SQL (only the three keys are read): fact-level
+        materialization of the whole corpus peaked an hourly no-op run at
+        ~1.6 GB.
         """
-        index: dict[tuple[str, str], str] = {}
-        for fact in self.soil.list_items(_type="Attachment", limit=1_000_000):
-            email_uuid = (fact.metadata or {}).get("email_uuid")
-            filename = (fact.data or {}).get("filename")
-            if email_uuid and filename:
-                index[(email_uuid, filename)] = fact.uuid
-        return index
+        rows = self.soil._get_connection().execute(
+            """SELECT uuid,
+                      json_extract(metadata, '$.email_uuid') AS email_uuid,
+                      json_extract(data, '$.filename') AS filename
+               FROM item
+               WHERE _type = 'Attachment'"""
+        ).fetchall()
+        return {
+            (row["email_uuid"], row["filename"]): row["uuid"]
+            for row in rows
+            if row["email_uuid"] and row["filename"]
+        }
 
     def extract_all(self, dry_run: bool = False) -> dict:
         api = self._api_factory()
@@ -132,28 +142,46 @@ class AttachmentExtractor:
         # context; the API calls are slow but the connection tolerates it.
         with self.soil:
             existing = self._existing_index()
+            # Candidate scan is a projected query (uuid, gmail id, declared
+            # filenames); full Facts are fetched only for uncovered emails.
+            rows = self.soil._get_connection().execute(
+                """SELECT uuid,
+                          json_extract(metadata, '$.gmail_message_id') AS gmail_id,
+                          json_extract(data, '$.attachment_filenames') AS filenames
+                   FROM item
+                   WHERE _type = 'Email'
+                     AND json_extract(data, '$.attachment_count') > 0
+                     AND json_extract(metadata, '$.gmail_message_id') IS NOT NULL"""
+            ).fetchall()
             emails = [
-                f
-                for f in self.soil.list_items(_type="Email", limit=1_000_000)
-                if f.data.get("attachment_count") and f.metadata.get("gmail_message_id")
+                (
+                    row["uuid"],
+                    row["gmail_id"],
+                    json.loads(row["filenames"]) if row["filenames"] else [],
+                )
+                for row in rows
             ]
             self._log(f"{len(emails)} ingested emails declare attachments")
 
-            for email in emails:
+            for email_uuid, gmail_id, declared in emails:
                 self.stats["emails_scanned"] += 1
                 # Coverage skip: if every filename the email fact declares is
                 # already extracted, refetching the message is pointless —
                 # its attachment set cannot have grown (mail is immutable).
                 # This keeps the pass O(new mail) instead of O(all mail with
                 # attachments) as the mailbox grows.
-                declared = email.data.get("attachment_filenames") or []
                 if declared and all(
-                    (email.uuid, fn) in existing for fn in declared
+                    (email_uuid, fn) in existing for fn in declared
                 ):
                     self.stats["emails_covered"] += 1
                     continue
+                email = self.soil.get_fact(email_uuid)
+                if email is None:
+                    self.stats["errors"] += 1
+                    logger.warning("Email %s vanished mid-scan; skipping attachments", email_uuid)
+                    continue
                 try:
-                    message = api.get_message(email.metadata["gmail_message_id"])
+                    message = api.get_message(gmail_id)
                 except GmailApiError as e:
                     if e.status_code == 404:
                         # message deleted at the source since ingestion — its

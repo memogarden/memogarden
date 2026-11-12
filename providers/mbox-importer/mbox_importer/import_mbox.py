@@ -193,18 +193,21 @@ class EmailImporter:
     def _build_index(self) -> dict[str, str]:
         """Build rfc_message_id -> uuid index for deduplication.
 
-        Scans existing Email items in database and builds mapping.
+        Scans existing Email items in database and builds mapping. The
+        scan is a projected SQL query (only uuid + rfc_message_id are
+        read) — fact-level materialization of a 12k-email corpus costs
+        ~700 MB of transient heap per importer construction.
 
         Returns:
             Dict mapping rfc_message_id to item UUID
         """
-        index = {}
-        emails = self.soil.list_items(_type="Email", limit=1000000)
-        for email_item in emails:
-            message_id = email_item.data.get("rfc_message_id")
-            if message_id:
-                index[message_id] = email_item.uuid
-        return index
+        rows = self.soil._get_connection().execute(
+            """SELECT uuid,
+                      json_extract(data, '$.rfc_message_id') AS mid
+               FROM item
+               WHERE _type = 'Email'"""
+        ).fetchall()
+        return {row["mid"]: row["uuid"] for row in rows if row["mid"]}
 
     def import_email(self, email: dict) -> tuple[bool, int]:
         """Import single email with deduplication and threading.
