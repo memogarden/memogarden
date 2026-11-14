@@ -136,6 +136,15 @@ metadata:
     example: "google"
     enum: ["google", "outlook", "imap", "mbox"]
 
+  # Account attribution (RFC-012): verified upstream identity that produced
+  # this fact. Gmail importer stamps it at creation; outside the fact
+  # integrity hash (data only). Matchable by provider scope policies.
+  account:
+    type: string
+    required: false
+    description: Upstream account (email/username); set for account-backed providers
+    example: "ngjunsiang@gmail.com"
+
   # GMail-specific fields
   gmail_thread_id:
     type: string

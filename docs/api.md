@@ -59,9 +59,40 @@ accepted as Bearer tokens — Bearer is JWT-only).
 | `/api/v1/providers` | GET | List registered providers |
 | `/api/v1/providers` | POST | Register a provider (`{name, module, class, interval, config, ...}`) |
 | `/api/v1/providers/{name}` | GET | Provider manifest + last run status/detail |
-| `/api/v1/providers/{name}/run` | POST | Trigger a run (async 202, single-flight lock) |
+| `/api/v1/providers/{name}/run` | POST | Trigger runs (async 202; account-backed providers run every active account) |
 | `/api/v1/providers/{name}/run` | DELETE | Cancel a running run |
-| `/api/v1/providers/run` | POST | Run all due providers (heartbeat endpoint) |
+| `/api/v1/providers/run` | POST | Run all due work — providers plus due accounts (heartbeat endpoint) |
+| `/api/v1/providers/{name}/accounts` | GET | List the provider's accounts (RFC-012) |
+| `/api/v1/providers/{name}/accounts` | POST | Bind an upstream account (`{platform, subject, label?, credential_ref?, config?}`) |
+| `/api/v1/providers/{name}/accounts/{id}` | GET | Account manifest (status, last run, error) |
+| `/api/v1/providers/{name}/accounts/{id}` | PATCH | Update label/status/config/interval |
+| `/api/v1/providers/{name}/accounts/{id}` | DELETE | Remove the binding (the HACM credential is untouched) |
+| `/api/v1/providers/{name}/accounts/{id}/verify` | POST | Server-side credential probe (re-activates `needs_reauth` on success) |
+| `/api/v1/providers/{name}/accounts/{id}/run` | POST | Trigger a run for one account (async 202) |
+
+**Provider accounts (RFC-012).** An account binds one provider to one
+verified upstream identity (e.g. a Gmail address). Each account syncs on its
+own schedule with its own cursor and failure isolation; one dead account
+never blocks the others. Lifecycle: `active` → `needs_reauth` (on a
+credential-shaped run failure; the heartbeat skips it until re-linked) →
+`active` (after `verify` following a re-consent). Tokens live only in HACM
+on the host — the API stores the credential *reference* (`{platform}:{subject}`)
+and never sees OAuth material. Facts carry `metadata.account` (the verified
+subject), which the provider scope policy can match for per-account labeling:
+
+```bash
+# Link a Gmail account end-to-end (consent + HACM + registry row in one
+# command; opens a browser for Google consent):
+python -m gmail_importer.ingest auth-login --account you@gmail.com \
+    --label work --register
+
+# Manage accounts via the CLI (token-free registry surface):
+memogarden list accounts --provider gmail
+memogarden show account --provider gmail --subject you@gmail.com
+memogarden verify account --provider gmail --label work
+memogarden run account --provider gmail --subject you@gmail.com
+memogarden remove account --provider gmail --id <uuid>
+```
 
 Registration requires the provider module to be importable in the server
 environment and its class to implement the Provider Protocol

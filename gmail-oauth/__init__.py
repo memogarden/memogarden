@@ -53,6 +53,19 @@ class GmailOAuthClient:
         self._client_id = client_id
         self._client_secret = client_secret
         self._passphrase = passphrase
+        self._store = None  # lazily built CredentialStore, reused (RFC-012 INV-5:
+        # every construction pays the machine-bound Argon2id KDF — one unlock
+        # per client instance, never one per credential lookup)
+
+    def _credential_store(self):
+        """The HACM store, constructed once per client instance."""
+        if self._store is None:
+            try:
+                from hacm import CredentialStore
+            except ImportError:
+                raise ImportError("HACM not installed: pip install memogarden-hacm")
+            self._store = CredentialStore(self.hacm_path, passphrase=self._passphrase)
+        return self._store
 
     def get_client_credentials(self) -> tuple[str, str]:
         """Get OAuth client credentials (from HACM or constructor)."""
@@ -60,24 +73,17 @@ class GmailOAuthClient:
             return self._client_id, self._client_secret
 
         # Load from HACM
-        try:
-            from hacm import CredentialStore
+        store = self._credential_store()
+        client_cred = store.get("google:oauth-client")
+        if not client_cred:
+            raise ValueError(
+                "OAuth client credentials not found in HACM. "
+                "Add them with: python -m gmail_importer.ingest auth-setup (see gmail-importer)."
+            )
 
-            store = CredentialStore(self.hacm_path, passphrase=self._passphrase)
-            client_cred = store.get("google:oauth-client")
-            if not client_cred:
-                raise ValueError(
-                    "OAuth client credentials not found in HACM. "
-                    "Add them with: python -m gmail_importer.ingest auth-setup (see gmail-importer)."
-                )
-
-            # Decode client credentials
-            import base64
-            creds_data = json.loads(base64.b64decode(client_cred.material).decode("utf-8"))
-            return creds_data["client_id"], creds_data["client_secret"]
-
-        except ImportError:
-            raise ImportError("HACM not installed: pip install memogarden-hacm")
+        # Decode client credentials
+        creds_data = json.loads(base64.b64decode(client_cred.material).decode("utf-8"))
+        return creds_data["client_id"], creds_data["client_secret"]
 
     def get_authorization_url(
         self,
@@ -169,32 +175,29 @@ class GmailOAuthClient:
             account_id: GMail account identifier (e.g., "user@gmail.com")
             tokens: Token response from exchange_code_for_tokens
         """
-        try:
-            from hacm import Credential, CredentialStore
-            from datetime import datetime
+        from datetime import datetime
 
-            store = CredentialStore(self.hacm_path, passphrase=self._passphrase)
+        from hacm.core import Credential
 
-            # Create credential
-            cred = Credential(
-                id=f"google:{account_id}",
-                provider="google",
-                account_id=account_id,
-                type="oauth_refresh",
-                material=tokens["refresh_token"],
-                metadata={
-                    "scopes": tokens.get("scope", "").split(),
-                    "token_endpoint": GOOGLE_TOKEN_URI,
-                    "access_expires_in": tokens.get("expires_in"),
-                },
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
-            )
+        store = self._credential_store()
 
-            store.put(f"google:{account_id}", cred)
+        # Create credential
+        cred = Credential(
+            id=f"google:{account_id}",
+            provider="google",
+            account_id=account_id,
+            type="oauth_refresh",
+            material=tokens["refresh_token"],
+            metadata={
+                "scopes": tokens.get("scope", "").split(),
+                "token_endpoint": GOOGLE_TOKEN_URI,
+                "access_expires_in": tokens.get("expires_in"),
+            },
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
 
-        except ImportError:
-            raise ImportError("HACM not installed: pip install memogarden-hacm")
+        store.put(f"google:{account_id}", cred)
 
     def get_refresh_token(self, account_id: str) -> str:
         """Retrieve stored refresh token for account.
@@ -208,19 +211,13 @@ class GmailOAuthClient:
         Raises:
             ValueError: If token not found in HACM
         """
-        try:
-            from hacm import CredentialStore
+        store = self._credential_store()
+        cred = store.get(f"google:{account_id}")
 
-            store = CredentialStore(self.hacm_path, passphrase=self._passphrase)
-            cred = store.get(f"google:{account_id}")
+        if not cred:
+            raise ValueError(f"No refresh token found for {account_id}")
 
-            if not cred:
-                raise ValueError(f"No refresh token found for {account_id}")
-
-            return cred.material
-
-        except ImportError:
-            raise ImportError("HACM not installed: pip install memogarden-hacm")
+        return cred.material
 
     def refresh_access_token(self, account_id: str) -> dict:
         """Refresh access token using stored refresh token.
