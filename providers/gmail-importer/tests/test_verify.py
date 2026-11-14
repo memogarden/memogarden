@@ -28,7 +28,7 @@ def extracted(importer, tmp_path):
             return {"data": base64.urlsafe_b64encode(PDF_BYTES).decode().rstrip("=")}
 
     store = AttachmentStore(tmp_path / "attachments")
-    AttachmentExtractor(importer.soil, store, lambda: FakeApi(), verbose=False).extract_all()
+    AttachmentExtractor(importer.soil, store, lambda subject: FakeApi(), verbose=False).extract_all()
     return importer, store
 
 

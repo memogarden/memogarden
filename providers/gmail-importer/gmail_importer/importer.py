@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
+import requests
+
 from system.soil import Soil
 from mbox_importer.import_mbox import EmailImporter
 from mbox_importer.email_parser import (
@@ -119,10 +121,32 @@ class GmailImporter(EmailImporter):
         return module.GmailOAuthClient
 
     def _build_api_client(self) -> GmailApiClient:
-        """Refresh the access token via HACM-stored credentials."""
+        """Refresh the access token via HACM-stored credentials.
+
+        Credential-shaped failures (missing refresh token, Google rejecting
+        the grant) raise GmailApiError with auth_failure=True — the runtime
+        parks such an account into needs_reauth (RFC-012 §4.2) instead of
+        retrying it hourly. Transport/infrastructure failures keep
+        auth_failure=False and retry on the next heartbeat.
+        """
         oauth_cls = self._load_oauth_client()
         oauth = oauth_cls(self.hacm_path, passphrase=self.passphrase)
-        tokens = oauth.refresh_access_token(self.account_id)
+        try:
+            tokens = oauth.refresh_access_token(self.account_id)
+        except ValueError as e:
+            # ValueError here is the oauth client's own contract: a missing
+            # refresh token or a Google-declared error (invalid_grant etc.)
+            raise GmailApiError(
+                f"credential refresh failed for {self.account_id}: {e}",
+                auth_failure=True,
+            ) from None
+        except requests.HTTPError as e:
+            status = e.response.status_code if e.response is not None else None
+            raise GmailApiError(
+                f"credential refresh failed for {self.account_id}: {e}",
+                status_code=status,
+                auth_failure=status is not None and status < 500,
+            ) from None
         return GmailApiClient(tokens["access_token"])
 
     # ------------------------------------------------------------------
@@ -429,11 +453,7 @@ class GmailImporter(EmailImporter):
         self.stats.setdefault("deleted", 0)
         try:
             with self.soil:
-                self._ingested_ids = {
-                    (f.metadata or {}).get("gmail_message_id")
-                    for f in self.soil.list_items(_type="Email", limit=1_000_000)
-                    if (f.metadata or {}).get("gmail_message_id")
-                }
+                self._ingested_ids = self._ingested_gmail_ids()
             return self.import_all(verbose=verbose)
         finally:
             self._progressive = False
@@ -465,11 +485,7 @@ class GmailImporter(EmailImporter):
         self._excluded_ids = self._load_excluded_ids()
         try:
             with self.soil:
-                self._ingested_ids = {
-                    (f.metadata or {}).get("gmail_message_id")
-                    for f in self.soil.list_items(_type="Email", limit=1_000_000)
-                    if (f.metadata or {}).get("gmail_message_id")
-                }
+                self._ingested_ids = self._ingested_gmail_ids()
             stats = self.import_all(verbose=verbose)
             pending = getattr(self, "_pending_history_id", None)
             if pending is not None and self.sync_state_path:
@@ -482,6 +498,41 @@ class GmailImporter(EmailImporter):
             self._excluded_ids = None
             self._pending_history_id = None
             self._limit = None
+
+    def _ingested_gmail_ids(self) -> set[str]:
+        """This account's ingested gmail_message_ids, projected in SQL.
+
+        RFC-012 §4.6: gmail message ids are per-mailbox namespaces — the
+        scan filters on metadata.account so one account's done-set never
+        absorbs another's ids. An empty filtered scan with NO attributed
+        gmail fact anywhere in the corpus falls back to the unfiltered
+        legacy scan (pre-backfill defense, RFC-012 §8 M5); once any
+        attributed fact exists, the filter is strict.
+        """
+        rows = self.soil._get_connection().execute(
+            """SELECT json_extract(metadata, '$.gmail_message_id') AS mid
+               FROM item
+               WHERE _type = 'Email'
+                 AND json_extract(metadata, '$.account') = ?""",
+            (self.account_id,),
+        ).fetchall()
+        mids = {row["mid"] for row in rows if row["mid"]}
+        if mids:
+            return mids
+        row = self.soil._get_connection().execute(
+            """SELECT COUNT(*) AS n FROM item
+               WHERE _type = 'Email'
+                 AND json_extract(metadata, '$.gmail_message_id') IS NOT NULL
+                 AND json_extract(metadata, '$.account') IS NOT NULL"""
+        ).fetchone()
+        if row["n"]:
+            return set()
+        legacy = self.soil._get_connection().execute(
+            """SELECT json_extract(metadata, '$.gmail_message_id') AS mid
+               FROM item
+               WHERE _type = 'Email'"""
+        ).fetchall()
+        return {row_["mid"] for row_ in legacy if row_["mid"]}
 
     def translate_gmail_to_email(
         self, gmail_msg: dict, realized_at: Optional[str] = None
@@ -539,6 +590,10 @@ class GmailImporter(EmailImporter):
             "provider": "google",
             "source": "gmail_api",
             "gmail_message_id": gmail_msg.get("id"),
+            # RFC-012 §4.7: mailbox attribution at creation — which account's
+            # credentials produced this fact. Metadata sits outside the fact
+            # integrity hash (data only), so stamping never disturbs hashes.
+            "account": self.account_id,
         }
         if gmail_msg.get("threadId"):
             metadata["gmail_thread_id"] = gmail_msg["threadId"]

@@ -30,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="gmail_importer.ingest",
         description="Ingest Gmail into Soil (attachment metadata only).",
     )
-    parser.add_argument("--account", default=None, help="Gmail address (HACM lookup key; required for oldest and auth-login)")
+    parser.add_argument("--account", default=None, help="Gmail address (HACM lookup key; required for oldest and auth-login; optional for attachments — default: every active registered account)")
     parser.add_argument(
         "--data-dir",
         type=Path,
@@ -61,6 +61,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="auth-setup: overwrite existing client credentials (prompt for values)",
+    )
+    parser.add_argument(
+        "--register",
+        action="store_true",
+        help="auth-login: also create the provider account row via the API (RFC-012); the token itself never leaves this machine",
+    )
+    parser.add_argument(
+        "--label",
+        default=None,
+        help="auth-login --register: operator nickname for the account (e.g. 'work')",
+    )
+    parser.add_argument(
+        "--api-url",
+        default="http://127.0.0.1:8600",
+        help="auth-login --register: MemoGarden API base URL (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--api-key",
+        default=None,
+        help="auth-login --register: API key (default: $MEMOGARDEN_API_KEY)",
     )
     parser.add_argument("--dry-run", action="store_true", help="attachments: list what would be downloaded, store nothing")
     parser.add_argument("--quiet", action="store_true", help="Suppress progress output")
@@ -166,7 +186,8 @@ def cmd_auth_setup(args) -> int:
 
 
 def cmd_auth_login(args) -> int:
-    """Run the loopback OAuth consent flow and store the refresh token."""
+    """Run the loopback OAuth consent flow, verify the mailbox identity,
+    store the refresh token, and (with --register) create the account row."""
     if not args.account:
         sys.exit("--account is required for auth-login")
     gmail_oauth = _load_gmail_oauth()
@@ -191,10 +212,70 @@ def cmd_auth_login(args) -> int:
         )
 
     tokens = client.exchange_code_for_tokens(result["code"], redirect_uri=registered)
-    client.store_tokens(args.account, tokens)
-    print(f"\nOAuth complete. Refresh token stored for {args.account}.")
+
+    # RFC-012 INV-3: link-time subject verification. The token must belong
+    # to the mailbox it will be stored under — nothing is persisted until
+    # this passes, so a typo'd --account can never poison sync state.
+    from gmail_importer.gmail_api import GmailApiClient
+
+    profile = GmailApiClient(tokens["access_token"]).get_profile()
+    verified = (profile.get("emailAddress") or "").strip().lower()
+    if verified != args.account.strip().lower():
+        raise SystemExit(
+            f"OAuth verification failed: the credential authenticated as "
+            f"'{verified or '<unknown>'}', not '{args.account}'. Nothing was "
+            "stored — re-run with the correct --account."
+        )
+
+    client.store_tokens(verified, tokens)
+    print(f"\nOAuth complete. Refresh token stored for {verified}.")
     print(f"Scopes: {tokens.get('scope', '')}")
+
+    if args.register:
+        _register_account_row(verified, args)
     return 0
+
+
+def _register_account_row(subject: str, args) -> None:
+    """POST the provider_accounts row for the verified subject (RFC-012 §6.3).
+
+    The API receives the credential REFERENCE only — the token itself stays
+    in the local HACM store (INV-2: tokens never transit the API). A 409
+    means the account row already exists; the freshly consented token
+    refreshed the HACM entry in place, which is exactly a re-link.
+    """
+    import os
+
+    import requests
+
+    api_key = args.api_key or os.environ.get("MEMOGARDEN_API_KEY")
+    if not api_key:
+        sys.exit(
+            "--register needs an API key: pass --api-key or export MEMOGARDEN_API_KEY"
+        )
+    response = requests.post(
+        f"{args.api_url.rstrip('/')}/api/v1/providers/gmail/accounts",
+        json={
+            "platform": "google",
+            "subject": subject,
+            "label": args.label,
+            "credential_ref": f"google:{subject}",
+        },
+        headers={"X-API-Key": api_key},
+        timeout=15,
+    )
+    if response.status_code == 409:
+        print(f"Account already registered (google:{subject}) — token refreshed in place.")
+        return
+    if response.status_code != 201:
+        sys.exit(
+            f"Account registration failed ({response.status_code}): "
+            f"{response.text[:300]}"
+        )
+    account = response.json()
+    print(f"Account registered: gmail/{account['id']} ({account['subject']}).")
+    print("Its first sync ingests the full mailbox through the hourly heartbeat; a fresh")
+    print("account also runs immediately if you trigger it (POST .../accounts/<id>/run).")
 
 
 def _auth_url(client, redirect_uri: str) -> tuple[str, str]:
@@ -239,7 +320,10 @@ def _make_importer(args, sync_cache=False):
             hacm_path=str(hacm_path),
             passphrase=passphrase,
             search_cache_path=(
-                str(args.data_dir / "gmail-search-cache.json") if sync_cache else None
+                # RFC-012 §4.6: per-subject cache file
+                str(args.data_dir / f"gmail-search-cache--{args.account}.json")
+                if sync_cache
+                else None
             ),
             excluded_ids_path=str(args.data_dir / "gmail-excluded-ids.json"),
         )
@@ -317,15 +401,52 @@ def cmd_incremental(args) -> int:
     return 0 if stats.get("errors", 0) == 0 else 1
 
 
+def _registered_accounts(data_dir: Path) -> list[str]:
+    """ACTIVE gmail subjects from the provider registry (read-only)."""
+    import sqlite3
+
+    core_db = data_dir / "core.db"
+    if not core_db.exists():
+        sys.exit(
+            f"Provider registry not found at {core_db} — pass --account explicitly"
+        )
+    conn = sqlite3.connect(f"file:{core_db}?mode=ro", uri=True)
+    try:
+        rows = conn.execute(
+            "SELECT subject FROM provider_accounts "
+            "WHERE provider_name = 'gmail' AND status = 'active' "
+            "ORDER BY subject"
+        ).fetchall()
+    except sqlite3.OperationalError as e:
+        sys.exit(
+            f"Cannot read the provider registry ({e}) — was the RFC-012 "
+            "migration applied? Pass --account explicitly."
+        )
+    finally:
+        conn.close()
+    subjects = [r[0] for r in rows]
+    if not subjects:
+        sys.exit(
+            "No active gmail accounts in the provider registry — register "
+            "one (auth-login --register) or pass --account explicitly."
+        )
+    return subjects
+
+
 def cmd_attachments(args) -> int:
-    """Download attachment binaries for ingested emails; Attachment facts + relations."""
-    if not args.account:
-        sys.exit("--account is required for attachments")
+    """Download attachment binaries for ingested emails; Attachment facts + relations.
+
+    Account routing (RFC-012 §4.6): every email's refetch goes through the
+    client of the account that owns it. Without --account the pass covers
+    every ACTIVE gmail account in the provider registry; with --account it
+    is scoped to one (legacy unattributed facts ride on that account).
+    """
+    import requests
 
     from system.soil import Soil
 
     from gmail_importer.attachments import AttachmentExtractor, AttachmentStore
-    from gmail_importer.importer import GmailImporter
+    from gmail_importer.gmail_api import GmailApiClient, GmailApiError
 
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
 
@@ -335,27 +456,56 @@ def cmd_attachments(args) -> int:
         passphrase_file.read_text().strip() if passphrase_file.exists() else None
     )
 
+    accounts = [args.account] if args.account else _registered_accounts(args.data_dir)
+
     soil = Soil(args.data_dir / "soil.db")
     with soil:
         soil.init_schema()  # idempotent; mirrors initialize_system in system.core
-        importer = GmailImporter(
-            soil=soil,
-            account_id=args.account,
-            hacm_path=str(hacm_path),
-            passphrase=passphrase,
-        )
+
+        # One HACM unlock for the whole pass (RFC-012 INV-5): a single oauth
+        # client serves every account's token refresh, so N accounts cost
+        # one Argon2id KDF, not N.
+        gmail_oauth = _load_gmail_oauth()
+        oauth = gmail_oauth.GmailOAuthClient(str(hacm_path), passphrase=passphrase)
+
+        def api_factory(subject: str) -> GmailApiClient:
+            # Same contract as GmailImporter._build_api_client: credential-
+            # shaped failures become GmailApiError(auth_failure=True) so the
+            # extractor parks the account instead of aborting the pass.
+            try:
+                tokens = oauth.refresh_access_token(subject)
+            except ValueError as e:
+                raise GmailApiError(
+                    f"credential refresh failed for {subject}: {e}",
+                    auth_failure=True,
+                ) from None
+            except requests.HTTPError as e:
+                status = e.response.status_code if e.response is not None else None
+                raise GmailApiError(
+                    f"credential refresh failed for {subject}: {e}",
+                    status_code=status,
+                    auth_failure=status is not None and status < 500,
+                ) from None
+            return GmailApiClient(tokens["access_token"])
+
         store = AttachmentStore(args.data_dir / "attachments")
         extractor = AttachmentExtractor(
-            soil, store, importer._build_api_client, verbose=not args.quiet
+            soil,
+            store,
+            api_factory,
+            verbose=not args.quiet,
+            default_account=args.account,
         )
-        stats = extractor.extract_all(dry_run=args.dry_run)
+        stats = extractor.extract_all(dry_run=args.dry_run, account_filter=args.account)
 
     verb = "would download" if args.dry_run else "downloaded"
+    scope = args.account or f"{len(accounts)} registered accounts"
     print(
-        f"Attachments: {stats['emails_scanned']} emails scanned, "
+        f"Attachments [{scope}]: {stats['emails_scanned']} emails scanned, "
         f"{stats.get('emails_covered', 0)} already covered, "
         f"{stats['attachments_found']} found, {stats['downloaded']} {verb}, "
-        f"{stats['skipped_existing']} already present, {stats['errors']} errors"
+        f"{stats['skipped_existing']} already present, "
+        f"{stats.get('auth_skipped', 0)} auth-skipped, {stats['errors']} errors"
     )
     return 0 if stats.get("errors", 0) == 0 else 1
 

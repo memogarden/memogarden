@@ -82,7 +82,7 @@ class TestAttachmentExtractor:
         importer, email_uuid = importer_with_email
         api = FakeAttachmentApi()
         stats = AttachmentExtractor(
-            importer.soil, store, lambda: api, verbose=False
+            importer.soil, store, lambda subject: api, verbose=False
         ).extract_all()
 
         assert stats["downloaded"] == 1
@@ -111,9 +111,9 @@ class TestAttachmentExtractor:
 
     def test_rerun_is_idempotent(self, importer_with_email, store):
         importer, _ = importer_with_email
-        AttachmentExtractor(importer.soil, store, lambda: FakeAttachmentApi(), verbose=False).extract_all()
+        AttachmentExtractor(importer.soil, store, lambda subject: FakeAttachmentApi(), verbose=False).extract_all()
         api2 = FakeAttachmentApi()
-        stats2 = AttachmentExtractor(importer.soil, store, lambda: api2, verbose=False).extract_all()
+        stats2 = AttachmentExtractor(importer.soil, store, lambda subject: api2, verbose=False).extract_all()
         assert stats2["emails_covered"] == 1  # email skipped without refetch
         assert stats2["skipped_existing"] == 0
         assert stats2["downloaded"] == 0
@@ -139,9 +139,9 @@ class TestAttachmentExtractor:
                         part["body"]["attachmentId"] = f"CHURNED-{ChurningApi.counter}"
                 return msg
 
-        AttachmentExtractor(importer.soil, store, lambda: ChurningApi(), verbose=False).extract_all()
+        AttachmentExtractor(importer.soil, store, lambda subject: ChurningApi(), verbose=False).extract_all()
         api2 = ChurningApi()
-        stats2 = AttachmentExtractor(importer.soil, store, lambda: api2, verbose=False).extract_all()
+        stats2 = AttachmentExtractor(importer.soil, store, lambda subject: api2, verbose=False).extract_all()
         assert stats2["emails_covered"] == 1
         assert stats2["downloaded"] == 0
         assert api2.fetched_messages == []
@@ -152,7 +152,7 @@ class TestAttachmentExtractor:
         """If one attachment fact is missing (e.g. a past failure), the email
         is refetched and only the missing instance is downloaded."""
         importer, _ = importer_with_email
-        AttachmentExtractor(importer.soil, store, lambda: FakeAttachmentApi(), verbose=False).extract_all()
+        AttachmentExtractor(importer.soil, store, lambda subject: FakeAttachmentApi(), verbose=False).extract_all()
         # drop one extracted fact to simulate a past failure
         with importer.soil:
             facts = importer.soil.list_items(_type="Attachment", limit=10)
@@ -161,7 +161,7 @@ class TestAttachmentExtractor:
             conn.execute("DELETE FROM item WHERE uuid = ?", (facts[0].uuid,))
 
         api2 = FakeAttachmentApi()
-        stats2 = AttachmentExtractor(importer.soil, store, lambda: api2, verbose=False).extract_all()
+        stats2 = AttachmentExtractor(importer.soil, store, lambda subject: api2, verbose=False).extract_all()
         assert stats2["emails_covered"] == 0      # not fully covered anymore
         assert stats2["downloaded"] == 1          # refilled the gap
         assert stats2["skipped_existing"] == 0    # duplicate excluded by done set
@@ -172,7 +172,7 @@ class TestAttachmentExtractor:
         importer, _ = importer_with_email
         api = FakeAttachmentApi()
         stats = AttachmentExtractor(
-            importer.soil, store, lambda: api, verbose=False
+            importer.soil, store, lambda subject: api, verbose=False
         ).extract_all(dry_run=True)
         assert stats["attachments_found"] == 1
         assert stats["downloaded"] == 0
@@ -192,7 +192,7 @@ class TestAttachmentExtractor:
                 raise AssertionError("should not be reached")
 
         stats = AttachmentExtractor(
-            importer.soil, store, lambda: FailingApi(), verbose=False
+            importer.soil, store, lambda subject: FailingApi(), verbose=False
         ).extract_all()
         assert stats["errors"] == 1
         assert stats["downloaded"] == 0
@@ -205,7 +205,7 @@ class TestAttachmentExtractor:
                 return {"data": "", "size": 0}
 
         stats = AttachmentExtractor(
-            importer.soil, store, lambda: EmptyApi(), verbose=False
+            importer.soil, store, lambda subject: EmptyApi(), verbose=False
         ).extract_all()
         assert stats["errors"] == 1
         assert stats["downloaded"] == 0

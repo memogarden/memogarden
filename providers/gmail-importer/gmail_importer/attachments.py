@@ -84,19 +84,30 @@ class AttachmentExtractor:
     `contained_by` relation are created. Re-runs skip instances already
     extracted, keyed on (email uuid, attachment filename) — Gmail's
     attachment ids are per-fetch handles that change between fetches.
+
+    Account routing (RFC-012 §4.6): the refetch goes through the client of
+    the account that OWNS the email fact (its metadata.account) — fetching
+    account B's mail with account A's token 404s and would masquerade as a
+    deletion. `api_factory(account_subject)` is called lazily per account,
+    only when an uncovered email forces a refetch; None-keyed legacy facts
+    (pre-attribution) map to the caller's default account.
     """
 
     def __init__(
         self,
         soil: Soil,
         store: AttachmentStore,
-        api_factory: Callable[[], object],
+        api_factory: Callable[[Optional[str]], object],
         verbose: bool = True,
+        default_account: Optional[str] = None,
     ):
         self.soil = soil
         self.store = store
         self._api_factory = api_factory
         self.verbose = verbose
+        self._default_account = default_account
+        self._clients: dict[Optional[str], object] = {}
+        self._dead_accounts: set[Optional[str]] = set()
         self.stats = {
             "emails_scanned": 0,
             "emails_covered": 0,
@@ -105,12 +116,39 @@ class AttachmentExtractor:
             "downloaded": 0,
             "attachments_missing": 0,
             "skipped_existing": 0,
+            "auth_skipped": 0,
             "errors": 0,
         }
 
     def _log(self, msg: str) -> None:
         if self.verbose:
             print(f"[attachments] {msg}")
+
+    def _client_for(self, account: Optional[str]):
+        """The API client owning this email's mailbox — lazily per account.
+
+        A credential-shaped failure parks the account for the rest of the
+        pass (its token is dead; retrying per email would only spam) —
+        mirror of the runtime's needs_reauth behavior for the CLI pass.
+        """
+        subject = account or self._default_account
+        if subject in self._dead_accounts:
+            raise GmailApiError(
+                f"account {subject} failed credential refresh earlier this pass",
+                auth_failure=True,
+            )
+        if subject not in self._clients:
+            try:
+                self._clients[subject] = self._api_factory(subject)
+            except GmailApiError as e:
+                if e.auth_failure:
+                    self._dead_accounts.add(subject)
+                    self._log(
+                        f"account {subject}: credential refresh failed — "
+                        "skipping its emails (re-link the account to recover)"
+                    )
+                raise
+        return self._clients[subject]
 
     def _existing_index(self) -> dict[tuple[str, str], str]:
         """(email uuid, attachment filename) -> Attachment fact uuid.
@@ -136,39 +174,46 @@ class AttachmentExtractor:
             if row["email_uuid"] and row["filename"]
         }
 
-    def extract_all(self, dry_run: bool = False) -> dict:
-        # The Gmail client decrypts its HACM store on construction, and HACM
-        # derives keys with Argon2id at MEMLIMIT_SENSITIVE (~1 GiB transient).
-        # Build it only when an uncovered email forces a refetch — a
-        # covered-only pass (the steady-state hourly case) skips the KDF
-        # entirely.
-        api = None
+    def extract_all(self, dry_run: bool = False, account_filter: Optional[str] = None) -> dict:
+        # Clients are built lazily per account (see _client_for): a
+        # covered-only pass (the steady-state hourly case) skips both the
+        # KDF and the network entirely.
         # Everything (index build, listing, facts) happens inside one Soil
         # context; the API calls are slow but the connection tolerates it.
         with self.soil:
             existing = self._existing_index()
-            # Candidate scan is a projected query (uuid, gmail id, declared
-            # filenames); full Facts are fetched only for uncovered emails.
+            # Candidate scan is a projected query (uuid, gmail id, owning
+            # account, declared filenames); full Facts are fetched only for
+            # uncovered emails.
             rows = self.soil._get_connection().execute(
                 """SELECT uuid,
                           json_extract(metadata, '$.gmail_message_id') AS gmail_id,
+                          json_extract(metadata, '$.account') AS account,
                           json_extract(data, '$.attachment_filenames') AS filenames
                    FROM item
                    WHERE _type = 'Email'
                      AND json_extract(data, '$.attachment_count') > 0
                      AND json_extract(metadata, '$.gmail_message_id') IS NOT NULL"""
             ).fetchall()
-            emails = [
-                (
-                    row["uuid"],
-                    row["gmail_id"],
-                    json.loads(row["filenames"]) if row["filenames"] else [],
+            emails = []
+            for row in rows:
+                account = row["account"]
+                if account_filter is not None:
+                    # --account mode: only emails this account owns (legacy
+                    # unattributed facts ride on the default account).
+                    if (account or self._default_account) != account_filter:
+                        continue
+                emails.append(
+                    (
+                        row["uuid"],
+                        row["gmail_id"],
+                        account,
+                        json.loads(row["filenames"]) if row["filenames"] else [],
+                    )
                 )
-                for row in rows
-            ]
             self._log(f"{len(emails)} ingested emails declare attachments")
 
-            for email_uuid, gmail_id, declared in emails:
+            for email_uuid, gmail_id, account, declared in emails:
                 self.stats["emails_scanned"] += 1
                 # Coverage skip: if every filename the email fact declares is
                 # already extracted, refetching the message is pointless —
@@ -185,11 +230,15 @@ class AttachmentExtractor:
                     self.stats["errors"] += 1
                     logger.warning("Email %s vanished mid-scan; skipping attachments", email_uuid)
                     continue
-                if api is None:
-                    api = self._api_factory()
                 try:
+                    api = self._client_for(account)
                     message = api.get_message(gmail_id)
                 except GmailApiError as e:
+                    if e.auth_failure:
+                        # Account parked by _client_for (or a mid-run 401):
+                        # its remaining emails are skipped, not errors.
+                        self.stats["auth_skipped"] += 1
+                        continue
                     if e.status_code == 404:
                         # message deleted at the source since ingestion — its
                         # already-extracted attachments remain valid history
@@ -273,6 +322,8 @@ class AttachmentExtractor:
                 "email_uuid": email.uuid,
                 "gmail_message_id": email.metadata.get("gmail_message_id"),
                 "gmail_attachment_id": attachment_id,
+                # RFC-012 §4.7: inherit the owning email's account
+                "account": email.metadata.get("account"),
                 "storage_root": str(self.store.root),
                 "fetched_at": now,
             },

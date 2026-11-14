@@ -35,11 +35,23 @@ class GmailApiError(RuntimeError):
 
     status_code carries the HTTP status when the error came from a
     response (e.g. 404 for expired history in history.list).
+
+    auth_failure (RFC-012 §4.2): True when the failure is credential-shaped
+    (expired/revoked token, missing or rejected refresh token, mailbox
+    mismatch). The provider runtime parks accounts whose run raises an
+    auth_failure-marked exception into needs_reauth instead of retrying
+    them on every heartbeat.
     """
 
-    def __init__(self, message: str, status_code: Optional[int] = None):
+    def __init__(
+        self,
+        message: str,
+        status_code: Optional[int] = None,
+        auth_failure: bool = False,
+    ):
         super().__init__(message)
         self.status_code = status_code
+        self.auth_failure = auth_failure
 
 
 class GmailApiClient:
@@ -59,7 +71,8 @@ class GmailApiClient:
         if response.status_code == 401:
             raise GmailApiError(
                 "Gmail API returned 401: access token expired or scopes not granted. "
-                "Re-run the OAuth flow if the refresh token was revoked."
+                "Re-run the OAuth flow if the refresh token was revoked.",
+                auth_failure=True,
             )
         if response.status_code != 200:
             raise GmailApiError(
