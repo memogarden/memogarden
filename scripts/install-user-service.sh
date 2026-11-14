@@ -56,7 +56,7 @@ do_install() {
     [ -x "$API_VENV/bin/gunicorn" ] || fail \
         "gunicorn not found at $API_VENV/bin/gunicorn — run 'poetry install' in memogarden-api first"
     if [ "$WITH_INGEST_TIMER" = 1 ]; then
-        [ -n "$INGEST_ACCOUNT" ] || fail "--with-ingest-timer requires --ingest-account"
+        # RFC-012: the attachments pass covers every active registered account — no account flag needed
         [ -x "$INGEST_VENV/bin/python" ] || fail \
             "gmail-importer venv not found at $INGEST_VENV — run 'poetry install' in providers/gmail-importer first"
     fi
@@ -98,12 +98,13 @@ UNIT
         cat > "$UNIT_DIR/memogarden-ingest.service" <<UNIT
 # MemoGarden scheduled email ingestion, two passes:
 #   heartbeat   POST /api/v1/providers/run — the server runs every due
-#               registered provider in-process (gmail = historyId sync of
-#               NEW mail; the retired progressive backfill "ingest next"
-#               remains the MANUAL recovery path for lost sync state or
-#               >30-day outages)
+#               work item in-process (providers, and every active provider
+#               account per RFC-012; gmail = historyId sync of NEW mail;
+#               the retired progressive backfill "ingest next" remains the
+#               MANUAL recovery path for lost sync state or >30-day outages)
 #   attachments binary extraction for everything newly ingested (still a
-#               CLI pass until binaries join the provider contract).
+#               CLI pass until binaries join the provider contract); covers
+#               every ACTIVE registered account (RFC-012 §4.6).
 [Unit]
 Description=MemoGarden scheduled email ingestion
 
@@ -113,7 +114,7 @@ WorkingDirectory=$DATA_DIR
 Environment=MEMOGARDEN_DATA_DIR=$DATA_DIR
 EnvironmentFile=$REPO_ROOT/.env
 ExecStart=/usr/bin/curl -sf -X POST -H "X-API-Key: \${MEMOGARDEN_API_KEY}" -H "Content-Type: application/json" http://127.0.0.1:8600/api/v1/providers/run
-ExecStart=$INGEST_VENV/bin/python -m gmail_importer.ingest --account $INGEST_ACCOUNT attachments --quiet
+ExecStart=$INGEST_VENV/bin/python -m gmail_importer.ingest attachments --quiet
 UNIT
 
         cat > "$UNIT_DIR/memogarden-ingest.timer" <<'UNIT'
@@ -159,7 +160,7 @@ UNIT
     echo "Installed:"
     echo "  memogarden.service            -> http://$BIND  (XDG data: $DATA_DIR)"
     if [ "$WITH_INGEST_TIMER" = 1 ]; then
-        echo "  memogarden-ingest.timer       -> hourly, account $INGEST_ACCOUNT, limit $INGEST_LIMIT"
+        echo "  memogarden-ingest.timer       -> hourly, all active accounts, limit $INGEST_LIMIT"
     fi
     echo
     echo "Lifecycle (per PRD): starts at login, stops at logout."
