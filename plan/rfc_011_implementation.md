@@ -55,19 +55,21 @@ material**.
 
 ### P1 — before the statement pipeline goes live
 
-4. **Provider `scope_policy` hook** (§4.8, SG-7) — DECIDED
-   2026-11-12, implementation OPEN. Rules-based: an ordered,
-   provider-defined matcher list with a **default catch-all rule that
-   routes all provider ingestion through triage** (fail-closed);
-   operator-customisable at the provider registry. Applied by the
-   runtime at fact creation (framework-wrapped, SG-7 — providers cannot
-   forget to label), covering child facts (Attachments alongside
-   Emails). Applies at creation going forward. Nested sub-choice
-   (operator's call at rollout): retroactive application to the legacy
-   corpus would push all ~11.8k emails into triage; the calibrated lean
-   is backfilling **explicit rules only** (finance senders → triage,
-   capturing the 362 statements' emails) and leaving unmatched legacy
-   mail global.
+4. **Provider `scope_policy` hook** (§4.8, SG-7) — **DONE, MERGED +
+   DEPLOYED 2026-11-13** (system `a70d952` — migration 20261113,
+   `providers.scope_policy`; api `0a36b79` — runtime application at the
+   `_to_fact`/`create_fact` seam (children included; providers cannot
+   forget), `PUT /providers/<name>/scope-policy` JWT-only, builtin
+   aliases triage/private). Ratified design: rules-based, ordered
+   matchers over merged data+metadata fields, first match wins, default
+   catch-all → triage (fail-closed), null = unscoped, provider-set
+   labels win. Live: schema migrated, gmail at NULL policy = the
+   ratified default — the next inbound email lands in triage (current
+   runs insert 0 facts; mailbox caught up, so live labeling first
+   demonstrates on new mail). Backlog sub-choice remains operator's at
+   rollout (retroactive default = whole backlog → triage; lean =
+   backfill explicit rules only, finance senders → triage, unmatched
+   legacy stays global).
 5. **§4.9 read-path completion** — OPEN.
    - Relation traversal (`explore`) filtering with
      unresolved-reference semantics (§4.9(4)) — the statement flow
