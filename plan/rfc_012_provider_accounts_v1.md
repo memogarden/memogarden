@@ -406,9 +406,13 @@ HACM, and for future platforms whose linking is not OAuth-shaped.
 5. Write HACM entry `{platform}:{subject}` (`type=oauth_refresh`) — under the
    *verified* subject, normalized to lowercase.
 6. POST the account row (credential_ref only — INV-2).
-7. First sync ingests the full mailbox via the heartbeat (existing seed path:
-   empty done-set → full walk, batched by `batch_limit`, continuing across
-   runs until caught up), or immediately via `run`.
+7. First sync **seeds**: it stores the mailbox's current historyId and the
+   heartbeat captures mail arriving FROM that point (correction, 2026-11-14
+   — v1.0 wrongly promised a full first walk; the historyId path never
+   backfills). Existing mail is ingested only via the manual progressive
+   backfill, per account, if the operator wants history:
+   `python -m gmail_importer.ingest next --account <subject> --limit 1000`
+   (repeat until caught up; per-subject search cache, RFC-012 §4.6).
 
 ## 7. Failure Modes & Edge Cases
 
