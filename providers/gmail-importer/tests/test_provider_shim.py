@@ -14,9 +14,22 @@ class FakeHistoryApi:
         self.current = current
         self.labels = labels or {}
         self.fetched: list[str] = []
+        # RFC-012 §6.3: the provider's backfill stage enumerates the mailbox
+        # newest-first each sync until complete; an empty listing = fully
+        # ingested = backfill completes immediately (preserving the
+        # seed-only semantics these shim tests were written against).
+        self.listing: list[str] = []
+        self.list_calls = 0
 
     def get_profile(self):
         return {"historyId": self.current}
+
+    def list_messages(self, query=None, page_token=None):
+        self.list_calls += 1
+        return {"messages": [{"id": i} for i in self.listing]}
+
+    def iter_message_ids(self, query=None, max_pages=12):
+        return list(self.listing)
 
     def history_list(self, start_history_id, page_token=None):
         resp = self.history_map.get(start_history_id)
@@ -52,6 +65,7 @@ def env(tmp_path):
         "soil_path": str(tmp_path / "soil.db"),
         "sync_state_path": str(tmp_path / "gmail-sync-state.json"),
         "excluded_ids_path": str(tmp_path / "gmail-excluded-ids.json"),
+        "search_cache_path": str(tmp_path / "gmail-search-cache.json"),
         "batch_limit": 10,
     }
     provider = GmailProvider(config)

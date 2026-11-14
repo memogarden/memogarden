@@ -64,6 +64,7 @@ class TestAttribution:
                 "hacm_path": "/tmp/x.enc",
                 "soil_path": str(tmp_path / "soil.db"),
                 "sync_state_path": str(tmp_path / "state.json"),
+                "search_cache_path": str(tmp_path / "cache.json"),
                 "excluded_ids_path": str(tmp_path / "excluded.json"),
                 "batch_limit": 10,
             },
@@ -160,6 +161,7 @@ class TestProviderConstruction:
                 "hacm_path": "/tmp/x.enc",
                 "soil_path": str(tmp_path / "soil.db"),
                 "sync_state_path": str(tmp_path / "state.json"),
+                "search_cache_path": str(tmp_path / "cache.json"),
                 "excluded_ids_path": str(tmp_path / "excluded.json"),
             }
         )
@@ -188,6 +190,7 @@ class TestMailboxMismatchGuard:
                 "hacm_path": "/tmp/x.enc",
                 "soil_path": str(tmp_path / "soil.db"),
                 "sync_state_path": str(tmp_path / "state.json"),
+                "search_cache_path": str(tmp_path / "cache.json"),
                 "excluded_ids_path": str(tmp_path / "excluded.json"),
             },
             account={"id": "acc1", "platform": "google", "subject": ACCOUNT,
@@ -218,6 +221,7 @@ class TestMailboxMismatchGuard:
                 "hacm_path": "/tmp/x.enc",
                 "soil_path": str(tmp_path / "soil.db"),
                 "sync_state_path": str(tmp_path / "state.json"),
+                "search_cache_path": str(tmp_path / "cache.json"),
                 "excluded_ids_path": str(tmp_path / "excluded.json"),
             },
             account={"id": "acc1", "platform": "google", "subject": ACCOUNT,

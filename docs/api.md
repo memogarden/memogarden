@@ -75,7 +75,10 @@ verified upstream identity (e.g. a Gmail address). Each account syncs on its
 own schedule with its own cursor and failure isolation; one dead account
 never blocks the others. Lifecycle: `active` → `needs_reauth` (on a
 credential-shaped run failure; the heartbeat skips it until re-linked) →
-`active` (after `verify` following a re-consent). Tokens live only in HACM
+`active` (after `verify` following a re-consent). History ingestion order
+(RFC-012 §4.10): a new account ingests its most recent mail first and
+walks backward toward its oldest email, one batch per heartbeat, with no
+operator action. Tokens live only in HACM
 on the host — the API stores the credential *reference* (`{platform}:{subject}`)
 and never sees OAuth material. Facts carry `metadata.account` (the verified
 subject), which the provider scope policy can match for per-account labeling:

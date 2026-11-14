@@ -1,6 +1,6 @@
 # RFC-012: Provider Accounts — Multi-Account Ingestion
 
-**Version:** 1.1
+**Version:** 1.2
 **Status:** Accepted (implemented 2026-11-14)
 **Author:** MemoGarden Project
 **Created:** 2026-11-14
@@ -318,6 +318,46 @@ Whether this pass eventually merges into the provider contract is an existing
 open question (tracked alongside the heartbeat unit rename); this RFC only
 requires it not break under N accounts.
 
+### 4.10 Ingestion Order Policy (v1.2, 2026-11-14)
+
+**Official policy: history is ingested reverse-chronologically.** A newly
+linked account begins at its most recent email and walks backward in time
+until its oldest email is ingested — the user gets useful, current material
+from the first heartbeat, and the rest of the history accrues batch by
+batch in the background.
+
+- Every sync runs two stages: the historyId incremental walk (incoming
+  mail, bounded latency) followed by the backward-fill batch (the most
+  recent un-ingested mail first) when the account's backfill is not yet
+  complete and the incremental stage did not truncate.
+- The backward walk is a plain paged walk from the head of
+  `messages.list` (natively newest-first — no date-window search, no
+  search cache; the CLI's oldest-first recovery path owns that file and
+  the two orderings must never share it). Depth grows as the backfill
+  progresses but stays bounded by a per-run page budget (40 pages ≈ 20k
+  ids); hitting the budget DEFERS the remainder to the next run rather
+  than failing it, so a mailbox beyond the horizon never wedges the
+  account — it backfills as far as the horizon allows and the incremental
+  stage keeps working regardless.
+- Completion is explicit and conservative: the per-account sync state
+  records `backfill: complete` only when a walk covered the whole listing
+  AND every id in the draining batch resolved (fetched or policy-skipped —
+  transient fetch failures keep it running for retry). Completed accounts
+  stop enumerating. Accounts predating this policy self-settle the same
+  way: their first post-deploy sync enumerates once, finds everything
+  already ingested, and marks complete.
+- Threading under reverse-chronological order: a reply is stored before
+  its parent, so the forward `replies_to` resolution misses.
+  `create_relations` therefore also reverse-links — when a fact lands,
+  stored mails whose `in_reply_to`/`references` point at it are linked to
+  it — making threading eventual-consistent under any ingest order.
+- A truncated incremental batch defers the backward-fill stage to the next
+  heartbeat: incoming mail always outranks history. New mail is never
+  double-yielded within a run (the backward walk skips ids the
+  incremental stage already served).
+- The manual `ingest next` recovery path (oldest-first) is unchanged but
+  superseded for this purpose — the policy needs no operator action.
+
 ## 5. Behavioral Invariants
 
 - **INV-1 — No secret anywhere but HACM.** No token material in core.db,
@@ -406,13 +446,10 @@ HACM, and for future platforms whose linking is not OAuth-shaped.
 5. Write HACM entry `{platform}:{subject}` (`type=oauth_refresh`) — under the
    *verified* subject, normalized to lowercase.
 6. POST the account row (credential_ref only — INV-2).
-7. First sync **seeds**: it stores the mailbox's current historyId and the
-   heartbeat captures mail arriving FROM that point (correction, 2026-11-14
-   — v1.0 wrongly promised a full first walk; the historyId path never
-   backfills). Existing mail is ingested only via the manual progressive
-   backfill, per account, if the operator wants history:
-   `python -m gmail_importer.ingest next --account <subject> --limit 1000`
-   (repeat until caught up; per-subject search cache, RFC-012 §4.6).
+7. First sync **seeds** the historyId AND begins the automatic history
+   backfill (§4.10): from the first heartbeat the account ingests its most
+   recent mail first and walks backward toward its oldest email, one
+   `batch_limit` per run, no operator action.
 
 ## 7. Failure Modes & Edge Cases
 
@@ -571,3 +608,4 @@ Also adopted: the **tokens-never-transit-the-API** invariant (INV-2) and
 |---|---|---|
 | 1.0 | 2026-11-14 | Initial draft. D1–D3 decided via operator review; rollout plan M1–M5. |
 | 1.1 | 2026-11-14 | As-built amendments: §6.2/§6.3 — OAuth consent lives in the provider's own CLI (`gmail_importer.ingest auth-login --register`, one command per account); the `memogarden` CLI stays the token-free generic registry surface. §6.1 — DELETE removes the registry row only (HACM custody stays host-side; upstream revocation manual); account registration additionally rejects non-account-backed providers. §8 M5 — full deployment runbook (backfill SQL, provider-config strip, heartbeat-unit update). Status → Accepted. |
+| 1.2 | 2026-11-14 | §4.10 Ingestion Order Policy (operator decision): new accounts ingest history reverse-chronologically — most recent first, one batch per heartbeat, until the oldest email is ingested. Provider implements it: two-stage sync, `backfill` sync-state field, conservative completion (transient fetch failures keep it running), paged newest-first walk bounded per-run (defer, never fail, beyond the 20k horizon), reverse-linked `replies_to` threading, run-local double-yield guard. §6.3 step 7 updated. |

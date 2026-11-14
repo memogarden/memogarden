@@ -169,17 +169,28 @@ class GmailProvider:
     # ------------------------------------------------------------------
 
     def sync(self, since: Optional[str] = None) -> Iterator[dict]:
-        """Yield Email facts for mail NEW since the stored historyId.
+        """Yield Email facts for mail NEW since the stored historyId, plus
+        the account's reverse-chronological history backfill (RFC-012 §4.10
+        ingestion-order policy).
+
+        Two stages per run:
+        1. **historyId incremental** — mail new since the stored cursor
+           (bounded latency for incoming mail), exactly as before.
+        2. **history backfill** — until the account's backfill is complete,
+           a newest-first batch (most recent un-ingested mail first), so a
+           fresh account starts with its most recent, most useful mail and
+           walks backward toward its oldest email across heartbeats.
 
         Args:
             since: Ignored — the historyId in the sync state is the cursor
                 (a timestamp cannot address Gmail's change log).
 
-        Cursor advancement: the sync state advances when the runtime
-        consumes the full batch (this generator runs to completion), and
-        stays untouched when the batch was truncated by batch_limit (the
-        remainder re-delivers next sync; the runtime's done-set absorbs
-        what already landed) or when iteration aborted early.
+        Cursor advancement: the sync state (historyId AND backfill status)
+        advances when the runtime consumes the full batch (this generator
+        runs to completion) and nothing was truncated; truncation leaves
+        both untouched (the remainder re-delivers next sync; the done-set
+        absorbs what already landed), and truncating incremental mail
+        defers the backfill stage to the next run.
         """
         api: GmailApiClient = self.importer._build_api_client()
         done = self._ingested_gmail_ids()
@@ -190,6 +201,7 @@ class GmailProvider:
         profile = api.get_profile()
         current = str(profile.get("historyId") or "")
         stored = state.get("history_id")
+        backfill_done = state.get("backfill") == "complete"
 
         # RFC-012 INV-3, re-checked at run time: the credential must belong
         # to the configured subject. A mismatch means the HACM entry under
@@ -236,75 +248,151 @@ class GmailProvider:
 
             remaining = [i for i in candidates if i not in skip]
 
-        batch = remaining[: self.batch_limit]
+        incremental_truncated = len(remaining) > self.batch_limit
+        batch = list(dict.fromkeys(remaining[: self.batch_limit]))  # dedupe: one
+        # id can appear in both messagesAdded and labelsRemoved of a diff
         completed = False
+        backfill_exhausted: Optional[bool] = None
+        yielded_ids: set[str] = set()
         try:
             realized_at = datetime.now(timezone.utc).isoformat()
-            for message_id in batch:
-                try:
-                    message = api.get_message(message_id)
-                except Exception:
-                    continue  # lifecycle/transient — retried via history re-diff
-                labels = message.get("labelIds") or []
-                if "TRASH" in labels or "SPAM" in labels:
-                    continue
-                item = self.importer.translate_gmail_to_email(
-                    message, realized_at=realized_at
+            for item in self._fetch_batch(api, batch):
+                yielded_ids.add(item["metadata"]["gmail_message_id"])
+                yield item
+
+            # Stage 2 — reverse-chronological history backfill (RFC-012
+            # §4.10 policy) until the oldest email is ingested. Deferred
+            # when incremental mail truncated the batch (new mail first),
+            # and skipped once the walk has completed.
+            if not backfill_done and not incremental_truncated:
+                walker_skip = skip | yielded_ids
+                walker_batch, backfill_exhausted = self.importer._newest_batch_ids(
+                    api, walker_skip, self.batch_limit
                 )
-                if item is None:
-                    continue
-                yield {
-                    "type": item["_type"],
-                    "data": item["data"],
-                    "metadata": item["metadata"],
-                    "canonical_at": item["canonical_at"],
-                    "realized_at": item["realized_at"],
-                }
+                transient_drops: list[str] = []
+                for item in self._fetch_batch(api, walker_batch, transient_drops):
+                    yielded_ids.add(item["metadata"]["gmail_message_id"])
+                    yield item
+                if transient_drops:
+                    # A fetch that failed (not a policy/validator skip) in
+                    # the draining batch must not complete the walk — retry
+                    # those ids on the next run.
+                    backfill_exhausted = False
             completed = True
         finally:
             # Advance the cursor only on full, clean consumption: by the time
             # the runtime asks for the item past the end, everything yielded
             # is already committed in Soil by the runtime itself.
             if completed and len(remaining) <= len(batch):
-                self.importer._store_sync_state(current)
+                self.importer._store_sync_state(
+                    current,
+                    backfill=(
+                        "complete" if backfill_exhausted
+                        else state.get("backfill", "running")
+                    ),
+                )
+
+    def _fetch_batch(
+        self, api: GmailApiClient, message_ids: list[str],
+        transient_drops: Optional[list[str]] = None,
+    ) -> Iterator[dict]:
+        """Fetch and translate message ids into runtime-normalized dicts.
+
+        Yields nothing for ids that violate the ingestion policy (all mail
+        except what is currently in TRASH or SPAM, evaluated at fetch time)
+        or fail validation. Ids whose FETCH failed (lifecycle/transient) are
+        reported via `transient_drops` when that list is passed — the
+        backfill stage uses this to avoid declaring completion with holes;
+        they are retried via history re-diff or the next backfill pass.
+        """
+        realized_at = datetime.now(timezone.utc).isoformat()
+        for message_id in message_ids:
+            try:
+                message = api.get_message(message_id)
+            except Exception:
+                if transient_drops is not None:
+                    transient_drops.append(message_id)
+                continue  # lifecycle/transient — retried via history re-diff
+            labels = message.get("labelIds") or []
+            if "TRASH" in labels or "SPAM" in labels:
+                continue
+            item = self.importer.translate_gmail_to_email(
+                message, realized_at=realized_at
+            )
+            if item is None:
+                continue
+            yield {
+                "type": item["_type"],
+                "data": item["data"],
+                "metadata": item["metadata"],
+                "canonical_at": item["canonical_at"],
+                "realized_at": item["realized_at"],
+            }
 
     def create_relations(self, fact) -> list:
-        """Threading: replies_to when the fact replies to a stored mail."""
+        """Threading: replies_to when the fact replies to a stored mail —
+        and, reverse-linked, when stored replies await this fact.
+
+        The second direction exists because reverse-chronological ingestion
+        (RFC-012 §4.10) stores a reply BEFORE its parent: when the parent
+        finally lands, no one would otherwise re-link the waiting reply.
+        This makes threading eventual-consistent under any ingest order.
+        """
         data = fact.data or {}
-        parent = data.get("in_reply_to")
-        if not parent and data.get("references"):
-            parent = data["references"][-1]
-        if not parent:
-            return []
-        # stored rfc_message_id is bracket-normalized; in_reply_to is not
-        parent = f"<{parent.strip('<>')}>"
+        relations: list = []
 
         from system.soil import generate_soil_uuid
         from system.soil.relation import SystemRelation
 
-        with self._soil as soil:
-            row = soil._get_connection().execute(
-                """SELECT uuid FROM item WHERE _type = 'Email'
-                   AND json_extract(data, '$.rfc_message_id') = ?""",
-                (parent,),
-            ).fetchone()
-        if row is None:
-            return []
-
         days = (datetime.now(timezone.utc) - _RELATION_EPOCH).days
-        return [
-            SystemRelation(
+
+        def _relation(source: str, target: str) -> SystemRelation:
+            return SystemRelation(
                 uuid=generate_soil_uuid(),
                 kind="replies_to",
-                source=fact.uuid,
+                source=source,
                 source_type="item",
-                target=row["uuid"],
+                target=target,
                 target_type="item",
                 created_at=days,
                 evidence=None,
                 metadata=None,
             )
-        ]
+
+        parent = data.get("in_reply_to")
+        if not parent and data.get("references"):
+            parent = data["references"][-1]
+
+        with self._soil as soil:
+            conn = soil._get_connection()
+            # 1. This fact replies to a stored mail: link fact -> parent.
+            #    (stored rfc_message_id is bracket-normalized; in_reply_to is not)
+            if parent:
+                normalized = f"<{parent.strip('<>')}>"
+                row = conn.execute(
+                    """SELECT uuid FROM item WHERE _type = 'Email'
+                       AND json_extract(data, '$.rfc_message_id') = ?""",
+                    (normalized,),
+                ).fetchone()
+                if row is not None:
+                    relations.append(_relation(fact.uuid, row["uuid"]))
+
+            # 2. Stored replies await THIS fact (it is their parent):
+            #    link each stored reply -> this fact.
+            own_id = data.get("rfc_message_id")
+            if own_id:
+                stripped = own_id.strip("<>")
+                rows = conn.execute(
+                    """SELECT uuid FROM item WHERE _type = 'Email'
+                       AND (json_extract(data, '$.in_reply_to') = ?
+                            OR EXISTS (SELECT 1 FROM json_each(data, '$.references')
+                                       WHERE value = ?))""",
+                    (stripped, stripped),
+                ).fetchall()
+                for row in rows:
+                    relations.append(_relation(row["uuid"], fact.uuid))
+
+        return relations
 
     # ------------------------------------------------------------------
 

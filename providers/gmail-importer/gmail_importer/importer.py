@@ -45,6 +45,11 @@ logger = logging.getLogger(__name__)
 # Hourly runs between 6-hourly cache refreshes that one search must cover.
 _SEARCH_HEADROOM_RUNS = 5
 
+# Per-run page budget for the reverse-chronological backfill walk (RFC-012
+# §4.10): 40 pages ≈ 20k ids, the platform's enumeration horizon. Hitting
+# it defers the remainder to the next run — it must never fail the sync.
+_BACKFILL_MAX_PAGES = 40
+
 _MAX_METADATA_HTML_BYTES = 10000  # same truncation as mbox importer
 
 
@@ -288,6 +293,51 @@ class GmailImporter(EmailImporter):
         remaining = [i for i in oldest_first if i not in done]
         return remaining[:limit], not remaining
 
+    def _newest_batch_ids(
+        self, api: GmailApiClient, done: set[str], limit: int,
+        max_pages: int = _BACKFILL_MAX_PAGES,
+    ) -> tuple[list[str], bool]:
+        """Ids of up to `limit` NEWEST messages not in done, newest-first.
+
+        RFC-012 §4.10 ingestion-order policy: history backfill walks the
+        mailbox reverse-chronologically — the most recent mail first, so an
+        account is useful from its first run — until the oldest email is
+        ingested. `messages.list` is natively newest-first, so this is a
+        plain paged walk from the head: no full enumeration, no search
+        cache (the CLI's oldest-first path owns that file; the two
+        orderings must never share it), no date-window search.
+
+        Pages are walked from the start each call, skipping done ids, until
+        the batch fills. Depth grows as the backfill progresses but stays
+        bounded by the page budget (40 pages ≈ 20k ids per run — the
+        platform's enumeration horizon); hitting the budget DEFERS the
+        remainder to the next run rather than failing it, so a huge mailbox
+        backfills as far as the horizon and never wedges the account.
+
+        `done` is the combined skip set (ingested + excluded + anything
+        this run already yielded).
+
+        Returns (batch_ids, exhausted): exhausted=True only when the FULL
+        listing was walked — the oldest email is inside this batch (or
+        already gone), and after it lands the account's backfill is
+        complete.
+        """
+        batch: list[str] = []
+        token: Optional[str] = None
+        for _ in range(max_pages):
+            page = api.list_messages(None, token)
+            for entry in page.get("messages", []):
+                message_id = entry["id"]
+                if message_id in done:
+                    continue
+                batch.append(message_id)
+                if len(batch) >= limit:
+                    return batch, False
+            token = page.get("nextPageToken")
+            if not token:
+                return batch, True  # walked the whole mailbox
+        return batch, False  # page budget hit mid-mailbox: defer, don't fail
+
     # ------------------------------------------------------------------
     # historyId incremental sync
     # ------------------------------------------------------------------
@@ -335,12 +385,23 @@ class GmailImporter(EmailImporter):
             return {}  # different account — reseed
         return doc
 
-    def _store_sync_state(self, history_id: str) -> None:
+    def _store_sync_state(
+        self, history_id: str, backfill: Optional[str] = None
+    ) -> None:
+        """Persist the per-account sync state.
+
+        `backfill`: RFC-012 §4.10 — 'complete' once the reverse-chronological
+        history walk has ingested the mailbox down to its oldest email.
+        None preserves whatever value the account's current doc carries
+        (read through the account-guarded loader; 'running' is the implicit
+        default for a fresh account).
+        """
         state_path = Path(self.sync_state_path)
         state_path.parent.mkdir(parents=True, exist_ok=True)
         doc = {
             "account": self.account_id,
             "history_id": str(history_id),
+            "backfill": backfill or self._load_sync_state().get("backfill") or "running",
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         tmp = state_path.with_suffix(state_path.suffix + ".tmp")
