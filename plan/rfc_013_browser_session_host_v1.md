@@ -89,6 +89,14 @@ formalizes the agent's behavior; the operator's side is sovereignty + affordance
 - **Session = `user-data-dir`.** Opaque state (cookies, site data) stays browser-modeled;
   the PIS holds metadata: entity, labels, sites-in-session (derived from cookie domains),
   `last_verified_login`, lifecycle events.
+- **Restore is per-profile = per-session** under the 1:1 mapping: Chromium's SNSS
+  restore state, like all profile state, lives inside the session's own dir and never
+  crosses sessions (verified in smoke — adjacent sessions restore independently).
+  Two accepted consequences: (a) Chromium restores *last-exit* state — desired/pinned
+  tabs are a daemon-layer enhancement on top (Core session entity holds desired state;
+  daemon re-asserts after restore); (b) cross-session tab moves are daemon-mediated
+  (read from A over CDP, open in B) — the isolation trade Firefox containers made in
+  reverse (they had tab mobility but no lifecycle; we get lifecycle at that price).
 - **Dehydrate** = graceful shutdown → optionally purge `Cache*` (cache ≠ state; cookies,
   Local Storage, `Sessions/` restore files are kept) → snapshot dir → zero RSS.
   **Rehydrate** = restore + relaunch. The Chromium profile lock gives single-flight
