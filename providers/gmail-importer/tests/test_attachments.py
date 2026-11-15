@@ -227,3 +227,57 @@ class TestTranslationMetadata:
         # legacy data fields unchanged
         assert result["data"]["attachment_filenames"] == ["invoice.pdf"]
         assert result["data"]["attachment_count"] == 1
+
+
+class TestIncrementalCommits:
+    """RFC-012 §4.9: the pass commits per email — a crash mid-pass leaves
+    earlier emails' attachments durably stored, and concurrent account runs
+    are never starved behind a whole-pass write transaction."""
+
+    def test_crash_mid_pass_keeps_committed_prefix(self, tmp_path, importer, store, monkeypatch):
+        from system.soil import Soil
+
+        # three uncovered emails
+        for mid in ("m1", "m2", "m3"):
+            item = importer.translate_gmail_to_email(simple_message())
+            item["metadata"]["gmail_message_id"] = mid
+            with importer.soil:
+                importer.soil.create_fact(create_email_item(**item))
+
+        api = FakeAttachmentApi()
+        extractor = AttachmentExtractor(importer.soil, store, lambda subject: api, verbose=False)
+
+        real_commit = importer.soil.commit
+        commits = {"n": 0}
+
+        def flaky_commit():
+            commits["n"] += 1
+            if commits["n"] == 3:  # after email 3's extraction
+                raise RuntimeError("boom mid-pass")
+            real_commit()
+
+        monkeypatch.setattr(importer.soil, "commit", flaky_commit)
+
+        with pytest.raises(RuntimeError, match="boom mid-pass"):
+            extractor.extract_all()
+
+        # email 1 and 2's attachment facts are DURABLE despite the crash
+        witness = Soil(tmp_path / "soil.db")
+        with witness:
+            attachments = witness.list_items(_type="Attachment", limit=10)
+        assert {a.metadata["gmail_message_id"] for a in attachments} == {"m1", "m2"}
+
+    def test_dry_run_commits_nothing(self, tmp_path, importer, store):
+        from system.soil import Soil
+
+        item = importer.translate_gmail_to_email(simple_message())
+        with importer.soil:
+            importer.soil.create_fact(create_email_item(**item))
+
+        api = FakeAttachmentApi()
+        extractor = AttachmentExtractor(importer.soil, store, lambda subject: api, verbose=False)
+        stats = extractor.extract_all(dry_run=True)
+        assert stats["downloaded"] == 0
+        witness = Soil(tmp_path / "soil.db")
+        with witness:
+            assert witness.list_items(_type="Attachment", limit=10) == []

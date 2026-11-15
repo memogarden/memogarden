@@ -280,6 +280,14 @@ class AttachmentExtractor:
                     except Exception as e:
                         self.stats["errors"] += 1
                         logger.warning("Extraction failed for %s/%s: %s", email.uuid, filename, e)
+                # RFC-012 §4.9: commit per email, not once per pass. The whole-
+                # pass transaction held soil.db's single writer lock for the
+                # entire extraction (15-30 min with a real backlog), starving
+                # concurrent account runs into "database is locked" failures
+                # (observed live: alt lost four consecutive heartbeats). Short
+                # bursts interleave under the 5s busy_timeout; partial progress
+                # is also crash-durable now.
+                self.soil.commit()
         return self.stats
 
     def _extract_one(
