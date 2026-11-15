@@ -239,3 +239,6 @@ mechanism decisions that emerged — the §7 deferral is resolved.
   coverage untested.
 - Favicon restoration, the browser-shortcut hole, window-separation as an
   alternative soft-lock shape, and group-tile ergonomics.
+- **Operator→agent handover affordance** ("I'm done — agent can take over
+  the session"): richer than the CLI `grant`; protocol + UI surface to be
+  explored (live-observed need, DBS scenario 2026-11-15).
