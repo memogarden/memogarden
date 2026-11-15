@@ -185,14 +185,17 @@ verbs_dispatch:           # GATED — agent-held tabs only; refusals logged
 verbs_operator_only:      # never exposed to agents (sovereignty)
   open / close / daemon start / daemon stop / grant / commandeer
 
-# KNOWN GAPS (next slice, prioritized):
-#   1. snapshot {tab}: accessibility-tree snapshot with stable element REFS
-#      (the elements verb misses MUI/handler divs + iframes — production
-#      SPAs made cards un-clickable-by-agent tonight). Act-by-ref replaces
-#      CSS guessing entirely.
-#   2. frames: every verb above is main-frame only; bank login widgets embed.
-#   3. wait_for {tab, text|selector}: reads race navigations (scenario code
-#      works around it today).
-#   4. new_tab/close_tab: Exhibit B "branching out tabs for information".
-#   5. screenshot {tab}: visual verification + future Evidence facts.
-#   6. navigation policy encoding: entry-only goto vs in-app click graph.
+# RESOLVED (2026-11-16 slice, verified in verbs smoke):
+#   snapshot {tab}: a11y-ish tree with STABLE REFS, all frames (cross-origin
+#     included); refs addressable as target='ref:eN' or bare 'eN'/'f1eN' —
+#     supersedes the elements/click_at pair as primary introspection
+#   frames: every dispatch verb loops main frame -> all other frames
+#   wait_for {tab, text|selector, timeout}: per-frame polling
+#   new_tab/close_tab: Exhibit B branching; agent-created tabs auto-grant
+#     to the agent; agents close only agent-held tabs
+#   screenshot {tab, full_page}: PNG into <session>/screenshots/
+# REMAINING:
+#   - navigation policy encoding: entry-only goto vs in-app click graph
+#     (RFC-013 §12.6 deferred)
+#   - operator UI surface for send/grant/commandeer (deferred with the
+#     operator->agent handover affordance)
