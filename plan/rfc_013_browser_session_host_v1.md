@@ -1,6 +1,6 @@
 # RFC-013 — Browser Session Host (memogarden-sessions)
 
-**Status:** Accepted — design converged 2026-11-15; invariants locked; mechanism deferred to spike
+**Status:** Accepted — design converged 2026-11-15; invariants locked; mechanism validated by spike, verdict accepted 2026-11-15 (§12)
 **Repos:** `memogarden-sessions/` (new sibling app repo, created 2026-11-15, unscaffolded)
 **Related:** MUSH (shared-session precedent), RFC-005 (API design), RFC-010 (agent identity), RFC-011 (scopes/grants), RFC-012 (provider accounts), statement-ingestion assessment
 
@@ -154,3 +154,80 @@ driving it.
 - No casual browsing absorption (§2).
 - No physical operator lockout (§5) — sovereignty + affordance instead.
 - No automatic rehydration (§8) — requested and human-visible by default.
+
+---
+
+## 12. Spike findings (2026-11-15) — mechanism validated at spike fidelity
+
+Verdict: **accepted by operator** after three feel-test rounds. Spike code
+lives in `memogarden-sessions/spike/` (commits 29255ec..a2243ee, branch
+`agent/sessions-host/spike`, merged to `main`). This section records the
+mechanism decisions that emerged — the §7 deferral is resolved.
+
+### 12.1 Vocabulary
+
+- `seize` → **`commandeer`** everywhere, event vocabulary included:
+  commandeer is an override for a specific purpose, not a tug-of-war move.
+- Events: `agent_request`, `operator_grant`, `operator_commandeer`
+  (optional `reason` recorded on the event), `agent_release`,
+  `transition_refused`, `dispatch_refused`.
+
+### 12.2 Signaling — tab strip only
+
+- Page badges and favicon dots **rejected**: badges obscure page visuals;
+  Chrome does not revert a tab icon when an injected `<link rel=icon>` is
+  removed (it keeps the last icon seen), so cleared dots linger. **The
+  daemon never touches favicons.**
+- Tab-strip colors via a **shipped companion extension** (MV3, `tabGroups`
+  API): agent-held = green group ("🤖 agent"), pending request = blinking
+  yellow ("🤖 request", 550 ms color toggle — which also keeps the MV3
+  service worker alive), operator-held = ungrouped / undecorated.
+- Daemon→extension bridge: the daemon writes
+  `document.documentElement.dataset.mgControl` via CDP; a content script
+  polls the shared DOM (isolated worlds do not share `window`) and wakes
+  the service worker, which owns the tabGroups APIs.
+- Extension-load probe must be **functional** (content script sets a
+  `data-mg-bridge` attribute on the shared DOM): `context.service_workers`
+  is a timing-sensitive blindspot — MV3 workers may predate CDP
+  attachment and never appear in the listing.
+
+### 12.3 Soft lock (the operator-facing direction)
+
+- Agent-held tabs present a transparent pane swallowing physical
+  keyboard/pointer input; the first interception raises a small toast with
+  an in-browser **Commandeer button** (sets a page flag the daemon polls
+  at ~0.4 s).
+- **Invariant refinement (§5):** "the operator is never locked out" →
+  **"the operator is never SILENTLY locked out."** Soft locks are
+  permitted iff every interception surfaces an immediate override path.
+  Soft locks guard against inadvertent input; they are not an
+  access-control mechanism.
+- Known hole: browser-level shortcuts (Ctrl+W/T) bypass any in-page pane —
+  a daemon-level concern for later.
+
+### 12.4 Dispatch paths — load-bearing for the daemon
+
+- CDP **Input domain** = the physical-input path: subject to arbiter
+  gating *and* the soft-lock pane.
+- CDP **Runtime domain** (direct DOM actions) = the agent's path on locked
+  tabs: unaffected by the pane. **The daemon chooses the dispatch path per
+  control state.**
+
+### 12.5 Base browser
+
+- **Branded Chrome is disqualified**: google-chrome-stable silently blocks
+  `--load-extension` — the companion extension never loads there. The
+  session browser must be an **open Chromium build**: Playwright's pinned
+  Chromium (159) verified; Arch's `chromium` package equally valid.
+- §4's "pin the driver, not the browser" stands: accept browser churn,
+  require only open builds.
+
+### 12.6 Deferred from the spike
+
+- Gating granularity is per-action: a commandeered tab lets one in-flight
+  action land.
+- `file://` pages are off the table for extension content scripts — the
+  session daemon serves/intercepts pages over localhost; real-site
+  coverage untested.
+- Favicon restoration, the browser-shortcut hole, window-separation as an
+  alternative soft-lock shape, and group-tile ergonomics.
