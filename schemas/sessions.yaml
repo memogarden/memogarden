@@ -1,0 +1,198 @@
+# MemoGarden Browser Session Schema (RFC-013)
+# Language-agnostic definition for browser sessions as first-class PIS entities.
+# Design of record: plan/rfc_013_browser_session_host_v1.md (+ §12 spike findings)
+
+# ==============================================================================
+# ITEM TYPE
+# ==============================================================================
+type: Session
+extends: Entity (Core) + local manifest (daemon custody)
+description: >
+  A browser session is a named Chromium profile (user-data-dir) with lifecycle,
+  operator⇄agent co-control, and download custody. Opaque browser state
+  (cookies, site data, SNSS restore files) stays browser-modeled INSIDE the
+  profile directory — the PIS never models it (RFC-013 §3 boundary).
+  The schema has TWO LAYERS with different truth and different owners:
+    LAYER 1 — LOCAL MANIFEST (session.json): custody/runtime state, owned by
+      the session daemon on the machine that runs the browser. Never PIS truth.
+    LAYER 2 — CORE VOCABULARY: the session entity's config + the fact-shaped
+      events the daemon emits, mirrored asynchronously into Core (invariant:
+      live arbitration is local; Core is eventually-consistent history —
+      a control transition never blocks on Core).
+
+# ==============================================================================
+# LAYER 1 — LOCAL MANIFEST (custody/runtime state; daemon-owned)
+# ==============================================================================
+# Files on disk (root: $MEMOGARDEN_SESSIONS_ROOT or
+# ~/.local/share/memogarden/sessions/):
+#   <name>/profile/        Chromium user-data-dir — the dehydrated state itself
+#   <name>/session.json    this manifest
+#   <name>/browser.log     stdout/stderr of the most recent open
+#   <name>/downloads/      captured downloads (see download_captured fact)
+#   <name>/events.jsonl    fact-shaped event log (LAYER 2 vocabulary, local)
+
+manifest:
+  name:
+    type: string
+    required: true
+    pattern: "^[a-z0-9][a-z0-9-]{0,63}$"
+    description: Session handle; also the directory name. Lowercase/digits/dashes.
+    example: "dbs"
+  created_at:
+    type: string (ISO datetime, local)
+    required: true
+  last_opened_at:
+    type: string (ISO datetime, local)
+    required: false
+  machine:
+    type: string (hostname)
+    required: true
+    description: Sessions are MACHINE-BOUND (HACM-store precedent); they do
+      not roam. Remote clients (mobile) direct, never run (RFC-013 §9).
+  state:
+    type: string
+    required: true
+    enum: ["dehydrated", "open"]
+    description: dehydrated = profile on disk, zero processes. open = a live
+      browser holds the profile (single-flight, enforced by profile lock +
+      pid/cmdline identity check).
+    example: "dehydrated"
+  pid:
+    type: int | null
+    required: false
+    description: Main browser process (cmdline carries the profile dir AND
+      lacks --type=; child processes also carry --user-data-dir). Stale pids
+      recover automatically on the next command.
+  extra_extensions:
+    type: [string] (absolute dirs of unpacked extensions)
+    required: false
+    description: Per-session extension assignment (RFC-013 §12.2 companion
+      extension is always loaded; this list adds user extensions). Primary
+      use: per-session password-manager assignment — e.g. dbs=1password,
+      some-other-session=bitwarden. Future home of the assignment: Core
+      session config, synced to the manifest.
+
+  # NOTE: deliberately ABSENT from the manifest (PIS truth lives in Core):
+  #   labels, scopes, project/document links, desired_state, password-manager
+  #   assignment (until Core config exists and syncs it down).
+
+# ==============================================================================
+# LAYER 2 — CORE VOCABULARY (fact-shaped; currently local events.jsonl,
+# future mirror into Core facts — same JSON shapes)
+# ==============================================================================
+# Common envelope: {ts, seq, event, tab?, label?, actor, from?, to?, ...extra}
+# actor ∈ Operator | Agent (RFC-010 entities, mapped at API-extraction time)
+# All transitions are explicit named events; refusals are logged too (audit).
+
+control_facts:            # co-control, per TAB (control unit = tab)
+  event: agent_request          # agent asks for a tab            -> pending
+  event: operator_grant         # operator approves               -> agent-held
+  event: operator_commandeer    # operator override, optional
+                                #   `reason` recorded on the event -> operator
+  event: agent_release          # agent yields                    -> operator
+  event: transition_refused     # illegal transition attempt (audited)
+  event: dispatch_refused       # gated agent dispatch on non-agent-held tab
+  event: unregister_tab         # tab left the session (user closed it)
+
+  # Invariants (RFC-013 §5, refined §12): control unit = tab; operator
+  # sovereignty (commandeer always legal, agent always yields); the operator
+  # is never SILENTLY locked out (soft locks surface an immediate override);
+  # agent-side gating only.
+
+lifecycle_facts:          # per session
+  event: session_created
+  event: session_opened         # mode: governed | detached
+  event: session_dehydrated     # cache_reclaimed bytes on the event
+  event: session_rehydrated
+  event: session_culled         # profile deleted (reserved)
+  event: download_captured      # filename, size, content_type; future link to
+                                #   a Core Document fact (RFC-013 §8: the
+                                #   downloads->Soil path — PROVEN live on UOB)
+
+  # Dehydration semantics (§6): SIGTERM close (complete crash-classified
+  # snapshot; Chromium marks ALL programmatic closes as crashes — restore
+  # works from the recovery path via --restore-last-session), Cache* purge
+  # (cache != state: Cookies/Local Storage/Sessions/ kept), cache reclaimed
+  # recorded. Rehydration is REQUESTED, never automatic (§8).
+
+# ==============================================================================
+# SESSION CONFIG (Core-side entity attributes; future — daemon syncs down)
+# ==============================================================================
+config:
+  label:
+    type: string
+    required: false
+    description: Human handle (Core-side only; the manifest knows only `name`).
+  purpose:
+    type: string
+    required: false
+    description: Free text ("financial portals", "project: memogarden").
+  password_manager:
+    type: string
+    required: false
+    enum: ["1password", "bitwarden", "none"]
+    description: Per-session extension assignment (user preference, 2026-11-15
+      — NOT both-everywhere). Syncs to manifest.extra_extensions.
+  extra_extensions:
+    type: [string]
+    required: false
+    description: Beyond the password manager — per-session user extensions.
+  links:
+    type: [relation]
+    required: false
+    description: Sessions link to projects, scopes, documents — the Exhibit A/B
+      graph ("session entities linked/attached to documents, notes, projects").
+  desired_state:
+    type: string
+    required: false
+    enum: ["idle", "rehydrated"]
+    description: REQUESTED rehydration (e.g. set by a scope rule when a
+      statement email lands) — surfaced human-visible, never auto-spawned.
+
+# ==============================================================================
+# AGENT VERB SURFACE (provisional — harvested from the 2026-11-15 live run;
+# transport = daemon unix socket; agent identity mapping lands with the API)
+# ==============================================================================
+verbs_introspection:      # UNGATED — control gates input, not reads
+  content:        {tab}                      # title/url/body text (4k)
+  elements:       {tab}                      # interactive elements + indices
+                                             #   (LIMITATION: main frame only;
+                                             #   misses handler-divs — snapshot
+                                             #   verb supersedes, see gaps)
+  inspect_listeners: {tab, selector}         # DevTools getEventListeners
+  downloads:      {name}                     # captured files
+  tabs:           {name}                     # per-tab control states
+  status:         {}                         # sessions + governed set
+
+verbs_dispatch:           # GATED — agent-held tabs only; refusals logged
+  navigate:       {tab, url}                 # POLICY PENDING (§12.6): entry/
+                                             #   public URLs only — direct goto
+                                             #   of authed deep-links trips bank
+                                             #   session-integrity defenses
+                                             #   (logged a user out, verified)
+  fill:           {tab, selector, value}
+  click:          {tab, selector}
+  click_at:       {tab, index}               # from the elements enumeration
+  paste:          {tab, selector}            # clipboard -> field INSIDE the
+                                             #   browser (bypasses paste-block;
+                                             #   only char count returns)
+  type_clipboard: {tab, selector}            # TRUSTED keystrokes (isTrusted=
+                                             #   true, 45ms) — defeats
+                                             #   keystroke-buffer auth (UOB);
+                                             #   secret lives in daemon memory
+                                             #   only, agent sees char count
+
+verbs_operator_only:      # never exposed to agents (sovereignty)
+  open / close / daemon start / daemon stop / grant / commandeer
+
+# KNOWN GAPS (next slice, prioritized):
+#   1. snapshot {tab}: accessibility-tree snapshot with stable element REFS
+#      (the elements verb misses MUI/handler divs + iframes — production
+#      SPAs made cards un-clickable-by-agent tonight). Act-by-ref replaces
+#      CSS guessing entirely.
+#   2. frames: every verb above is main-frame only; bank login widgets embed.
+#   3. wait_for {tab, text|selector}: reads race navigations (scenario code
+#      works around it today).
+#   4. new_tab/close_tab: Exhibit B "branching out tabs for information".
+#   5. screenshot {tab}: visual verification + future Evidence facts.
+#   6. navigation policy encoding: entry-only goto vs in-app click graph.
