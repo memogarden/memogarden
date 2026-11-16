@@ -22,8 +22,14 @@ GOOGLE_AUTH_URI = "https://accounts.google.com/o/oauth2/auth"
 GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
 # Read-only is all ingestion needs; keep the consent screen minimal.
 # Add gmail.modify here (and re-consent) when label writes are actually needed.
+# calendar.readonly (RFC-014 §5): the gcal provider shares the
+# google:{subject} identity — one consent covers both; the next auth-login
+# re-consents and refreshes the stored token in place. calendar.readonly
+# is a sensitive (not restricted) scope: the published app may show an
+# unverified-scope warning, accepted posture at personal scale.
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",  # Read emails
+    "https://www.googleapis.com/auth/calendar.readonly",  # Read calendars (RFC-014)
 ]
 
 

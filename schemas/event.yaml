@@ -1,0 +1,279 @@
+# MemoGarden Event Entity Schema
+# RFC-014: plan/rfc_014_gcal_provider_v1.md
+#
+# Companion to this RFC; follows the task.yaml grammar
+# (source-agnostic data / provider metadata split, §-banners, one full example).
+
+# ====================================================================
+# § ENTITY TYPE
+# ====================================================================
+type: Event
+tier: Core entity (mutable belief — `core_` uuid)
+extends: none
+
+description: >
+  An Event is a BELIEF about a concrete, scheduled occurrence — the
+  calendar as the user understands it, not a bank-ledger of what happened.
+
+  Governing rules:
+  - An Event never becomes a Soil fact by itself. It yields an immutable
+    fact only when review explicitly marks it occurred (mark-occurred
+    action) — NEVER when its date passes silently.
+  - Events are individual instantiations. They never carry recurrence:
+    a series contributes many Events, each linked (optionally) to its
+    source pattern via a NATIVE reference in metadata (recurring_event_id).
+  - There is no all_day flag: absence of time information in
+    starts_at/ends_at IS the time ambiguity (naturally "all-day").
+  - ends_at is EXCLUSIVE (interval convention; RFC 5545 DTEND — a one-day
+    date-only event ends on the NEXT day).
+  - Source edits update the entity (the delta stream is the change
+    history). No fact is created per edit.
+
+# ====================================================================
+# § DATA FIELDS (Source-Agnostic Belief Model)
+# ====================================================================
+data:
+  source_id:
+    type: string
+    required: true
+    description: >
+      NATIVE source id (the Event analogue of Email.rfc_message_id).
+      Unique per calendar, not globally ("collisions aren't guaranteed
+      detectable" across calendars) — the natural key therefore carries
+      calendar_id from metadata.
+
+  title:
+    type: string
+    required: false
+    description: >
+      Optional: untitled events exist, and validation stays minimal
+      (over-strict validation would permanently exclude real events).
+
+  description:
+    type: string
+    required: false
+
+  location:
+    type: string
+    required: false
+
+  starts_at:
+    type: datetime-UTC | date (YYYY-MM-DD)
+    required: true
+    description: >
+      Timed events are UTC-converted from the source timezone (provider
+      responsibility). Date-only values carry NO time and NO timezone:
+      the missing time IS the ambiguity (naturally treated as all-day).
+
+  ends_at:
+    type: datetime-UTC | date (YYYY-MM-DD)
+    required: false
+    description: >
+      EXCLUSIVE end (duration = ends_at − starts_at). For date-only
+      events the end date is exclusive too: a one-day event on 2026-11-16
+      ends on 2026-11-17.
+
+  occurred_at:
+    type: datetime-UTC
+    required: false
+    description: >
+      Null/absent = the event has not happened / did not happen.
+      Set ONLY by the mark-occurred review action. Providers NEVER set
+      it; date passage NEVER sets it ("never silently converted after
+      date past").
+
+  status:
+    type: enum
+    enum: [confirmed, tentative]
+    required: true
+    description: >
+      Source truth of the schedule. Cancelled events are NOT stored as
+      Events — removal is stamped on the entity instead
+      (metadata.source_status / removed_at_source / detection_source).
+
+  participants:
+    type: [string]
+    required: false
+    description: >
+      Plain identifier strings — email address preferred, displayName or
+      other identifying string as fallback. No Person entity exists yet;
+      emails give a stable join key when one lands. Capped at
+      participants_max (default 50); metadata.attendee_count preserves
+      the true count.
+
+  organizer:
+    type: string
+    required: false
+    description: Email or identifying string preferred.
+
+# ====================================================================
+# § METADATA FIELDS (Provider-Specific)
+# ====================================================================
+metadata:
+  source:
+    type: enum
+    enum: [google_calendar]      # enum grows with providers
+    required: true
+
+  account:
+    type: string                 # verified upstream identity (email)
+    required: true
+    description: >
+      RFC-012 INV-7 attribution. Scope-rule matchable. Provider-managed
+      provenance outside the belief fields.
+
+  calendar_id:
+    type: string
+    required: true
+    description: Part of the natural key (per-calendar id uniqueness).
+
+  calendar_summary:
+    type: string
+    required: false
+
+  event_id:
+    type: string
+    required: true
+    description: Native id; duplicated from data.source_id for key clarity.
+
+  ical_uid:
+    type: string
+    required: false
+    description: Cross-system identifier (stable across calendars/systems).
+
+  etag:
+    type: string
+    required: true
+    description: >
+      Source change token for the entity; drives upsert no-op detection
+      (same etag ⇒ no write, no delta).
+
+  updated_at:
+    type: datetime-UTC
+    required: false
+    description: Source-side last-modification time.
+
+  recurring_event_id:
+    type: string
+    required: false
+    description: >
+      NATIVE id of the source pattern (recurrence series) this
+      instantiation belongs to. Stored NATIVE so the reference never
+      dangles regardless of ingest order (tada follows_from precedent).
+      RRULE text capture is deferred — instances omit recurrence lines.
+
+  original_start_at:
+    type: datetime-UTC
+    required: false
+    description: >
+      For moved instances: the start time this instance had in the
+      series before the move.
+
+  captured_after_fact:
+    type: boolean
+    required: false
+    description: >
+      True for seeded history — the calendar asserted the event, but we
+      never live-observed it. Review triage marker distinguishing
+      "scheduled, never live-observed" from live-captured events.
+
+  source_status:
+    type: enum
+    enum: [cancelled]
+    required: false
+    description: >
+      Removal stamp: the source reported this event deleted/cancelled.
+      Companion stamps: removed_at_source (when we observed it),
+      detection_source (sync_tombstone | audit_diff).
+
+  removed_at_source:
+    type: datetime-UTC
+    required: false
+
+  detection_source:
+    type: enum
+    enum: [sync_tombstone, audit_diff]
+    required: false
+
+  self_response:
+    type: enum
+    enum: [accepted, declined, tentative, needsAction]
+    required: false
+    description: The account owner's own RSVP (attendees[].self=true).
+
+  attendee_count:
+    type: integer
+    required: false
+    description: True attendee count when participants were trimmed (cap 50).
+
+# ====================================================================
+# § STORAGE MAPPING (Core entity storage — RFC-014 §2.2/§3.2)
+# ====================================================================
+# Core entities have a SINGLE JSON data column (no metadata column), so
+# the data + metadata split above is a DOCUMENTATION split: at storage
+# time the provider yields {data, metadata} and the runtime merges them
+# flat into entity.data (key collision between the two is a contract
+# violation and fails the run). Consequences:
+#   - every field above is top-level in entity.data and json_extract-
+#     matchable (scope rules key on $.account / $.calendar_id);
+#   - runtime-applied scope labels ride data.scopes (the entity analogue
+#     of fact metadata.scopes);
+#   - updates MERGE incoming keys over stored values (absent keys keep
+#     stored values; explicit null clears) — tombstone payloads carry
+#     stamps only and must never clobber belief fields.
+
+# ====================================================================
+# § NATURAL KEY (provider upserts)
+# ====================================================================
+# (metadata.source, metadata.account, metadata.calendar_id, data.source_id)
+# Same key ⇒ same entity; etag-diff decides no-op vs update.
+
+# ====================================================================
+# § FACTS (how an Event yields memory)
+# ====================================================================
+# An Event never becomes a fact by itself.
+# mark-occurred review creates:
+#   - EventOccurrence fact (Soil, immutable):
+#       data: {event_uuid, occurred_at, snapshot{title, starts_at, ends_at,
+#              location, participants, organizer, status}}
+#       canonical_at = occurred_at
+#   - Action fact: attributable marking (operator JWT or agent-bound key;
+#       unbound API keys are refused).
+
+# ====================================================================
+# § RELATIONS
+# ====================================================================
+# None required v1. recurring_event_id is promotable to a relation when a
+# consumer needs pattern linkage (tada follows_from promotion precedent).
+
+# ====================================================================
+# § EXAMPLE
+# ====================================================================
+# A moved instance of a weekly series, seeded from history, later marked
+# occurred by an agent:
+#
+# _type: Event (Core entity)
+# uuid: core_9f2c...        # core_ prefix
+# data:
+#   source_id: "q8h1vabc_20261028T090000Z"
+#   title: "Weekly sync"
+#   starts_at: "2026-10-28T09:15:00+00:00"   # moved +15 min from 09:00
+#   ends_at: "2026-10-28T10:00:00+00:00"
+#   occurred_at: null                         # not yet reviewed
+#   status: "confirmed"
+#   participants: ["a@example.com", "b@example.com"]
+#   organizer: "me@example.com"
+# metadata:
+#   source: "google_calendar"
+#   account: "me@gmail.com"
+#   calendar_id: "me@gmail.com"               # primary calendar
+#   calendar_summary: "Personal"
+#   event_id: "q8h1vabc_20261028T090000Z"
+#   ical_uid: "q8h1vabc@google.com"
+#   etag: "\"3456789012345678\""
+#   updated_at: "2026-10-27T18:02:11+00:00"
+#   recurring_event_id: "q8h1vabc"            # series link (native)
+#   original_start_at: "2026-10-28T09:00:00+00:00"
+#   captured_after_fact: true                  # seeded from history
+#   attendee_count: 2
+#   self_response: "accepted"

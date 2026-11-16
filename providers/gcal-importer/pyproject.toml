@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "gcal-importer"
+version = "0.1.0"
+description = "Google Calendar provider: mirrors concrete events into Core Event entities (RFC-014)"
+authors = ["MemoGarden"]
+readme = "README.md"
+packages = [{ include = "gcal_importer" }]
+
+[tool.poetry.dependencies]
+python = "^3.13"
+memogarden-system = { path = "../../memogarden-system", develop = true }
+requests = "^2.31"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
