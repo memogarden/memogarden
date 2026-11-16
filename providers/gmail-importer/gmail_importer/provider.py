@@ -16,12 +16,15 @@ are excluded via the shared exclusion file.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import logging
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
 from gmail_importer.gmail_api import GmailApiClient, GmailApiError
 from gmail_importer.importer import GmailImporter
+
+logger = logging.getLogger(__name__)
 
 _RELATION_EPOCH = datetime(2020, 1, 1, tzinfo=timezone.utc)
 
@@ -253,6 +256,7 @@ class GmailProvider:
         # id can appear in both messagesAdded and labelsRemoved of a diff
         completed = False
         backfill_exhausted: Optional[bool] = None
+        backfill_before_next: Optional[str] = None  # tightened horizon cursor
         yielded_ids: set[str] = set()
         try:
             realized_at = datetime.now(timezone.utc).isoformat()
@@ -263,11 +267,16 @@ class GmailProvider:
             # Stage 2 — reverse-chronological history backfill (RFC-012
             # §4.10 policy) until the oldest email is ingested. Deferred
             # when incremental mail truncated the batch (new mail first),
-            # and skipped once the walk has completed.
+            # and skipped once the walk has completed. For mailboxes deeper
+            # than one run's page budget, the walk continues via a tightening
+            # `before:` date cursor (horizon walk, RFC-012 §4.10).
             if not backfill_done and not incremental_truncated:
                 walker_skip = skip | yielded_ids
-                walker_batch, backfill_exhausted = self.importer._newest_batch_ids(
-                    api, walker_skip, self.batch_limit
+                walker_before = state.get("backfill_before") or None
+                walker_batch, backfill_exhausted, walker_boundary = (
+                    self.importer._newest_batch_ids(
+                        api, walker_skip, self.batch_limit, before=walker_before
+                    )
                 )
                 transient_drops: list[str] = []
                 for item in self._fetch_batch(api, walker_batch, transient_drops):
@@ -278,6 +287,32 @@ class GmailProvider:
                     # the draining batch must not complete the walk — retry
                     # those ids on the next run.
                     backfill_exhausted = False
+
+                if walker_boundary and not walker_batch and not yielded_ids:
+                    # Horizon stall: the page budget covered only ids that
+                    # are all already ingested (nothing new in reach). Tighten
+                    # the date cursor past the boundary — its internalDate
+                    # (+1 day, done-set absorbs the overlap) bounds the next
+                    # walk to the not-yet-covered, older region.
+                    try:
+                        boundary_msg = api.get_message(walker_boundary)
+                        internal_ms = boundary_msg.get("internalDate")
+                        boundary_dt = datetime.fromtimestamp(
+                            int(internal_ms) / 1000, tz=timezone.utc
+                        )
+                        next_before = (boundary_dt + timedelta(days=1)).strftime(
+                            "%Y/%m/%d"
+                        )
+                        backfill_before_next = next_before
+                        self._log(
+                            f"backfill reached the enumeration horizon — "
+                            f"tightening the date cursor to before {next_before}"
+                        )
+                    except Exception as e:  # noqa: BLE001 — defer, retry next run
+                        logger.warning(
+                            "Horizon tightening failed for %s (%s) — deferred",
+                            walker_boundary, e,
+                        )
             completed = True
         finally:
             # Advance the cursor only on full, clean consumption: by the time
@@ -290,6 +325,7 @@ class GmailProvider:
                         "complete" if backfill_exhausted
                         else state.get("backfill", "running")
                     ),
+                    backfill_before=backfill_before_next,
                 )
 
     def _fetch_batch(

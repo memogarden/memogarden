@@ -295,8 +295,8 @@ class GmailImporter(EmailImporter):
 
     def _newest_batch_ids(
         self, api: GmailApiClient, done: set[str], limit: int,
-        max_pages: int = _BACKFILL_MAX_PAGES,
-    ) -> tuple[list[str], bool]:
+        before: Optional[str] = None, max_pages: int = _BACKFILL_MAX_PAGES,
+    ) -> tuple[list[str], bool, Optional[str]]:
         """Ids of up to `limit` NEWEST messages not in done, newest-first.
 
         RFC-012 §4.10 ingestion-order policy: history backfill walks the
@@ -305,38 +305,48 @@ class GmailImporter(EmailImporter):
         ingested. `messages.list` is natively newest-first, so this is a
         plain paged walk from the head: no full enumeration, no search
         cache (the CLI's oldest-first path owns that file; the two
-        orderings must never share it), no date-window search.
+        orderings must never share it).
 
         Pages are walked from the start each call, skipping done ids, until
         the batch fills. Depth grows as the backfill progresses but stays
-        bounded by the page budget (40 pages ≈ 20k ids per run — the
-        platform's enumeration horizon); hitting the budget DEFERS the
-        remainder to the next run rather than failing it, so a huge mailbox
-        backfills as far as the horizon and never wedges the account.
+        bounded by the per-run page budget (40 pages ~ 20k ids); hitting
+        the budget DEFERS the remainder to the next run rather than failing
+        it. For mailboxes deeper than the horizon, the provider tightens a
+        `before:` date cursor (boundary_id) so the walk continues in the
+        not-yet-covered, older region on subsequent runs. `before`
+        (YYYY/MM/DD) applies that cursor as a Gmail date query when set.
 
         `done` is the combined skip set (ingested + excluded + anything
         this run already yielded).
 
-        Returns (batch_ids, exhausted): exhausted=True only when the FULL
-        listing was walked — the oldest email is inside this batch (or
-        already gone), and after it lands the account's backfill is
-        complete.
+        Returns (batch_ids, exhausted, boundary_id): exhausted=True only
+        when the full (bounded) listing was walked — the oldest email is
+        inside this batch or already gone, and after it lands the account's
+        backfill is complete. boundary_id is set ONLY when the page budget
+        was hit: the oldest-position id seen in the walk, for the provider
+        to tighten the date cursor past the covered region.
         """
         batch: list[str] = []
         token: Optional[str] = None
+        boundary_id: Optional[str] = None
+        last_seen: Optional[str] = None
+        query = f"before:{before}" if before else None
         for _ in range(max_pages):
-            page = api.list_messages(None, token)
-            for entry in page.get("messages", []):
+            page = api.list_messages(query, token)
+            for entry in page.get("messages", []) or []:
                 message_id = entry["id"]
+                last_seen = message_id
                 if message_id in done:
                     continue
                 batch.append(message_id)
                 if len(batch) >= limit:
-                    return batch, False
-            token = page.get("nextPageToken")
+                    return batch, False, None
+            boundary_id = last_seen
+            token = page.get("nextPageToken") or None
             if not token:
-                return batch, True  # walked the whole mailbox
-        return batch, False  # page budget hit mid-mailbox: defer, don't fail
+                boundary_id = None
+                return batch, True, None  # walked the whole (bounded) listing
+        return batch, False, boundary_id  # budget hit mid-mailbox: defer
 
     # ------------------------------------------------------------------
     # historyId incremental sync
@@ -386,7 +396,10 @@ class GmailImporter(EmailImporter):
         return doc
 
     def _store_sync_state(
-        self, history_id: str, backfill: Optional[str] = None
+        self,
+        history_id: str,
+        backfill: Optional[str] = None,
+        backfill_before: Optional[str] = None,
     ) -> None:
         """Persist the per-account sync state.
 
@@ -395,15 +408,24 @@ class GmailImporter(EmailImporter):
         None preserves whatever value the account's current doc carries
         (read through the account-guarded loader; 'running' is the implicit
         default for a fresh account).
+
+        `backfill_before`: the §4.10 horizon-walk date cursor (YYYY/MM/DD)
+        when the mailbox is deeper than one run's page budget. None
+        preserves the current value; empty string clears it.
         """
         state_path = Path(self.sync_state_path)
         state_path.parent.mkdir(parents=True, exist_ok=True)
+        existing = self._load_sync_state()
+        if backfill_before is None:
+            backfill_before = existing.get("backfill_before") or ""
         doc = {
             "account": self.account_id,
             "history_id": str(history_id),
-            "backfill": backfill or self._load_sync_state().get("backfill") or "running",
+            "backfill": backfill or existing.get("backfill") or "running",
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
+        if backfill_before:
+            doc["backfill_before"] = backfill_before
         tmp = state_path.with_suffix(state_path.suffix + ".tmp")
         tmp.write_text(json.dumps(doc))
         tmp.rename(state_path)
