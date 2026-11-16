@@ -16,6 +16,7 @@ Covers:
 """
 
 import json
+from datetime import date as dt_date, timedelta
 
 import pytest
 
@@ -350,3 +351,173 @@ class TestReverseLinkThreading:
         relations = provider.create_relations(fact_like)
         assert len(relations) == 1
         assert relations[0].source == reply_uuid  # decoy not linked
+
+
+class TestHorizonWalk:
+    """RFC-012 §4.10: mailboxes deeper than one run's page budget continue
+    via a tightening `before:` date cursor instead of stalling forever."""
+
+    def test_walker_budget_hit_returns_boundary_id(self, tmp_path):
+        """Budget exhausted mid-mailbox: the walker reports the oldest-
+        position id it saw (the tightening handle) and exhausted=False."""
+        from datetime import datetime as dt, timedelta, timezone
+
+        provider = _make_provider(tmp_path, batch_limit=2)
+        mails = [
+            (f"m{i:02d}", (dt(2020, 1, 1, tzinfo=timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d"))
+            for i in range(6)
+        ]  # newest-first, 6 mails
+        api = _PagedHorizonApi(mails, page_size=1, current="400")
+        walker_batch, exhausted, boundary = provider.importer._newest_batch_ids(
+            api, done=set(), limit=10, max_pages=2
+        )
+        assert walker_batch == ["m00", "m01"]  # everything in budget reach
+        assert exhausted is False
+        assert boundary == "m01"  # last id seen when the budget bound the walk
+
+    def test_walker_full_walk_clears_boundary(self, tmp_path):
+        provider = _make_provider(tmp_path, batch_limit=10)
+        api = _PagedHorizonApi(
+            [("n2", "2020-03-01"), ("n1", "2020-02-01"), ("n0", "2020-01-01")],
+            page_size=2, current="400",
+        )
+        walker_batch, exhausted, boundary = provider.importer._newest_batch_ids(
+            api, done=set(), limit=10, max_pages=5
+        )
+        assert exhausted is True
+        assert boundary is None
+        assert walker_batch == ["n2", "n1", "n0"]
+
+    def test_walker_passes_before_query(self, tmp_path):
+        provider = _make_provider(tmp_path, batch_limit=10)
+        api = _PagedHorizonApi(
+            [("old1", "2014-01-05"), ("old2", "2014-01-02")],
+            page_size=2, current="400",
+        )
+        provider.importer._newest_batch_ids(
+            api, done=set(), limit=10, before="2014/02/01", max_pages=5
+        )
+        assert api.last_query == "before:2014/02/01"
+        # mails on/after the bound are excluded by the query semantics
+        assert api.served_ids == ["old1", "old2"]
+
+    def test_provider_tightens_cursor_on_horizon_stall(
+        self, tmp_path, monkeypatch
+    ):
+        """Budget hit with everything-in-reach already done: zero yield,
+        the boundary date (+1 day) is persisted as the next walk's bound."""
+        provider = _make_provider(tmp_path, batch_limit=3)
+
+        def stub_walker(api, done, limit, before=None, max_pages=40):
+            return [], False, "boundary1"
+
+        monkeypatch.setattr(
+            provider.importer, "_newest_batch_ids", stub_walker
+        )
+        api = FakeListingApi(listing=[], current="400")
+        api.get_profile = lambda: {"historyId": "400", "emailAddress": ACCOUNT}
+        monkeypatch.setattr(provider.importer, "_build_api_client", lambda: api)
+        # the boundary fetch returns a mail whose internalDate pins the cursor
+        api.get_message = lambda mid: {"internalDate": "1586000000000"}  # 2020-04-04T09:33:20Z
+
+        yielded = _run(provider, tmp_path)
+        assert yielded == []
+        state = _state(tmp_path)
+        assert state["backfill"] == "running"  # NOT complete — tail remains
+        assert state["backfill_before"] == "2020/04/05"
+
+    def test_bounded_walk_drains_tail_then_completes(self, tmp_path, monkeypatch):
+        """With a cursor set, the bounded walk ingests the older region and
+        reports complete when it drains (exhausted within the bound)."""
+        from system.soil import create_email_item
+
+        provider = _make_provider(tmp_path, batch_limit=5)
+        mails = [
+            (f"old{i}", (dt_date(2014, 4, 1) - timedelta(days=i)).isoformat())
+            for i in range(4)
+        ]
+        api = _PagedHorizonApi(mails, page_size=2, current="400")
+        # pre-set the cursor as if a prior run tightened it
+        state_path = tmp_path / "state.json"
+        state_path.write_text(json.dumps({
+            "account": ACCOUNT, "history_id": "400",
+            "backfill": "running", "backfill_before": "2014/04/06",
+        }))
+        monkeypatch.setattr(provider.importer, "_build_api_client", lambda: api)
+
+        yielded = _run(provider, tmp_path)
+        assert yielded == ["old0", "old1", "old2", "old3"]
+        state = _state(tmp_path)
+        assert state["backfill"] == "complete"  # bounded listing drained
+        assert state["backfill_before"] == "2014/04/06"  # cursor preserved
+
+
+class _PagedHorizonApi:
+    """messages.list with before:-date-query semantics and small pages.
+
+    `mails` is newest-first: (id, "YYYY-MM-DD"). Serves get_message with a
+    matching internalDate (ms string) so the provider's horizon-tightening
+    can read the boundary date."""
+
+    def __init__(self, mails, page_size=2, current="400"):
+        import datetime as _dt
+
+        self.current = current
+        self.page_size = page_size
+        self.mails = [
+            (mid, _dt.datetime.strptime(d, "%Y-%m-%d").replace(tzinfo=_dt.timezone.utc))
+            for mid, d in mails
+        ]
+        self.last_query = None
+        self.served_ids = []
+
+    def get_profile(self):
+        return {"historyId": self.current, "emailAddress": ACCOUNT}
+
+    def history_list(self, start_history_id, page_token=None):
+        # default: no changes since that cursor
+        return {"history": [], "historyId": start_history_id}
+
+    def _bounded(self, query):
+        self.last_query = query
+        mails = self.mails
+        if query and query.startswith("before:"):
+            y, m, d = (int(x) for x in query.split(":", 1)[1].split("/"))
+            import datetime as _dt
+
+            bound = _dt.datetime(y, m, d, tzinfo=_dt.timezone.utc)
+            mails = [m for m in mails if m[1] < bound]
+        self.served_ids = [m[0] for m in mails]
+        return mails
+
+    def list_messages(self, query=None, page_token=None):
+        mails = self._bounded(query)
+        start = 0 if page_token is None else int(page_token)
+        page = mails[start : start + self.page_size]
+        nxt = start + self.page_size
+        return {
+            "messages": [{"id": mid} for mid, _ in page],
+            "nextPageToken": str(nxt) if nxt < len(mails) else None,
+        }
+
+    def get_message(self, message_id):
+        msg = simple_message()
+        msg["id"] = message_id
+        msg["labelIds"] = ["INBOX"]
+        msg["payload"] = {
+            "mimeType": "text/plain",
+            "headers": [
+                {"name": "Message-ID", "value": f"<{message_id}@example.com>"},
+                {"name": "From", "value": "x@example.com"},
+                {"name": "To", "value": "y@example.com"},
+                {"name": "Subject", "value": f"Mail {message_id}"},
+            ],
+            "body": {"data": "SGk="},
+        }
+        for mid, ts in self.mails:
+            if mid == message_id:
+                import datetime as _dt
+
+                epoch = _dt.datetime(1970, 1, 1, tzinfo=_dt.timezone.utc)
+                msg["internalDate"] = str(int((ts - epoch).total_seconds() * 1000))
+        return msg

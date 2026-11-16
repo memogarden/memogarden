@@ -1,6 +1,6 @@
 # RFC-012: Provider Accounts — Multi-Account Ingestion
 
-**Version:** 1.2
+**Version:** 1.3
 **Status:** Accepted (implemented 2026-11-14)
 **Author:** MemoGarden Project
 **Created:** 2026-11-14
@@ -355,6 +355,14 @@ batch in the background.
   heartbeat: incoming mail always outranks history. New mail is never
   double-yielded within a run (the backward walk skips ids the
   incremental stage already served).
+- **Horizon walk (v1.3, 2026-11-16):** mailboxes deeper than one run's
+  page budget (nyjc: >20k) continue via a tightening `before:` date
+  cursor. When a walk's page budget covers only already-ingested ids,
+  the boundary message's date (+1 day) is persisted as `backfill_before`
+  in the sync state and the next walk enumerates `before:<cursor>` —
+  the not-yet-covered older region — repeating until the bounded listing
+  drains (then `complete`). Never fails; the 20k cap becomes a pacing
+  detail, not a ceiling.
 - The manual `ingest next` recovery path (oldest-first) is unchanged but
   superseded for this purpose — the policy needs no operator action.
 
@@ -608,4 +616,5 @@ Also adopted: the **tokens-never-transit-the-API** invariant (INV-2) and
 |---|---|---|
 | 1.0 | 2026-11-14 | Initial draft. D1–D3 decided via operator review; rollout plan M1–M5. |
 | 1.1 | 2026-11-14 | As-built amendments: §6.2/§6.3 — OAuth consent lives in the provider's own CLI (`gmail_importer.ingest auth-login --register`, one command per account); the `memogarden` CLI stays the token-free generic registry surface. §6.1 — DELETE removes the registry row only (HACM custody stays host-side; upstream revocation manual); account registration additionally rejects non-account-backed providers. §8 M5 — full deployment runbook (backfill SQL, provider-config strip, heartbeat-unit update). Status → Accepted. |
+| 1.3 | 2026-11-16 | §4.10 horizon walk: mailboxes deeper than one run's page budget (nyjc: >20k) continue via a tightening `before:` date cursor persisted in sync state (`backfill_before`); boundary date captured from the budget-edge message. Observed live: nyjc soft-stalled at exactly 20,000 (Apr 2014→) under v1.2; v1.3 removes the ceiling. |
 | 1.2 | 2026-11-14 | §4.10 Ingestion Order Policy (operator decision): new accounts ingest history reverse-chronologically — most recent first, one batch per heartbeat, until the oldest email is ingested. Provider implements it: two-stage sync, `backfill` sync-state field, conservative completion (transient fetch failures keep it running), paged newest-first walk bounded per-run (defer, never fail, beyond the 20k horizon), reverse-linked `replies_to` threading, run-local double-yield guard. §6.3 step 7 updated. |
