@@ -1,0 +1,175 @@
+# MemoGarden Entry Item Schema
+# Language-agnostic definition for Entry items in Soil
+# (RSS/Atom provider; see plan/rss_provider_research.md)
+
+# ==============================================================================
+# ITEM TYPE
+# ==============================================================================
+type: Entry
+extends: Item (base)
+description: >
+  One item from an RSS/Atom feed, first-seen frozen (immutable, hash-stable).
+  The feed is the artifact: the provider fetches only feed URLs and stores
+  feed-provided content verbatim — it never crawls the pages entries link to
+  (full-article fetches are operator opt-in per feed and land as separate
+  document facts, research doc §4.5). Enclosures are pointers, never
+  downloaded. Publisher edits surface as revision Note facts (see below),
+  keeping Entry.data stable so integrity hashes never churn.
+
+# ==============================================================================
+# DATA FIELDS
+# ==============================================================================
+
+data:
+  # Identity and deduplication
+  entry_id:
+    type: string
+    required: true
+    description: >
+      Stable item identity from the feed — the Entry analogue of
+      Task.source_id. Identity chain (research doc §4.3): RSS 2.0 <guid>
+      (opaque string; isPermaLink default true means it is a URL — compared,
+      never fetched/resolved) → Atom <id> (char-exact, RFC 4287 §4.2.6) →
+      RSS 1.0 rdf:about → normalized item link → hash(title + published).
+      Uniqueness is per feed: dedup key is (metadata.feed, entry_id).
+    example: "https://rachelbythebay.com/w/2024/12/17/packets"
+
+  title:
+    type: string
+    required: false
+    description: Entry title at first sight
+    example: "Feed readers which don't take 'no' for an answer"
+
+  link:
+    type: string
+    required: false
+    description: Entry permalink, resolved absolute (xml:base inherited)
+    example: "https://rachelbythebay.com/w/2024/12/17/packets/"
+
+  published:
+    type: string
+    required: false
+    description: >
+      Entry date, ISO 8601 UTC — feedparser's *_parsed times. RSS 2.0
+      pubDate (RFC 822) / Atom published; `updated` preferred when there is
+      no published (Atom feeds without atom:published).
+    example: "2024-12-17T00:00:00+00:00"
+
+  updated:
+    type: string
+    required: false
+    description: >
+      Entry's last-modified time, ISO 8601 UTC (Atom updated / dcterms:modified).
+      NOT an HTTP validator — sending it as If-Modified-Since is the
+      NextCloud-News anti-pattern (research doc §6). Used only for revision
+      detection against the stored first-seen value.
+    example: "2024-12-17T13:00:00+00:00"
+
+  author:
+    type: string
+    required: false
+    description: Author name(s) at first sight
+    example: "rachelbythebay"
+
+  description:
+    type: string
+    required: false
+    description: >
+      Feed-provided content verbatim (Atom content, else RSS
+      content:encoded/description), untruncated — the gmail body precedent.
+      Untrusted third-party HTML; renderers must treat it as such.
+    example: "<p>Packet-level timeline of a client that …"
+
+  content_type:
+    type: string
+    required: false
+    description: "text/plain | text/html (default html when description present)"
+    example: "text/html"
+
+  content_hash:
+    type: string
+    required: false
+    description: >
+      SHA-256 of description (hex). Redundant by construction (deterministic
+      from description) but keeps revision detection off the big columns:
+      the revision check projects only (feed, entry_id, updated, content_hash)
+      instead of loading every stored description (the 700 MB lesson).
+    example: "9f2b…"
+
+  enclosures:
+    type: array
+    required: false
+    description: >
+      Pointers only — never downloaded. {url (required), type, length (bytes
+      as string or int)}. Podcast clients download on user action; we record.
+    example: [{"url": "https://example.com/ep1.mp3", "type": "audio/mpeg", "length": "8211001"}]
+
+# ==============================================================================
+# METADATA FIELDS (Provider-Specific)
+# ==============================================================================
+
+metadata:
+  source:
+    type: string
+    required: true
+    enum: ["rss"]
+    description: Source system of the Entry
+
+  feed:
+    type: string
+    required: true
+    description: >
+      The Subscription's xml_url — RFC-012-style attribution at creation.
+      Scope rules can key on this (RFC-012 note); default policy (none
+      configured) labels every Entry triage via the ratified catch-all.
+    example: "https://rachelbythebay.com/w/atom.xml"
+
+  feed_title:
+    type: string
+    required: false
+    description: The feed's <title> at first sight (display convenience)
+
+  bozo:
+    type: boolean
+    required: false
+    description: >
+      feedparser's leniency flag, when true — the feed is not well-formed
+      XML; content recovered under the documented charset fallback chain.
+
+# ==============================================================================
+# RELATIONS
+# ==============================================================================
+# contained_by   Entry --contained_by--> Subscription   (its feed)
+# contained_by   Note (revision) --contained_by--> Entry (publisher edits)
+# contained_by   Attachment --contained_by--> Entry     (full-fetched article)
+
+# ==============================================================================
+# canonical_at RULE
+# ==============================================================================
+# published -> published (the honest "when it happened")
+# no published -> updated
+# neither -> fetch time (realized_at)
+
+# ==============================================================================
+# EXAMPLE
+# ==============================================================================
+example:
+  _type: "Entry"
+  realized_at: "2026-11-16T10:00:00+00:00"
+  canonical_at: "2024-12-17T00:00:00+00:00"
+  fidelity: "full"
+  data:
+    entry_id: "https://rachelbythebay.com/w/2024/12/17/packets"
+    title: "Feed readers which don't take 'no' for an answer"
+    link: "https://rachelbythebay.com/w/2024/12/17/packets/"
+    published: "2024-12-17T00:00:00+00:00"
+    updated: "2024-12-17T13:00:00+00:00"
+    author: "rachelbythebay"
+    description: "<p>Packet-level timeline of a client …</p>"
+    content_type: "text/html"
+    content_hash: "9f2b…"
+    enclosures: []
+  metadata:
+    source: "rss"
+    feed: "https://rachelbythebay.com/w/atom.xml"
+    feed_title: "Rachel by the Bay"

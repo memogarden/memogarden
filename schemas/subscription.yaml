@@ -1,0 +1,111 @@
+# MemoGarden Subscription Item Schema
+# Language-agnostic definition for Subscription items in Soil
+# (RSS/Atom provider; see plan/rss_provider_research.md)
+
+# ==============================================================================
+# ITEM TYPE
+# ==============================================================================
+type: Subscription
+extends: Item (base)
+description: >
+  One RSS/Atom feed the operator subscribes to. Created by the operator
+  (`memogarden import opml` or future manual verb) — operator-authored
+  real-world information, unlike the provider-internal feed-state store.
+  The provider enumerates Subscription facts at sync start to build the poll
+  set; xml_url is the permanent identity anchor (dedup key, Entry.metadata.feed,
+  done-set scoping) — never rewritten on redirects (see research doc §7.4).
+
+# ==============================================================================
+# DATA FIELDS
+# ==============================================================================
+
+data:
+  # Identity and deduplication
+  xml_url:
+    type: string
+    required: true
+    description: >
+      The feed URL as configured (OPML xmlUrl, whitespace-stripped).
+      The dedup key — the Subscription analogue of Task.source_id.
+      Identity NEVER changes on 301/308: permanent moves are adopted into the
+      provider's internal fetch_url instead (research doc §7.4).
+    example: "https://rachelbythebay.com/w/atom.xml"
+
+  # Content
+  title:
+    type: string
+    required: false
+    description: Feed title (OPML @title/@text, or the feed's <title> once
+      first fetched — not rewritten after creation; first-seen wins)
+    example: "Rachel by the Bay"
+
+  html_url:
+    type: string
+    required: false
+    description: Site URL (OPML htmlUrl / feed link rel=alternate)
+    example: "https://rachelbythebay.com/w/"
+
+  categories:
+    type: array
+    items: string
+    required: false
+    description: OPML folder path, outermost first
+    example: ["Tech Blogs"]
+
+# ==============================================================================
+# METADATA FIELDS (Provider-Specific)
+# ==============================================================================
+
+metadata:
+  source:
+    type: string
+    required: true
+    enum: ["opml", "manual"]
+    description: How the subscription entered memogarden
+
+  imported_at:
+    type: string
+    required: false
+    description: When the OPML import (or manual add) ran (ISO 8601 UTC)
+    example: "2026-11-16T09:00:00+00:00"
+
+  feed_key:
+    type: string
+    required: false
+    description: >
+      First 8 hex of SHA-256(xml_url) — the tag the provider's User-Agent
+      carries so a publisher can correspond about one specific feed
+      (rachelbythebay Feed Reader Behavior Project mechanism).
+    example: "3f9a1c2b"
+
+# ==============================================================================
+# RELATIONS
+# ==============================================================================
+# contained_by   Entry --contained_by--> Subscription
+#                (each entry of a feed; mirrors Note --contained_by--> Task
+#                and Attachment --contained_by--> Email)
+# contained_by   Attachment --contained_by--> Subscription
+#                (raw feed-response XML archived per new-entry-bearing 200)
+
+# ==============================================================================
+# canonical_at RULE
+# ==============================================================================
+# imported_at (when the operator added the subscription)
+
+# ==============================================================================
+# EXAMPLE
+# ==============================================================================
+example:
+  _type: "Subscription"
+  realized_at: "2026-11-16T09:00:00+00:00"
+  canonical_at: "2026-11-16T09:00:00+00:00"
+  fidelity: "full"
+  data:
+    xml_url: "https://rachelbythebay.com/w/atom.xml"
+    title: "Rachel by the Bay"
+    html_url: "https://rachelbythebay.com/w/"
+    categories: ["Tech Blogs"]
+  metadata:
+    source: "opml"
+    imported_at: "2026-11-16T09:00:00+00:00"
+    feed_key: "3f9a1c2b"

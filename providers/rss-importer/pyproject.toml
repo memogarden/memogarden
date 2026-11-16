@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "rss-importer"
+version = "0.1.0"
+description = "MemoGarden RSS/Atom Importer — feed entries into Soil as Entry facts, with polite conditional-GET fetching"
+authors = ["MemoGarden Contributors"]
+readme = "README.md"
+packages = [{include = "rss_importer"}]
+
+[tool.poetry.dependencies]
+python = "^3.13"
+memogarden-system = {path = "../../memogarden-system", develop = true}
+feedparser = "^6.0.14"
+# requests rides on the API server's venv (gmail_importer uses it); declared
+# here so a standalone poetry env can also run the tests.
+requests = "^2.31"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
