@@ -1,6 +1,6 @@
 # RFC-014: Google Calendar Provider (gcal) — v1 DRAFT
 
-**Status**: Phase A IMPLEMENTED on `feat/gcal-provider` (system + api + root worktrees; suites green; pending review/merge). Decisions all settled (AUQ 2026-11-16, §14).
+**Status**: Phase A MERGED to main (system `096dd48`, api `6a0a884`, root `a5eced3`). Phase B (mark-occurred, §6) IMPLEMENTED on `feat/gcal-mark-occurred` — pending review/merge. All decisions settled (AUQ 2026-11-16, §14).
 **Related**: RFC-004 §12.2 (provider runtime), RFC-010 (agent identity), RFC-011 (scopes/grants), RFC-012 (provider accounts; §10 reserved exactly this capability widening), PRD v0.11 §Provider Plugin Interface.
 
 ---

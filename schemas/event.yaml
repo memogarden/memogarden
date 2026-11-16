@@ -229,16 +229,28 @@ metadata:
 # Same key ⇒ same entity; etag-diff decides no-op vs update.
 
 # ====================================================================
-# § FACTS (how an Event yields memory)
+# § FACTS (how an Event yields memory) — IMPLEMENTED, RFC-014 §6
 # ====================================================================
-# An Event never becomes a fact by itself.
-# mark-occurred review creates:
+# An Event never becomes a fact by itself. The mark-occurred review
+# action (POST /api/v1/events/<uuid>/mark-occurred; operator JWT or
+# agent-bound API key, unbound keys 403) creates:
+#
 #   - EventOccurrence fact (Soil, immutable):
-#       data: {event_uuid, occurred_at, snapshot{title, starts_at, ends_at,
-#              location, participants, organizer, status}}
+#       data: {event_uuid (core_-prefixed), occurred_at,
+#              snapshot{title, starts_at, ends_at, location,
+#                       participants, organizer, status}}
+#       metadata: {source, account, calendar_id, source_id}  (provenance)
 #       canonical_at = occurred_at
-#   - Action fact: attributable marking (operator JWT or agent-bound key;
-#       unbound API keys are refused).
+#   - Action fact: attributable marking
+#       data: {actor, actor_type (operator|agent), operation:
+#              "mark_occurred", params{event_uuid, occurred_at}}
+#
+# Idempotent: re-marking returns the existing occurrence (200, no new
+# facts). Crash-repair: if the entity is marked but its facts are
+# missing (core-first commit ordering), re-marking recreates the facts
+# from the entity's stored stamp without overwriting ground truth.
+# EventOccurrence is deliberately NOT in the /mg baseline create
+# whitelist — this endpoint is the fact's only creation path.
 
 # ====================================================================
 # § RELATIONS
