@@ -28,6 +28,10 @@ def _default_data_dir() -> Path:
 
 
 def _load_gmail_oauth():
+    """Load the gmail-oauth machinery via gmail_importer's dash-name loader
+    (reference, don't copy). Calling this seeds sys.modules["gmail_oauth"],
+    so a plain `import gmail_oauth` works afterwards (gmail ingest
+    precedent) — the loader returns the CLASS, not the module."""
     from gmail_importer.provider import GmailImporter
 
     return GmailImporter._load_oauth_client()
@@ -47,12 +51,13 @@ def cmd_auth_login(args) -> int:
     """Loopback OAuth consent → verify via calendarList → HACM → --register."""
     if not args.account:
         sys.exit("--account is required for auth-login")
-    gmail_oauth = _load_gmail_oauth()
+    oauth_cls = _load_gmail_oauth()
+    import gmail_oauth  # seeded by the loader (sys.modules)
     hacm_path = args.hacm or (_default_data_dir() / "hacm/credentials.enc")
     passphrase = _read_passphrase(args)
 
-    client = gmail_oauth.GmailOAuthClient(str(Path(hacm_path).expanduser()),
-                                          passphrase=passphrase)
+    client = oauth_cls(str(Path(hacm_path).expanduser()),
+                       passphrase=passphrase)
 
     from gmail_importer.ingest import _auth_url
 
@@ -145,11 +150,11 @@ def _register_account_row(subject: str, args) -> None:
 def cmd_list_calendars(args) -> int:
     """Read-only probe: what would this account ingest under the current
     selection rules? (owner-role default; calendar_ids allowlist overrides)"""
-    gmail_oauth = _load_gmail_oauth()
+    oauth_cls = _load_gmail_oauth()
     hacm_path = args.hacm or (_default_data_dir() / "hacm/credentials.enc")
     passphrase = _read_passphrase(args)
-    client = gmail_oauth.GmailOAuthClient(str(Path(hacm_path).expanduser()),
-                                          passphrase=passphrase)
+    client = oauth_cls(str(Path(hacm_path).expanduser()),
+                       passphrase=passphrase)
     tokens = client.refresh_access_token(args.account)
 
     from gcal_importer.calendar_api import GoogleCalendarClient
