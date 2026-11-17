@@ -136,7 +136,7 @@ class GoogleCalendarProvider:
                         )
                         entry["sync_token"] = None
                         state["audit_force"] = True
-                yield from self._seed(client, calendar, entry, budget)
+                yield from self._seed(client, calendar, entry, etag_map, budget)
 
             # Start the audit clock at first seed: a fresh corpus has
             # nothing to diff against, so the first audit runs one
@@ -245,9 +245,19 @@ class GoogleCalendarProvider:
                 return
         self._log(f"{cid}: incremental truncated by page budget — deferring remainder")
 
-    def _seed(self, client, calendar, entry, budget) -> Iterator[dict]:
-        """Full listing (no timeMin — full history); token on completion."""
+    def _seed(self, client, calendar, entry, etag_map, budget) -> Iterator[dict]:
+        """Full listing (no timeMin — full history); token on completion.
+
+        Known-and-unchanged events are skipped client-side: a truncated
+        seed re-walks from page 1 next run, and without the skip every
+        continuation run would re-deliver the same known events and burn
+        its whole batch budget before reaching anything new (observed
+        live: first run created 500, run 2 would have stalled forever).
+        The runtime etag no-op absorbs correctness; this restores the
+        gmail done-set economics, fed by the Core projection.
+        """
         cid = calendar["id"]
+        known = etag_map.get(cid, {})
         params = {"singleEvents": "true", "maxResults": 250}
         items, sync_token, walked_all, pages_used = client.events_list_all(
             cid, params, page_budget=max(budget["pages"], 0)
@@ -259,6 +269,13 @@ class GoogleCalendarProvider:
                 # events; if one slips through anyway, skip it — the
                 # seed stores living events only.
                 continue
+            known_entry = known.get(item.get("id"))
+            if (
+                known_entry is not None
+                and known_entry[0] == item.get("etag")
+                and known_entry[1] is None
+            ):
+                continue  # known & unchanged (not a resurrection — skip)
             upsert = self._event_upsert(item, calendar, mark_captured=True)
             if upsert is None:
                 continue
@@ -268,7 +285,7 @@ class GoogleCalendarProvider:
             budget["upserts"] -= 1
             yield upsert
         if not walked_all or not sync_token:
-            self._log(f"{cid}: seed truncated by page budget — token NOT stored")
+            self._log(f"{cid}: seed truncated by upsert/page budget — token NOT stored")
             return
         entry["sync_token"] = sync_token
         entry["seeded"] = True
@@ -313,6 +330,16 @@ class GoogleCalendarProvider:
                         break
                     budget["upserts"] -= 1
                     yield stamp
+                    continue
+                known_entry = known.get(event_id)
+                if (
+                    known_entry is not None
+                    and known_entry[0] == item.get("etag")
+                    and known_entry[1] is None
+                ):
+                    # Known & unchanged: the runtime would no-op the
+                    # upsert — don't burn audit budget re-delivering a
+                    # full corpus every month (seed-skip precedent).
                     continue
                 upsert = self._event_upsert(item, calendar, mark_captured=True)
                 if upsert is None:

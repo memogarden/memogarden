@@ -180,6 +180,45 @@ class TestSeed:
         assert meta["original_start_at"] == "2026-11-20T08:00:00+00:00"
         assert meta["ical_uid"] == "master1@google.com"
 
+    def test_seed_resumes_past_known_events(self, provider, tmp_state):
+        # Live-found defect: a truncated seed re-walks from page 1 next
+        # run — without client-side skips, every continuation run burns
+        # its whole batch budget re-delivering known events and never
+        # reaches new ones.
+        listing = {"items": [
+            make_event("e1", {"dateTime": "2026-11-20T09:00:00Z"}, etag="E1"),
+            make_event("e2", {"dateTime": "2026-11-21T09:00:00Z"}, etag="E2"),
+            make_event("e3", {"dateTime": "2026-11-22T09:00:00Z"}, etag="E3"),
+        ], "nextSyncToken": "T1"}
+        provider._batch_limit = 2
+        provider._client.pages["me@gmail.com"] = [dict(listing)]
+        y1 = list(provider.sync())
+        assert [y["data"]["source_id"] for y in y1] == ["e1", "e2"]
+
+        # Runtime stored e1/e2 — reflected in the (Core-projected) map.
+        # Run 2 re-lists the calendar (Google serves the full listing on
+        # every walk); the known events are skipped client-side.
+        provider._stored = {"me@gmail.com": {"e1": ("E1", None), "e2": ("E2", None)}}
+        provider._client.pages["me@gmail.com"] = [dict(listing)]
+        y2 = list(provider.sync())
+        assert [y["data"]["source_id"] for y in y2] == ["e3"]
+        # Full listing walked → token finally stored.
+        assert read_state(tmp_state)["calendars"]["me@gmail.com"]["sync_token"] == "T1"
+
+    def test_seed_known_cancelled_still_yields(self, provider, tmp_state):
+        # Resurrection guard on the skip: a stored-cancelled id whose
+        # listing entry is living must NOT be skipped even on etag match
+        # (the living payload clears the stamps via the merge).
+        provider._stored = {"me@gmail.com": {"e1": ("E1", "cancelled")}}
+        provider._client.pages["me@gmail.com"] = [
+            {"items": [
+                make_event("e1", {"dateTime": "2026-11-20T09:00:00Z"}, etag="E1"),
+            ], "nextSyncToken": "T1"},
+        ]
+        yields = list(provider.sync())
+        assert len(yields) == 1
+        assert yields[0]["metadata"]["source_status"] is None
+
 
 class TestIncremental:
     def test_incremental_yields_changes_and_advances_token(self, provider, tmp_state):
