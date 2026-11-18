@@ -133,6 +133,17 @@ download-and-attach dance. Design notes:
 - Downloads→Soil emits the same document/Evidence facts as gmail-importer ⇒ shared
   postprocessing ⇒ the browser becomes a document *provider* in effect (modeled as an app,
   not a registry provider).
+- **Ingestion mechanism DECIDED 2026-11-18** (decision register:
+  `plan/rfc_013_ingestion_decision_register.md` — supersedes the parenthetical above
+  where they differ): drain via the **provider mechanism** (in-server
+  `sessions-importer` pull over the daemon's staging cache); the daemon never writes
+  facts and holds a **trigger-only** credential (restricted key class). Custody area
+  reclassified as a **staging cache** — steady-state drained/near-empty, MemoGarden's
+  content-addressed store is the canonical residence; feed = downloads, screenshots,
+  per-navigation `PageVisit` facts (all sessions), full §12.1 `SessionEvent` mirror
+  (single fact kind, refusals included), session entity mirror. Downloads → Triage;
+  history/events unscoped; Finances scope = triage destination. Loss-free: undrained
+  captures are never evicted; zero local retention post-drain.
 
 **Exhibit B — research/shopping.** Operator works some tabs; agent assists on background
 tabs (collating, summarizing, capturing visited URLs via CDP page-lifecycle events and
