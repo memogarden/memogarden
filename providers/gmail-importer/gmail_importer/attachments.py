@@ -13,11 +13,9 @@ email facts themselves are never modified and Gmail stays read-only.
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import logging
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Callable, Optional
 
 from system.soil import Soil
@@ -28,6 +26,11 @@ from gmail_importer.gmail_api import GmailApiError
 
 from gmail_importer.importer import GmailImporter
 
+# The content-addressed store is shared infrastructure now (the RFC-013
+# sessions drain stores browser downloads in the SAME residence):
+# promoted to memogarden-utils; re-exported here for existing callers.
+from utils.attachments import AttachmentStore, safe_ext as _safe_ext
+
 logger = logging.getLogger(__name__)
 
 # Same convention as the mbox importer's relation timestamps.
@@ -36,43 +39,6 @@ _RELATION_EPOCH = datetime(2020, 1, 1, tzinfo=timezone.utc)
 
 def _days_since_epoch() -> int:
     return (datetime.now(timezone.utc) - _RELATION_EPOCH).days
-
-
-def _safe_ext(filename: str) -> str:
-    """Filesystem-safe extension from the original filename ('' if none)."""
-    name = filename.replace("\\", "/").rsplit("/", 1)[-1]
-    if "." not in name:
-        return ""
-    ext = name.rsplit(".", 1)[1]
-    cleaned = "".join(c for c in ext if c.isalnum())
-    if not cleaned:
-        return ""
-    return "." + cleaned[:10]
-
-
-class AttachmentStore:
-    """Content-addressed binary store rooted at a directory on disk."""
-
-    def __init__(self, root: Path):
-        self.root = Path(root)
-
-    def path_for(self, digest: str, ext: str = "") -> Path:
-        return self.root / digest[:2] / digest[2:4] / f"{digest}{ext}"
-
-    def write(self, data: bytes, original_filename: str) -> tuple[str, str]:
-        """Write bytes; returns (path relative to root, sha256 hex digest).
-
-        Idempotent: content already present is left untouched (same hash
-        means the same bytes).
-        """
-        digest = hashlib.sha256(data).hexdigest()
-        path = self.path_for(digest, _safe_ext(original_filename))
-        if not path.exists():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.parent / (path.name + ".part")
-            tmp.write_bytes(data)
-            tmp.rename(path)
-        return str(path.relative_to(self.root)), digest
 
 
 class AttachmentExtractor:
