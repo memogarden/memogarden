@@ -162,6 +162,18 @@ memogarden-api/
 
 These are related to MemoGarden but not part of the core system.
 
+### `memogarden-readly/`
+
+**Purpose:** readly — RSS reader PWA on MemoGarden (the first MemoGarden app)
+
+**Status:** Deployed (2026-11-18) at `readly.ngjunsiang.me` (tada Cloudflare tunnel + Access; `readly.service`, port 7428)
+**Contains:**
+- `packages/server/` - `readly serve` (node:http): static host + JSON API over an in-memory Entry/Subscription cache (syncs from `POST /mg`) + app-local read state (`~/.local/share/readly/state.json`)
+- `packages/web/` - PWA UI (Vite + React 19 + TanStack Query 5, DOMPurify reader, sw.js with Access session recovery)
+- `scripts/` - systemd unit mirror + installer
+
+**Note:** read state is deliberately app-local; MemoGarden will eventually record URL visits as facts, subsuming it (see `~/sysinfo/incidents/2026-11-18-readly-pwa.md`).
+
 ### `app-budget/`
 
 **Purpose:** Budget app (Flutter)

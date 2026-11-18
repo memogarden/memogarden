@@ -28,7 +28,8 @@ This document provides context and guidelines for AI assistants (Claude, GPT, et
 6. **Project Studio** (`mg-project-studio/`) - Svelte web app (RFC-009 MemoGarden App)
 7. **MUSH** (`mush/`) - Multi-User Session Host (PTY daemon for human-agent shared terminals)
 8. **CD** (`memogarden-devcd/`) - Webhook-based deployment automation
-9. `memogarden.github.io/` - Documentation site
+9. **Readly** (`memogarden-readly/`) - RSS reader PWA, the first MemoGarden app (React 19 + Vite + node:http serve on 127.0.0.1:7428; deployed at readly.ngjunsiang.me via the tada Cloudflare tunnel + Access; read state app-local pending future URL-visit facts)
+10. `memogarden.github.io/` - Documentation site
 
 ### Submodules (pinned in root repo as gitlinks)
 
@@ -66,7 +67,7 @@ This document provides context and guidelines for AI assistants (Claude, GPT, et
    - Commits here affect: system/, tests/
    - **Separate from root repository!**
 
-The same applies to `memogarden-client/`, `memogarden-utils/`, `mg-project-studio/`, `mush/`, `memogarden-devcd/`, and `memogarden.github.io/`. Run `git status` inside whichever directory you changed.
+The same applies to `memogarden-client/`, `memogarden-utils/`, `mg-project-studio/`, `mush/`, `memogarden-devcd/`, `memogarden-readly/`, and `memogarden.github.io/`. Run `git status` inside whichever directory you changed.
 
 ### ⚠️ Before Committing: Always Verify
 
