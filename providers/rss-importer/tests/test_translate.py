@@ -147,6 +147,47 @@ class TestEntryFact:
 
 
 # ---------------------------------------------------------------------------
+# Content-type correction (mislabeled text/plain carrying markup)
+# ---------------------------------------------------------------------------
+
+
+class TestContentTypeCorrection:
+    def test_declared_text_plain_with_markup_corrected(self):
+        # the godotengine.org shape: full HTML mislabeled text/plain
+        assert translate.entry_content(
+            {"content": [{"value": "<p>hello <a href=\"/x\">there</a></p>",
+                          "type": "text/plain"}]}
+        ) == ("<p>hello <a href=\"/x\">there</a></p>", "text/html")
+
+    def test_summary_path_mislabeled_too(self):
+        assert translate.entry_content(
+            {"summary": "<br/>line two", "summary_detail": {"type": "text/plain"}}
+        ) == ("<br/>line two", "text/html")
+
+    def test_genuinely_plain_text_stays_plain(self):
+        # prose, math, and escaped markup in a plain field — no tag syntax
+        assert translate.entry_content(
+            {"summary": "for a < b read the docs; escaped: &lt;p&gt;hi&lt;/p&gt;",
+             "summary_detail": {"type": "text/plain"}}
+        )[1] == "text/plain"
+
+    def test_declared_html_passes_through_uncorrected(self):
+        assert translate.entry_content(
+            {"content": [{"value": "plain words, no tags", "type": "text/html"}]}
+        ) == ("plain words, no tags", "text/html")
+
+    def test_missing_type_defaults_html_even_without_markup(self):
+        assert translate.entry_content({"summary": "just words"}) == ("just words", "text/html")
+
+    def test_revision_note_inherits_correction(self):
+        note = translate.revision_note_fact(
+            {"content": [{"value": "<p>revised</p>", "type": "text/plain"}]},
+            "http://f.example/x", "2026-11-19T00:00:00+00:00",
+        )
+        assert note["data"]["content_type"] == "text/html"
+
+
+# ---------------------------------------------------------------------------
 # Revision notes + artifacts
 # ---------------------------------------------------------------------------
 
