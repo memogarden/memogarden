@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "sessions-importer"
+version = "0.1.0"
+description = "MemoGarden sessions Importer — drain the browser session staging cache into Soil as Attachment facts (RFC-013 §8)"
+authors = ["MemoGarden Contributors"]
+readme = "README.md"
+packages = [{include = "sessions_importer"}]
+
+[tool.poetry.dependencies]
+python = "^3.13"
+memogarden-system = {path = "../../memogarden-system", develop = true}
+memogarden-utils = {path = "../../memogarden-utils", develop = true}
+
+# Pure filesystem reads — no runtime deps beyond the two MemoGarden libs.
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
