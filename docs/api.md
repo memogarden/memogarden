@@ -23,7 +23,99 @@ Complete reference for MemoGarden APIs - Semantic API, REST API, and Authenticat
 
 MemoGarden provides three API interfaces:
 
-### Semantic API (`/mg`) - Primary Interface
+### Operator Console Reads (RFC-015 §3.3)
+
+JWT-only operator conveniences backing the Operator Console
+(`/console/*` pages — Triage, Scopes & grants, Keys & agents, Providers,
+Occurrences, Audit; no dashboard by operator decision):
+
+```bash
+# Triage queue: facts + entities labeled into a scope (default: builtin triage)
+curl -H "Authorization: Bearer $JWT" \
+  "http://localhost:8600/api/v1/triage?limit=200&account=UOB"
+# → {"scope", "facts": [...], "entities": [...], "total_facts", "total_entities"}
+
+# Authority overview: scopes + item counts, grants per key, provider policies
+curl -H "Authorization: Bearer $JWT" http://localhost:8600/api/v1/scopes/overview
+# → {"enforcement", "scopes": [{uuid, label, fact_count, entity_counts}],
+#     "grants": [{key_id, key_label, agent_label, grants: [...]}],
+#     "provider_policies": {name: policy}}
+
+# Occurrence review queue: past-end events, occurred_at null, no fact yet
+curl -H "Authorization: Bearer $JWT" \
+  "http://localhost:8600/api/v1/events/pending-review?window_days=30"
+# → {"events": [...], "count", "total_unmarked", "window_days"}
+```
+
+`/api/v1/triage` accepts `scope=` (uuid, builtin alias, or label) and
+`account=` (RFC-012 attribution stamp).
+
+### Change Password (RFC-015 §3.1)
+
+```bash
+curl -X POST http://localhost:8600/auth/change-password \
+  -H "Authorization: Bearer $JWT" -H "Content-Type: application/json" \
+  -d '{"current_password": "...", "new_password": "..."}'
+```
+
+JWT-only; the current password must be presented; the registration
+policy applies (min 8 chars, letter + digit). Writes an identity Action
+fact (RFC-010 INV-2).
+
+### Operator CLI (RFC-015 §5)
+
+The `memogarden` CLI carries the operator role via a JWT session —
+`memogarden login` stores a 0600 session file at
+`~/.config/memogarden/operator-session.json` (custody-follows-issuance);
+`MEMOGARDEN_JWT` overrides it. Governed verbs fail fast without a
+session. Verb-first grammar, per tier:
+
+```bash
+# Tier 0 — session (bare verbs)
+memogarden login [--username u]     # prompts for password
+memogarden whoami                   # either credential
+memogarden change-password          # prompts; --current/--new for scripts
+memogarden logout
+
+# Tier 1 — identity & authority (JWT-gated)
+memogarden register agent --label readly
+memogarden list agents
+memogarden register key --label zcode --agent readly   # raw key shown once
+memogarden edit key --id <uuid> --bind readly | --unbind
+memogarden remove key --id <uuid>
+memogarden register scope --name Finances [--description d]
+memogarden list scopes
+memogarden remove scope --name Finances
+memogarden register grant --agent <uuid> --scope triage --scope Finances [--expires ISO]
+memogarden list grants --agent <uuid>
+memogarden remove grant --id <grant_id>
+
+# Tier 2 — provider operations (API-key OK)
+memogarden list providers
+memogarden show provider --name gmail
+memogarden run provider --name gmail
+memogarden run providers            # run all due (heartbeat parity)
+memogarden list runs --provider gmail [--account A] [--status failed]
+memogarden show run <run_id>
+memogarden edit account --provider gmail --label nyjc \
+    --status disabled --interval 3540 --config batch_limit=2500
+
+# Tier 3 — review & audit flows (JWT or agent key)
+memogarden enter Finances           # grant-gated (SG-4); leave Finances
+memogarden list triage [--scope S] [--account A]
+memogarden relabel fact --id soil_... --add Finances --remove triage
+memogarden list actions [--actor core_...] [--actor-type agent] [--op amend]
+memogarden query --type Action --filter actor=core_... --limit 50
+memogarden track core_...
+```
+
+Scope references resolve labels, builtin aliases (`triage`, `private`),
+and uuids client-side via the scopes overview. `relabel` is client-side
+sugar over `/mg amend` — D2's per-label grant gate applies unchanged.
+
+---
+
+## Semantic API (`/mg`) - Primary Interface
 
 The **Semantic API** is a unified message-passing interface following RFC-005 v7. All operations use a single `/mg` endpoint with operation-based dispatch.
 
@@ -126,8 +218,27 @@ Optional flags: `--interval` (seconds, >= 60, default 3600),
 `--description`, `--disabled`, `--config KEY=VALUE` (repeatable; VALUE is
 parsed as JSON when possible). `--file` takes a JSON object with the same
 fields and cannot be combined with field flags. Exit codes: 0 success,
-1 error, 2 usage error. Run listing/runs via the endpoints above (no CLI
-verbs yet — the grammar is `memogarden <verb> <noun>`, RFC-005 verbs).
+1 error, 2 usage error.
+
+### Provider Runs (RFC-015 §3.2)
+
+Run history is readable — the verification side of delegated triggers:
+
+```bash
+# Recent runs for a provider, newest first (filters: account_id, status, limit)
+curl -H "X-API-Key: $KEY" \
+  "http://localhost:8600/api/v1/providers/gmail/runs?status=failed&limit=20"
+# → {"runs": [{"id", "provider_name", "account_id", "status", "started_at",
+#              "finished_at", "triggered_by", "detail"}], "count": n}
+
+# Single run by id (same principal class: any authenticated principal)
+curl -H "X-API-Key: $KEY" http://localhost:8600/api/v1/runs/<run_id>
+```
+
+`account_id=''` selects provider-level runs only. `detail` carries the
+run's counts/error JSON. Read-only and non-governed: matches provider
+GET's principal class (JWT or any API key). The CLI reads these via
+`memogarden list runs --provider gmail` and `memogarden show run <id>`.
 
 ---
 
@@ -372,6 +483,98 @@ relabeling has no dedicated verb and amend's label changes are not yet
 grant-checked; query filtering happens after pagination (pages can be
 short). Providers are never scope-gated — they label at creation per
 operator policy (`unscoped | triage | rules`).
+
+---
+
+## Operator Console Reads (RFC-015 §3.3)
+
+JWT-only operator conveniences backing the Operator Console
+(`/console/*` pages — Triage, Scopes & grants, Keys & agents, Providers,
+Occurrences, Audit; no dashboard by operator decision):
+
+```bash
+# Triage queue: facts + entities labeled into a scope (default: builtin triage)
+curl -H "Authorization: Bearer $JWT" \
+  "http://localhost:8600/api/v1/triage?limit=200&account=UOB"
+# → {"scope", "facts": [...], "entities": [...], "total_facts", "total_entities"}
+
+# Authority overview: scopes + item counts, grants per key, provider policies
+curl -H "Authorization: Bearer $JWT" http://localhost:8600/api/v1/scopes/overview
+# → {"enforcement", "scopes": [{uuid, label, fact_count, entity_counts}],
+#     "grants": [{key_id, key_label, agent_label, grants: [...]}],
+#     "provider_policies": {name: policy}}
+
+# Occurrence review queue: past-end events, occurred_at null, no fact yet
+curl -H "Authorization: Bearer $JWT" \
+  "http://localhost:8600/api/v1/events/pending-review?window_days=30"
+# → {"events": [...], "count", "total_unmarked", "window_days"}
+```
+
+`/api/v1/triage` accepts `scope=` (uuid, builtin alias, or label) and
+`account=` (RFC-012 attribution stamp).
+
+### Change Password (RFC-015 §3.1)
+
+```bash
+curl -X POST http://localhost:8600/auth/change-password \
+  -H "Authorization: Bearer $JWT" -H "Content-Type: application/json" \
+  -d '{"current_password": "...", "new_password": "..."}'
+```
+
+JWT-only; the current password must be presented; the registration
+policy applies (min 8 chars, letter + digit). Writes an identity Action
+fact (RFC-010 INV-2).
+
+### Operator CLI (RFC-015 §5)
+
+The `memogarden` CLI carries the operator role via a JWT session —
+`memogarden login` stores a 0600 session file at
+`~/.config/memogarden/operator-session.json` (custody-follows-issuance);
+`MEMOGARDEN_JWT` overrides it. Governed verbs fail fast without a
+session. Verb-first grammar, per tier:
+
+```bash
+# Tier 0 — session (bare verbs)
+memogarden login [--username u]     # prompts for password
+memogarden whoami                   # either credential
+memogarden change-password          # prompts; --current/--new for scripts
+memogarden logout
+
+# Tier 1 — identity & authority (JWT-gated)
+memogarden register agent --label readly
+memogarden list agents
+memogarden register key --label zcode --agent readly   # raw key shown once
+memogarden edit key --id <uuid> --bind readly | --unbind
+memogarden remove key --id <uuid>
+memogarden register scope --name Finances [--description d]
+memogarden list scopes
+memogarden remove scope --name Finances
+memogarden register grant --agent <uuid> --scope triage --scope Finances [--expires ISO]
+memogarden list grants --agent <uuid>
+memogarden remove grant --id <grant_id>
+
+# Tier 2 — provider operations (API-key OK)
+memogarden list providers
+memogarden show provider --name gmail
+memogarden run provider --name gmail
+memogarden run providers            # run all due (heartbeat parity)
+memogarden list runs --provider gmail [--account A] [--status failed]
+memogarden show run <run_id>
+memogarden edit account --provider gmail --label nyjc \
+    --status disabled --interval 3540 --config batch_limit=2500
+
+# Tier 3 — review & audit flows (JWT or agent key)
+memogarden enter Finances           # grant-gated (SG-4); leave Finances
+memogarden list triage [--scope S] [--account A]
+memogarden relabel fact --id soil_... --add Finances --remove triage
+memogarden list actions [--actor core_...] [--actor-type agent] [--op amend]
+memogarden query --type Action --filter actor=core_... --limit 50
+memogarden track core_...
+```
+
+Scope references resolve labels, builtin aliases (`triage`, `private`),
+and uuids client-side via the scopes overview. `relabel` is client-side
+sugar over `/mg amend` — D2's per-label grant gate applies unchanged.
 
 ---
 
