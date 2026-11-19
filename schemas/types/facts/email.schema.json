@@ -10,9 +10,6 @@
     {
       "type": "object",
       "properties": {
-        "_type": {
-          "const": "Email"
-        },
         "rfc_message_id": {
           "type": "string",
           "description": "RFC 822 Message-ID header (globally unique, used for deduplication)",
@@ -74,6 +71,12 @@
           "description": "In-Reply-To header (direct parent Message-ID)",
           "pattern": "^<[^@]+@[^@]+\\.[^@]+>$"
         },
+        "content_type": {
+          "type": "string",
+          "description": "MIME type of description field",
+          "enum": ["text/plain", "text/html"],
+          "default": "text/plain"
+        },
         "has_attachments": {
           "type": "boolean",
           "description": "Whether email has any attachments"
@@ -84,46 +87,11 @@
           "minimum": 0
         },
         "attachment_filenames": {
-          "type": ["array", "null"],
+          "type": "array",
           "description": "List of attachment filenames (for significance inference)",
           "items": {
             "type": "string"
           }
-        },
-        "metadata": {
-          "type": ["object", "null"],
-          "description": "Provider-specific extensions (not validated, rarely indexed)",
-          "properties": {
-            "provider": {
-              "type": "string",
-              "enum": ["google", "outlook", "mbox", "other"],
-              "description": "Email provider"
-            },
-            "gmail_thread_id": {
-              "type": "string",
-              "description": "Gmail-specific thread identifier"
-            },
-            "gmail_labels": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Gmail labels/categories"
-            },
-            "outlook_conversation_id": {
-              "type": "string",
-              "description": "Outlook-specific conversation identifier"
-            },
-            "html_body": {
-              "type": "string",
-              "description": "HTML version of email body (if available)"
-            },
-            "original_headers": {
-              "type": "object",
-              "description": "Complete raw headers (for debugging)"
-            }
-          },
-          "additionalProperties": true
         }
       },
       "required": [

@@ -44,7 +44,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Fragment IDs contained in this message (e.g., '^abc' - caret + exactly 3 alphanumeric characters)"
+          "description": "Fragment IDs contained in this message (e.g., '^abc', 'def')"
         },
         "required": ["sender"]
       }
