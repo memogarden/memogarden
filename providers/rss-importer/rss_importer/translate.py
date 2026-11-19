@@ -114,21 +114,45 @@ def entry_identity(entry) -> str:
 # Content
 # ---------------------------------------------------------------------------
 
+# Publishers mislabel HTML as text/plain constantly (RSS 2.0 leaves
+# <description> ambiguous and some generators omit the type attribute where
+# feedparser then defaults to text/plain). When the declared type is
+# text-ish but the value carries markup, trust the content over the label.
+_HTML_SNIFF_RE = re.compile(
+    r"<(p|div|br|a|img|span|ul|ol|li|table|tr|td|th|h[1-6]|blockquote|pre"
+    r"|figure|em|strong|b|i|u|code|hr|font)(\s[^>]*)?/?>",
+    re.IGNORECASE,
+)
+
+
+def looks_like_html(text: str) -> bool:
+    """True when the value carries HTML markup. Only common element names
+    with tag syntax — `a < b` and `&lt;p&gt;` (properly escaped markup in a
+    genuinely plain-text field) never match."""
+    return bool(_HTML_SNIFF_RE.search(text))
+
 
 def entry_content(entry) -> tuple[str, str]:
     """(description, content_type). Atom content (full) preferred over
     summary; content:encoded flows through content[] too (feedparser maps it
     when the namespace handler runs). Verbatim, untruncated — untrusted
-    third-party HTML by definition."""
+    third-party HTML by definition.
+
+    A declared text/plain that actually contains markup is corrected to
+    text/html (2026-11-19: the godotengine.org feed ships full HTML in a
+    bare <description> and feedparser tags it text/plain, which the reader
+    then rendered as escaped text)."""
     content_list = entry.get("content") or []
     if content_list:
         first = content_list[0]
         text = first.get("value") or ""
         ctype = first.get("type") or "text/html"
-        return text, ctype
-    summary = entry.get("summary") or ""
-    detail = entry.get("summary_detail") or {}
-    return summary, detail.get("type") or "text/html"
+    else:
+        text = entry.get("summary") or ""
+        ctype = (entry.get("summary_detail") or {}).get("type") or "text/html"
+    if ctype != "text/html" and looks_like_html(text):
+        ctype = "text/html"
+    return text, ctype
 
 
 def entry_enclosures(entry) -> list[dict]:

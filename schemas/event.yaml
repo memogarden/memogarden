@@ -1,8 +1,22 @@
-# MemoGarden Event Entity Schema
-# RFC-014: plan/rfc_014_gcal_provider_v1.md
+# MemoGarden Event — TWO LAYERS, ONE NAME
+# =====================================================================
+# This file documents the EVENT ENTITY (below, RFC-014 gcal). The EVENT
+# FACT — the universal occurrence record, `soil_` uuid — is documented in
+# the FACT section at the foot of this file; its machine schema is
+# schemas/types/facts/event.schema.json.
 #
-# Companion to this RFC; follows the task.yaml grammar
-# (source-agnostic data / provider metadata split, §-banners, one full example).
+# Layer disambiguation: the Event ENTITY is a BELIEF about a concrete
+# scheduled occurrence (gcal; `core_` uuid; never a fact by itself —
+# mark-occurred is its only fact path). The Event FACT is the immutable
+# memory that something HAPPENED (`soil_` uuid; authored by conversion
+# from a Task, or provider yield, or /mg add once #29 whitelists it).
+# Same word, different layers — disambiguated by uuid prefix and
+# query target_type. gcal's legacy EventOccurrence fact converges into
+# the Event fact when the gcal slice touches mark-occurred (#31).
+#
+# RFC-014: plan/rfc_014_gcal_provider_v1.md
+# Grammar: source-agnostic data / provider metadata split, §-banners,
+# one full example per layer.
 
 # ====================================================================
 # § ENTITY TYPE
@@ -289,3 +303,59 @@ metadata:
 #   captured_after_fact: true                  # seeded from history
 #   attendee_count: 2
 #   self_response: "accepted"
+
+# ====================================================================
+# § EVENT FACT (occurrence record) — the OTHER layer of the name
+# ====================================================================
+# `soil_` uuid · machine schema: schemas/types/facts/event.schema.json
+# · THE universal occurrence record (tada lane live; gcal's
+#   EventOccurrence converges here — #31).
+#
+# An Event fact is immutable memory that something HAPPENED. Three
+# authors: (1) CONVERSION from a Task entity (the tada ontology's
+# resolution — see task.yaml RESOLUTION); (2) provider yield (the tada
+# day-walk's outage backstop); (3) /mg add once #29 whitelists the type
+# for direct agent authoring.
+#
+# DATA (flat, minimal-required — absence IS the state):
+#   source_id    required — native occurrence id; the dedup key
+#   title        optional (untitled occurrences exist)
+#   kind         'task' | 'event' convention
+#   start_at     the slot it was meant for (UTC); absent = floating
+#   ends_at      EXCLUSIVE end (RFC 5545) — the ONE interval convention;
+#                duration-carrying sources convert provider-side
+#   location / participants / organizer   short structured fields, inline
+#   event_uuid   optional core_ link to the gcal belief entity (tada
+#                facts omit it: the Task is retired AT conversion —
+#                native source_id is the stable join)
+#   tags         at resolution time
+#
+# METADATA:
+#   source       required — 'tada' | 'google_calendar' | ...
+#   status       required — the terminal verdict, SOURCE VOCABULARY:
+#                tada 'completed' | 'cancelled'; gcal 'occurred' at
+#                convergence (normalizing gcal to 'completed' would be a
+#                semantic loss — decided at the convergence review)
+#   resolved_at  the decision/observation moment (was task facts'
+#                status_updated_at)
+#   day          tada day-walk provenance
+#   recurrence_of / follows_from   native links (Task entity's fields,
+#                carried into memory at conversion)
+#   task_source_id  the Note-linkage key (Notes resolve their anchor by
+#                this native id — historical name kept; renaming would
+#                amend 833 immutable facts for cosmetics)
+#   tada_source  provenance passthrough
+#   account / calendar_id   gcal convergence fields
+#
+# CANONICAL_AT honesty rule (generalized from task facts):
+#   completed  -> resolved_at (when it finished)
+#   cancelled  -> start_at (the slot it was meant for — the honest "when
+#                 it happened" for a task that didn't), falling back to
+#                 resolved_at when there was no slot
+#   gcal convergence -> the actual occurrence time (was occurred_at)
+#   Providers set it deliberately; date passage never sets it silently.
+#
+# CONVERSION ordering contract: the Event fact lands BEFORE the Task
+# retire — a crash between them converges on replay (done-set re-delivers
+# the fact; the retire is an idempotent noop). The reverse (a retired
+# Task with no Event record) is the unrecoverable direction.

@@ -1,0 +1,146 @@
+# MemoGarden Recurrence Entity Schema — THE SHARED RECURRENCE TYPE
+# Operator-named 2026-11-19 ("Pattern" rejected as too vague; "Series"
+# rejected — not all recurring entities form a series). GENERALIZES the
+# existing finance Recurrence entity type (already whitelisted in
+# BASELINE_ENTITY_TYPES, previously undocumented) rather than adding a
+# type: one shared schema, tada series and finance recurring transactions
+# the first conformers, gcal patterns the candidate third.
+
+# ==============================================================================
+# ENTITY TYPE
+# ==============================================================================
+type: Recurrence
+tier: Core entity (mutable belief — `core_` uuid)
+extends: none
+description: >
+  A recurring commitment: a recurrence RULE and its ANCHOR. Never an
+  occurrence itself; its instantiations are Tasks (and their conversions,
+  Events), linked by NATIVE `recurrence_of` references — deliberately NOT
+  `recurrence_id`, which in iCalendar means the RECURRENCE-ID property
+  (which instance was modified), different semantics. Not all recurring
+  entities form a series: a weekday pattern generates non-contiguous
+  occurrences; the type describes the rule, not a sequence.
+
+# ==============================================================================
+# DATA FIELDS (Source-Agnostic Pattern Model)
+# ==============================================================================
+data:
+  source_id:
+    type: string
+    required: true
+    description: Native pattern id (tada template uid). Natural-key half
+      (with metadata.source). Finance recurrences created operator-side
+      predate this schema — their instances keep their stored fields
+      (schemas are documentation; entity data is schemaless JSON).
+
+  title:
+    type: string
+    required: true
+
+  kind:
+    type: string
+    required: false
+    description: Source convention — 'task' | 'event' (tada); finance and
+      gcal extend per source vocabulary.
+
+  rrule:
+    type: string
+    required: true
+    description: RRULE text, verbatim from the source.
+
+  start_at:
+    type: datetime-UTC | null
+    required: false
+    description: Anchor slot (ISO 8601 UTC, provider-converted). Absent =
+      slot-less pattern (e.g. anchored purely by BYDAY rules).
+
+  duration:
+    type: string
+    required: false
+    description: ISO-8601 duration of each instantiation, as given.
+
+  time_zone:
+    type: string
+    required: false
+    description: Source zone for the anchor and expansion.
+
+  notify:
+    type: boolean
+    required: false
+
+  tags:
+    type: array
+    items: string
+    required: false
+
+# ==============================================================================
+# METADATA FIELDS (Provider-Specific)
+# ==============================================================================
+metadata:
+  source:
+    type: string
+    required: true
+    description: Natural-key half. 'tada' | finance domain | future gcal.
+
+  etag:
+    type: string
+    required: true
+    description: Source-side change token (tada template updatedAt) —
+      the runtime no-op field.
+
+  source_status:
+    type: string
+    enum: ["ended"]
+    required: false
+    description: Pattern lifecycle stamp. A Recurrence DOES carry
+      source_status — its lifecycle ends by stamping (tada two-step
+      end-series), unlike Task, which ends by conversion. Absent = live.
+
+  tada_source:
+    type: string
+    required: false
+    description: tada's own provenance passthrough.
+
+# ==============================================================================
+# NATURAL KEY (provider upserts)
+# ==============================================================================
+# (metadata.source, data.source_id) — etag + source_status no-op rule.
+
+# ==============================================================================
+# INSTANTIATION
+# ==============================================================================
+# A materialized instantiation is a TASK entity carrying data.recurrence_of
+# = this pattern's NATIVE source_id. The conversion of that Task (→ Event
+# fact) copies the link into metadata.recurrence_of, so resolved history
+# stays queryable per pattern ("everything this weekly series ever
+# produced"). The reverse direction (a pattern's instantiations) is
+# derivable by query — deliberately not stored on the pattern.
+
+# ==============================================================================
+# LIFECYCLE
+# ==============================================================================
+# Live → ended (source_status 'ended'): instantiations already materialized
+# keep their links; the pattern simply stops generating. Open corner
+# (decide-on-live): a tada template that VANISHES without an end-series
+# stamp is invisible to the drain — v1 does nothing (no absence-
+# tombstoning); flag if it ever happens.
+
+# ==============================================================================
+# EXAMPLE (tada series)
+# ==============================================================================
+example:
+  _type: "Recurrence"
+  uuid: "core_7a1b..."
+  data:
+    source_id: "5e4d3c2b-1a09-4876-b544-9382a1b2c3d4"
+    title: "Water plants"
+    kind: "task"
+    rrule: "FREQ=DAILY;INTERVAL=2"
+    start_at: "2026-11-15T01:00:00+00:00"
+    duration: "PT15M"
+    time_zone: "Asia/Singapore"
+    tags: ["home"]
+  # merged flat at storage:
+  #   source: "tada"
+  #   etag: "2026-11-15T09:00:00"
+  #   source_status: null
