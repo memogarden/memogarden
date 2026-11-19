@@ -7,7 +7,9 @@ converts pre-flip history.
 
 Mappings (schemas/event.yaml, FACT section):
 - outcome 'done' -> metadata.status 'completed'; 'cancelled' -> 'cancelled';
-  unknown future outcomes yield nothing (the provider logs them).
+  'skipped' -> 'skipped' (reserved vocabulary — sources that record skips;
+  canonical_at follows the cancelled rule). Unknown future outcomes yield
+  nothing (the provider logs them).
 - entry `at` -> metadata.resolved_at; entry `start` -> data.start_at;
   start + duration -> data.ends_at (EXCLUSIVE end — the one interval
   convention; tada's duration is converted, never carried alongside).
@@ -29,7 +31,8 @@ from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-_STATUS_BY_OUTCOME = {"done": "completed", "cancelled": "cancelled"}
+_STATUS_BY_OUTCOME = {"done": "completed", "cancelled": "cancelled",
+                        "skipped": "skipped"}
 
 _DURATION = re.compile(r"^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$")
 
