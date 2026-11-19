@@ -27,8 +27,11 @@ provider checkout):
     python backfill_cancelled_events.py            # DRY RUN: counts + samples
     python backfill_cancelled_events.py --execute  # the real write
 
---base-url overrides the tada origin (default 127.0.0.1:7427);
---soil-path overrides Soil (testing).
+--base-url overrides the tada origin (default 127.0.0.1:7427).
+Pass --soil-path explicitly: get_soil()'s default resolution is
+cwd-relative and silently creates an empty Soil when run from the
+wrong directory (the provider dir's stray soil.db is that trap's
+artifact). Soil writes: per-fact commits, done-set idempotent.
 """
 
 from __future__ import annotations
@@ -178,6 +181,10 @@ def main() -> None:
                                      item=full_item))
         if facts:
             sample = facts[0]
+            if not isinstance(sample, dict):  # stored Fact (execute mode)
+                sample = {"type": sample._type, "data": sample.data,
+                          "metadata": sample.metadata,
+                          "canonical_at": sample.canonical_at}
             print(f"[backfill] {item['uid']}: {sample['type']}"
                   f" '{sample['data'].get('title')}' status="
                   f"{sample['metadata'].get('status')}"
