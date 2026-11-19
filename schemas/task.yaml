@@ -1,162 +1,185 @@
-# MemoGarden Task Item Schema
-# Language-agnostic definition for Task items in Soil
+# MemoGarden Task Entity Schema
+# The tada ontology: Task = a REQUEST (Core entity, mutable while in
+# flight); Event = an OCCURRENCE (Soil fact, immutable once realized —
+# see event.yaml's FACT section). Resolution is CONVERSION, not a stamp.
 
 # ==============================================================================
-# ITEM TYPE
+# ENTITY TYPE
 # ==============================================================================
 type: Task
-extends: Item (base)
+tier: Core entity (mutable belief — `core_` uuid)
+extends: none
 description: >
-  Generic task-completion record from any task source (tada now; other task
-  systems later). One Task fact = a task's terminal state as recorded by its
-  source system, immutable once realized. Provider-specific extensions live in
-  METADATA — data carries only generic task fields.
-  Content (item notes) is stored in separate Note facts linked via a
-  `contained_by` relation (mirroring the Attachment→Email precedent), so this
-  type extends the base Item directly rather than Note: it carries a title but
-  no description body.
+  A REQUEST — something to be carried out. Mutable while in flight; the
+  belief-layer analogue of the gcal Event entity (event.yaml). A Task never
+  records that anything happened: it carries NO terminal stamp, and its
+  lifecycle ends in conversion (see RESOLUTION), not in a status flip.
+  Requests can change while still in flight — source edits update the
+  entity (the delta stream is the change history); no fact per edit.
+
+  Supersedes the retired Task FACT type (schemas/types/facts/task.schema.json):
+  the 2026-11-19 review rejected 'Todo' as ontologically unclear and made
+  Task the request-entity; the old task facts are backported to Event facts.
 
 # ==============================================================================
-# DATA FIELDS (Source-Agnostic Task Model)
+# DATA FIELDS (Source-Agnostic Request Model)
 # ==============================================================================
-# These fields are stored in Item.data JSON and represent the core task.
-# All task providers should map their native format to these fields.
-
 data:
-  # Identity and deduplication
+  # Identity and natural key
   source_id:
     type: string
     required: true
-    description: Native task id in the source system. The dedup key — the
-      Task analogue of Email.rfc_message_id. Every task source has one;
-      cross-source uniqueness is guarded by metadata.source.
+    description: Native request id in the source system. Natural-key half
+      (with metadata.source); the Task analogue of Email.rfc_message_id.
     example: "01a1a5fc-52cf-768a-8261-e3b94da7972a"
 
-  # Content
   title:
     type: string
     required: true
-    description: Task title at resolution time
-    example: "Export bank statements"
+    description: Request title (current belief).
 
   kind:
     type: string
     required: false
-    description: Entry kind; documented convention 'task' | 'event' (free
-      string, extensible by schema revision)
+    description: Documented convention 'task' | 'event' (free string,
+      extensible by schema revision). tada's item kinds.
     example: "task"
 
-  # Terminal state
   status:
     type: string
+    enum: ["confirmed", "tentative"]
     required: true
-    enum: ["completed", "cancelled", "skipped"]
-    description: >
-      Terminal state of the task. Live/open tasks stay out of scope until the
-      mutable-item supersession story exists. 'skipped' is reserved for
-      sources that record skips (tada does not — an abandoned occurrence
-      leaves no trace there).
-    example: "completed"
+    description: IN-FLIGHT ONLY. There is no completed/cancelled here —
+      those are conversions, not states. (The gcal Event entity's status
+      carries the same in-flight semantics; the convergence of the two is
+      a future slice.)
 
-  status_updated_at:
-    type: string
-    required: true
-    description: >
-      When the task reached this status (ISO 8601 UTC). For completed tasks
-      the completion time; for cancelled tasks the don't-do decision moment;
-      for future skipped entries the skip decision time. Mirrors tada's
-      snapshot-entry `at` field.
-    example: "2026-11-06T10:41:00+00:00"
-
-  # Timing (optional; source naive-local times are converted to UTC by the
-  # provider using the zone reported by the source API)
   start_at:
-    type: string
+    type: datetime-UTC | null
     required: false
-    description: Scheduled slot, if any (ISO 8601 UTC)
-    example: "2026-11-06T01:30:00+00:00"
+    description: The slot the request targets (ISO 8601 UTC, provider-
+      converted from the source zone). Absent/null = floating — absence
+      IS the state.
 
   duration:
     type: string
     required: false
-    description: ISO-8601 duration, as given by the source
-    example: "PT1H"
+    description: ISO-8601 duration, as given by the source.
+
+  time_zone:
+    type: string
+    required: false
+    description: Source zone the naive wall times were converted from
+      (provenance for re-derivation).
+
+  appear_after:
+    type: date
+    required: false
+    description: Local date; deferred visibility gate (tada §10.33).
+
+  notify:
+    type: boolean
+    required: false
+
+  focus:
+    type: boolean
+    required: false
 
   tags:
     type: array
     items: string
     required: false
-    description: Tags at resolution time
-    example: ["buy"]
+    description: Current tags (belief-layer, mutable).
+
+  recurrence_of:
+    type: string
+    required: false
+    description: NATIVE uid of the Recurrence (schemas/recurrence.yaml)
+      this occurrence materialized from; absent on non-series requests.
+      Dangling-proof native reference. Deliberately NOT 'recurrence_id' —
+      in iCalendar that name means the RECURRENCE-ID property (which
+      instance was modified), different semantics.
+
+  follows_from:
+    type: string
+    required: false
+    description: NATIVE predecessor uid (tada §10.32 follow-on chains).
+      Written on the successor only; the reverse direction is derivable
+      by query.
 
 # ==============================================================================
 # METADATA FIELDS (Provider-Specific)
 # ==============================================================================
-# Everything source-shaped lives here, per the "no per-provider data fields"
-# rule. Stored in Item.metadata JSON.
+# Storage merges these FLAT into entity.data (single JSON column — the
+# gcal event.schema.json precedent); the split is a documentation grammar.
 
 metadata:
   source:
     type: string
     required: true
-    enum: ["tada"]
-    description: Source system of the Task; grows with future task providers
+    description: Source system. Natural-key half. Grows with sources.
 
-  day:
+  etag:
     type: string
     required: true
-    description: Local calendar day (source zone) the resolution was ingested
-      from — provenance for the day-walk sync
-    example: "2026-11-06"
-
-  follows_from:
-    type: string
-    required: false
-    description: >
-      Native source_id of the task this one follows on from (tada: written on
-      the successor only). Stored as the NATIVE id, not a Soil uuid, so the
-      reference never dangles regardless of ingest order; the reverse
-      direction (followers) is derivable by query and deliberately not
-      stored. Candidates for promotion to 'continues' relations later.
+    description: Source-side change token (tada item updatedAt). Drives the
+      provider-runtime no-op rule (etag + source_status unchanged → skip).
+      A Task deliberately carries NO source_status — its lifecycle ends in
+      conversion, not stamping, so the no-op degenerates to etag-only
+      (None == None on the stamp field).
 
   tada_source:
     type: string
     required: false
-    description: tada's own item provenance (e.g. 'ticktick' for imported
-      items), when the source API exposes it
+    description: tada's own provenance passthrough (e.g. 'ticktick' for
+      imported items).
+
+# ==============================================================================
+# NATURAL KEY (provider upserts)
+# ==============================================================================
+# (metadata.source, data.source_id) — same key ⇒ same entity; etag-diff
+# decides no-op vs update. Runtime: find_by_data + merge semantics
+# (incoming keys overwrite, absent keys keep stored, explicit null clears).
+
+# ==============================================================================
+# RESOLUTION — CONVERSION, not a stamp (the ontology's load-bearing rule)
+# ==============================================================================
+# When the source resolves the request (carried out / decided-against):
+#   1. the provider yields an EVENT FACT (event.yaml FACT section;
+#      metadata.status records the verdict, canonical_at the honesty rule)
+#   2. the provider yields {op: "retire_entity", type: "Task", key} —
+#      Tombstone supersession (/mg forget's mechanism, minus the identity
+#      guard), idempotent on gone keys
+# Ordering contract: the Event fact is yielded BEFORE the retire; a crash
+# between them converges on replay (done-set re-delivers, retire is a
+# noop). A retired Task with no Event record is the unrecoverable
+# direction and must never occur.
+# Content rule: prose never rides the entity — Note facts (contained_by)
+# carry content, landing at resolution.
 
 # ==============================================================================
 # RELATIONS
 # ==============================================================================
-# contained_by   Note --contained_by--> Task   (task notes; mirrors the
-#                Attachment --contained_by--> Email precedent). One Note fact
-#                per task with non-empty notes; Note.metadata.task_source_id
-#                resolves the Task.
-
-# ==============================================================================
-# canonical_at RULE
-# ==============================================================================
-# completed  -> status_updated_at (when it finished)
-# cancelled / skipped -> start_at (the slot the task was meant for — the
-#                       honest "when it happened" for a task that didn't
-#                       happen), falling back to status_updated_at when the
-#                       task had no slot.
+# None required v1. recurrence_of / follows_from are native references
+# (promotable to relations when a consumer needs graph linkage).
 
 # ==============================================================================
 # EXAMPLE
 # ==============================================================================
 example:
   _type: "Task"
-  realized_at: "2026-11-06T18:45:12+00:00"
-  canonical_at: "2026-11-06T10:41:00+00:00"
-  fidelity: "full"
+  uuid: "core_9f2c..."
   data:
-    source_id: "01a1ab6b-be1e-701a-b7d5-8c09a7a62938"
+    source_id: "3f1c8a2e-01b7-4c2d-9e4f-5a6b7c8d9e0f"
     title: "roller blinds 1.8m"
     kind: "task"
-    status: "completed"
-    status_updated_at: "2026-11-06T10:41:00+00:00"
+    status: "confirmed"
+    start_at: null
+    time_zone: "Asia/Singapore"
     tags: ["buy"]
-  metadata:
-    source: "tada"
-    day: "2026-11-06"
+    recurrence_of: "8b2d1f4c-..."
+    follows_from: "0c9d8b7a-..."
+  # merged flat at storage:
+  #   source: "tada"
+  #   etag: "2026-11-19T08:41:00"
+  #   tada_source: null

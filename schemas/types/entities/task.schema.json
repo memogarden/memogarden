@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.memogarden.net/entities/task.schema.json",
+  "title": "Task (entity)",
+  "description": "A REQUEST — something to be carried out; the mutable belief while in flight. Resolution is its CONVERSION into an Event fact (retire the entity, the fact carries the memory); a Task never records that anything happened, so it carries no terminal stamp. Storage merges provider metadata FLAT into entity.data (single JSON column, gcal event.schema.json precedent): source (natural-key half), etag (source updatedAt — the runtime no-op field; a Task deliberately carries NO source_status — its lifecycle ends in conversion, not stamping), tada_source (provenance passthrough).",
+  "allOf": [
+    { "$ref": "entity.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "_type": { "const": "Task" },
+        "data": {
+          "type": "object",
+          "properties": {
+            "source_id": {
+              "type": "string",
+              "description": "Native id in the source system — half of the natural key (source, source_id)."
+            },
+            "title": { "type": "string" },
+            "kind": {
+              "type": "string",
+              "description": "Documented convention 'task' | 'event'; free string."
+            },
+            "status": {
+              "type": "string",
+              "enum": ["confirmed", "tentative"],
+              "description": "In-flight only — there is no completed/cancelled here: those are conversions, not states."
+            },
+            "start_at": {
+              "type": ["string", "null"],
+              "description": "The slot the request targets (ISO 8601 UTC). Absent/null = floating — absence IS the state."
+            },
+            "duration": { "type": "string" },
+            "time_zone": { "type": "string" },
+            "appear_after": {
+              "type": "string",
+              "description": "Local date; deferred visibility gate (tada §10.33)."
+            },
+            "notify": { "type": "boolean" },
+            "focus": { "type": "boolean" },
+            "tags": { "type": "array", "items": { "type": "string" } },
+            "recurrence_of": {
+              "type": "string",
+              "description": "NATIVE uid of the Recurrence this occurrence materialized from; absent on non-series items (dangling-proof native ref). Deliberately NOT 'recurrence_id' — in iCalendar that name means the RECURRENCE-ID property (which instance was modified), different semantics."
+            },
+            "follows_from": {
+              "type": "string",
+              "description": "NATIVE predecessor uid (tada §10.32 follow-on chains)."
+            }
+          },
+          "required": ["source_id", "title"]
+        }
+      },
+      "required": ["_type", "data"]
+    }
+  ]
+}

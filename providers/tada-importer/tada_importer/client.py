@@ -93,3 +93,11 @@ class TadaApiClient:
             raise
         item = result.get("item")
         return item if isinstance(item, dict) else None
+
+    def inventory(self, resolved_within: int = 2) -> dict:
+        """Open items + trailing-window resolutions + every series template.
+
+        The tada `inventory` op (read-only) — the drain surface for the
+        entity lane. result: {"items": [...], "templates": [...]}.
+        """
+        return self._cmd("inventory", {"resolvedWithin": resolved_within})

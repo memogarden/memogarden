@@ -96,3 +96,9 @@ def test_unreachable_server_raises_tada_error():
     client = TadaApiClient("http://127.0.0.1:1", timeout=1.0)
     with pytest.raises(TadaApiError):
         client.list_day("2026-11-06")
+
+
+def test_inventory_posts_resolved_within(server):
+    server.canned["inventory"] = (200, {"items": [{"uid": "u1"}], "templates": []})
+    result = client_for(server).inventory(resolved_within=3)
+    assert result["items"][0]["uid"] == "u1"

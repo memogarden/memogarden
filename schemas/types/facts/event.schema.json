@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.memogarden.net/items/event.schema.json",
+  "title": "Event (fact)",
+  "description": "Immutable memory of an occurrence — the universal occurrence record. A Task (the in-flight request, a Core entity) resolves by CONVERSION: the Task entity is retired and an Event fact carries the memory, with the terminal verdict in metadata.status (source vocabulary: tada 'completed' | 'cancelled'; gcal 'occurred' on convergence, #31). Required fields stay minimal — untitled and undated occurrences exist; a field's absence IS the state. Long-form prose never rides the fact: content lives in linked Note facts (contained_by). The fact schema inherits the base Item (uuid/_type/realized_at/canonical_at/fidelity); this projection declares the data fields.",
+  "allOf": [
+    { "$ref": "item.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "_type": { "const": "Event" },
+        "source_id": {
+          "type": "string",
+          "description": "Native occurrence id in the source system — the dedup key (the Event analogue of Email.rfc_message_id / Task.source_id)."
+        },
+        "title": {
+          "type": "string",
+          "description": "Title at resolution time. Optional: untitled occurrences exist (event.yaml minimal-validation rule)."
+        },
+        "kind": {
+          "type": "string",
+          "description": "Documented convention 'task' | 'event' (free string, extensible by schema revision)."
+        },
+        "start_at": {
+          "type": "string",
+          "description": "The slot the occurrence was meant for (ISO 8601 UTC). Absent = floating."
+        },
+        "ends_at": {
+          "type": "string",
+          "description": "EXCLUSIVE end (RFC 5545 DTEND convention, matching the Event entity doc) — the ONE interval convention. Sources carrying duration convert provider-side (ends_at = start_at + duration), never both."
+        },
+        "location": {
+          "type": "string",
+          "description": "Short structured field — stays inline (not content)."
+        },
+        "participants": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Plain identifier strings, emails preferred (Event-entity rules: cap at participants_max, true count in metadata.attendee_count)."
+        },
+        "organizer": {
+          "type": "string",
+          "description": "Email or identifying string."
+        },
+        "event_uuid": {
+          "type": "string",
+          "pattern": "^core_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "description": "Optional core_-prefixed link to the belief entity this occurrence realizes (gcal convergence). tada's facts don't carry it: the Task entity is retired AT conversion — the native source_id is the stable join."
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Tags at resolution time."
+        }
+      },
+      "required": ["source_id"]
+    }
+  ]
+}
