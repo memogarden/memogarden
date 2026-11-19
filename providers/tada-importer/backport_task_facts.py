@@ -40,22 +40,24 @@ def _day_int() -> int:
 
 
 def _event_exists(soil: Soil, source_id: str) -> bool:
-    row = soil._get_connection().execute(
-        """SELECT 1 FROM item
-           WHERE _type = 'Event'
-             AND json_extract(metadata, '$.source') = 'tada'
-             AND json_extract(data, '$.source_id') = ?""",
-        (source_id,),
-    ).fetchone()
+    with soil:
+        row = soil._get_connection().execute(
+            """SELECT 1 FROM item
+               WHERE _type = 'Event'
+                 AND json_extract(metadata, '$.source') = 'tada'
+                 AND json_extract(data, '$.source_id') = ?""",
+            (source_id,),
+        ).fetchone()
     return row is not None
 
 
 def _note_already_linked(soil: Soil, note_uuid: str, event_uuid: str) -> bool:
-    row = soil._get_connection().execute(
-        """SELECT 1 FROM system_relation
-           WHERE kind = 'contained_by' AND source = ? AND target = ?""",
-        (note_uuid, event_uuid),
-    ).fetchone()
+    with soil:
+        row = soil._get_connection().execute(
+            """SELECT 1 FROM system_relation
+               WHERE kind = 'contained_by' AND source = ? AND target = ?""",
+            (note_uuid, event_uuid),
+        ).fetchone()
     return row is not None
 
 
@@ -150,24 +152,26 @@ def main() -> int:
     print(f"  already converted (idempotent skips): {already}")
     print(f"  to convert: {len(to_convert)} {statuses}")
 
-    notes = soil._get_connection().execute(
-        """SELECT uuid, metadata FROM item
-           WHERE _type = 'Note'
-             AND json_extract(metadata, '$.source') = 'tada'
-             AND json_extract(metadata, '$.task_source_id') IS NOT NULL
-             AND superseded_by IS NULL"""
-    ).fetchall()
+    with soil:
+        notes = soil._get_connection().execute(
+            """SELECT uuid, metadata FROM item
+               WHERE _type = 'Note'
+                 AND json_extract(metadata, '$.source') = 'tada'
+                 AND json_extract(metadata, '$.task_source_id') IS NOT NULL
+                 AND superseded_by IS NULL"""
+        ).fetchall()
     note_rows = [dict(r) for r in notes]
     repoints = 0
     for n in note_rows:
         n_meta = json.loads(n["metadata"] or "{}")
         event_row = None
         if _event_exists(soil, n_meta.get("task_source_id", "")):
-            event_row = soil._get_connection().execute(
-                """SELECT uuid FROM item WHERE _type = 'Event'
-                   AND json_extract(data, '$.source_id') = ?""",
-                (n_meta["task_source_id"],),
-            ).fetchone()
+            with soil:
+                event_row = soil._get_connection().execute(
+                    """SELECT uuid FROM item WHERE _type = 'Event'
+                       AND json_extract(data, '$.source_id') = ?""",
+                    (n_meta["task_source_id"],),
+                ).fetchone()
             if event_row and not _note_already_linked(
                 soil, n["uuid"], event_row["uuid"]
             ):
@@ -175,9 +179,10 @@ def main() -> int:
     print(f"  Notes to re-point: {repoints} (of {len(note_rows)} tada Notes)")
 
     if not args.execute:
-        for t, data in to_convert[:3]:
-            print(f"  sample: {data.get('source_id', '?')[:8]} [{data.get('status')}] "
-                  f"{data.get('title', '')[:60]!r}")
+        with soil:
+            for t, data in to_convert[:3]:
+                print(f"  sample: {data.get('source_id', '?')[:8]} [{data.get('status')}] "
+                      f"{data.get('title', '')[:60]!r}")
         print("DRY RUN — no writes. Pass --execute to convert.")
         return 0
 
@@ -221,11 +226,12 @@ def main() -> int:
         n_meta = json.loads(n["metadata"] or "{}")
         if not _event_exists(soil, n_meta.get("task_source_id", "")):
             continue
-        event_row = soil._get_connection().execute(
-            """SELECT uuid FROM item WHERE _type = 'Event'
-               AND json_extract(data, '$.source_id') = ?""",
-            (n_meta["task_source_id"],),
-        ).fetchone()
+        with soil:
+            event_row = soil._get_connection().execute(
+                """SELECT uuid FROM item WHERE _type = 'Event'
+                   AND json_extract(data, '$.source_id') = ?""",
+                (n_meta["task_source_id"],),
+            ).fetchone()
         if event_row and not _note_already_linked(soil, n["uuid"], event_row["uuid"]):
             with soil as s:
                 s.create_relation(SystemRelation(
