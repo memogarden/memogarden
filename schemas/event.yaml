@@ -11,8 +11,9 @@
 # memory that something HAPPENED (`soil_` uuid; authored by conversion
 # from a Task, or provider yield, or /mg add once #29 whitelists it).
 # Same word, different layers — disambiguated by uuid prefix and
-# query target_type. gcal's legacy EventOccurrence fact converges into
-# the Event fact when the gcal slice touches mark-occurred (#31).
+# query target_type. CONVERGED 2026-11-19 (#31): mark-occurred emits
+# Event facts; the EventOccurrence type is retired (zero instances
+# existed at convergence).
 #
 # RFC-014: plan/rfc_014_gcal_provider_v1.md
 # Grammar: source-agnostic data / provider metadata split, §-banners,
@@ -309,7 +310,7 @@ metadata:
 # ====================================================================
 # `soil_` uuid · machine schema: schemas/types/facts/event.schema.json
 # · THE universal occurrence record (tada lane live; gcal's
-#   EventOccurrence converges here — #31).
+#   EventOccurrence converged here 2026-11-19 — #31).
 #
 # An Event fact is immutable memory that something HAPPENED. Three
 # authors: (1) CONVERSION from a Task entity (the tada ontology's
