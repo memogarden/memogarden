@@ -87,8 +87,9 @@ memogarden list agents
 memogarden register key --label zcode --agent readly   # raw key shown once
 memogarden edit key --id <uuid> --bind readly | --unbind
 memogarden remove key --id <uuid>
-memogarden register scope --name Finances [--description d]
-memogarden list scopes
+memogarden register scope --name Finances [--description d] [--visibility private|public]
+memogarden list scopes                                     # includes visibility
+memogarden edit scope --name Finances --visibility public  # flip; warns on bulk effect (console parity)
 memogarden remove scope --name Finances
 memogarden register grant --agent <uuid> --scope triage --scope Finances [--expires ISO]
 memogarden list grants --agent <uuid>
@@ -574,8 +575,9 @@ memogarden list agents
 memogarden register key --label zcode --agent readly   # raw key shown once
 memogarden edit key --id <uuid> --bind readly | --unbind
 memogarden remove key --id <uuid>
-memogarden register scope --name Finances [--description d]
-memogarden list scopes
+memogarden register scope --name Finances [--description d] [--visibility private|public]
+memogarden list scopes                                     # includes visibility
+memogarden edit scope --name Finances --visibility public  # flip; warns on bulk effect (console parity)
 memogarden remove scope --name Finances
 memogarden register grant --agent <uuid> --scope triage --scope Finances [--expires ISO]
 memogarden list grants --agent <uuid>

@@ -28,6 +28,7 @@ needed).
 | Studio | verified no-op (reads none of the changed shapes) | — |
 | Deploy | merge → restart → live migration rehearsed then applied; `/auth/me` serving grants + `active_scope` | — |
 | docs/api.md | auth section, Scopes & Grants section, v5 verbs, grants endpoints | this commit |
+| visibility addendum §5 UI surfacing (§6 item 6): scopes overview exposes `visibility`; console scopes screen gains badge + warn-on-flip control + mint-form knob; CLI `register scope --visibility` + `edit scope` (api `ed8b88b`, client `bb14583`; also: console mobile pass — nav rail, header compaction, table pruning; `/admin/register` bootstrap fix) | api `ed8b88b`, client `bb14583` | 480 + 125 passed |
 
 ## Gap inventory + priority order
 
