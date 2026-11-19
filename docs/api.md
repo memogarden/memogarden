@@ -771,7 +771,9 @@ curl -X POST http://localhost:8080/mg \
 
 #### add
 
-Add a new fact (Item) to Soil.
+Add a new fact (Item) to Soil. `type` names the fact type; all other
+request fields are top-level (the legacy `params`-nested form shown in older
+revisions of this doc is rejected by the schema).
 
 ```bash
 curl -X POST http://localhost:8080/mg \
@@ -779,19 +781,18 @@ curl -X POST http://localhost:8080/mg \
   -H "Content-Type: application/json" \
   -d '{
     "op": "add",
-    "params": {
-      "_type": "Message",
-      "data": {
-        "description": "Meeting notes from today",
-        "fragments": ["Discussed budget", "Reviewed transactions"]
-      }
+    "type": "Message",
+    "data": {
+      "description": "Meeting notes from today",
+      "fragments": ["Discussed budget", "Reviewed transactions"]
     }
   }'
 ```
 
 #### amend
 
-Amend a fact (create superseding fact).
+Amend a fact (create superseding fact). Like `add`, `data`/`canonical_at`/
+`metadata` are top-level request fields — not nested under `params`.
 
 ```bash
 curl -X POST http://localhost:8080/mg \
@@ -800,14 +801,24 @@ curl -X POST http://localhost:8080/mg \
   -d '{
     "op": "amend",
     "target": "soil_xxx",
-    "params": {
-      "data": {
-        "description": "Updated meeting notes",
-        "fragments": ["Discussed budget", "Reviewed transactions", "Action items"]
-      }
+    "data": {
+      "description": "Updated meeting notes",
+      "fragments": ["Discussed budget", "Reviewed transactions", "Action items"]
     }
   }'
 ```
+
+Semantics (verified against `api/handlers/soil.py` `handle_amend`):
+- `data` **replaces the original's data wholesale** — pass the complete
+  corrected dict, not a diff.
+- `metadata` merges over the original's metadata (scope-label inheritance
+  and the RFC-011 relabel-grant rules apply to the merge).
+- `canonical_at` defaults to the original's (amends do not reorder
+  canonical-time-ordered views); `realized_at` is the amend time.
+- The original is marked superseded (linked by a `supersedes` relation) and
+  is excluded from query results by default (`superseded_by IS NULL`).
+- A fact can only be amended while it is not itself already superseded —
+  amend the current (superseding) fact instead.
 
 ---
 
