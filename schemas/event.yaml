@@ -245,6 +245,9 @@ metadata:
 
 # ====================================================================
 # § FACTS (how an Event yields memory) — IMPLEMENTED, RFC-014 §6
+# (PRE-CONVERGENCE SHAPE BELOW — superseded 2026-11-19 (#31) by the
+# § EVENT FACT section at the foot; mark-occurred now emits the
+# universal Event fact, not an EventOccurrence.)
 # ====================================================================
 # An Event never becomes a fact by itself. The mark-occurred review
 # action (POST /api/v1/events/<uuid>/mark-occurred; operator JWT or
@@ -334,7 +337,8 @@ metadata:
 # METADATA:
 #   source       required — 'tada' | 'google_calendar' | ...
 #   status       required — the terminal verdict, SOURCE VOCABULARY:
-#                tada 'completed' | 'cancelled'; gcal 'occurred' at
+#                tada 'completed' | 'cancelled' | 'skipped' (reserved
+#                for sources that record skips); gcal 'occurred' at
 #                convergence (normalizing gcal to 'completed' would be a
 #                semantic loss — decided at the convergence review)
 #   resolved_at  the decision/observation moment (was task facts'
@@ -353,6 +357,7 @@ metadata:
 #   cancelled  -> start_at (the slot it was meant for — the honest "when
 #                 it happened" for a task that didn't), falling back to
 #                 resolved_at when there was no slot
+#   skipped    -> the cancelled rule (didn't happen: slot, else decision)
 #   gcal convergence -> the actual occurrence time (was occurred_at)
 #   Providers set it deliberately; date passage never sets it silently.
 #

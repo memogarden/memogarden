@@ -780,6 +780,26 @@ curl -X POST http://localhost:8080/mg \
 
 ---
 
+**Fact queries** (`target_type: "fact"`): `type` names the fact type;
+equality filters run on the fact's `data` fields (plain or dotted keys,
+e.g. `"actor"` or `"params.resource"`) — and on **metadata** via the
+reserved `metadata.` dotted prefix (bare `"metadata"` is rejected as
+ambiguous; api#66):
+
+```bash
+# All completed tada occurrences — verdict + provenance live in metadata
+curl -X POST http://localhost:8080/mg \
+  -H "X-API-Key: mg_sk_..." \
+  -d '{"op": "query", "target_type": "fact", "type": "Event",
+       "filters": {"metadata.source": "tada",
+                   "metadata.status": "completed"},
+       "count": 50}'
+```
+
+Superseded facts are excluded by default (`superseded_by IS NULL`).
+
+---
+
 ### Soil Bundle Operations
 
 #### add
