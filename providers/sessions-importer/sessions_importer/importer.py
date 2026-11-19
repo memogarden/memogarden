@@ -1,28 +1,38 @@
 """Drain worker for the memogarden-sessions staging cache (RFC-013 §8).
 
 The sessions daemon captures downloads and screenshots into per-session
-staging dirs (<sessions_root>/<name>/{downloads,screenshots}). This
-provider pulls them into Soil as gmail-parity Attachment facts in
-MemoGarden's shared content-addressed store — then deletes the staged
-file. The cache is a STAGING AREA, not a residence: steady state is
-drained and near-empty (decision register D-3: zero local retention
-post-drain; undrained captures are never evicted).
+staging dirs (<sessions_root>/<name>/{downloads,screenshots}) and appends
+fact-shaped events (§12.1 control/lifecycle vocabulary + page_visited)
+to events.jsonl. This provider drains BOTH:
 
-Drain semantics (register B2/B3/B6):
+- staged files -> gmail-parity Attachment facts in MemoGarden's shared
+  content-addressed store, then the staged copy is deleted. The cache is
+  a STAGING AREA, not a residence: steady state is drained and
+  near-empty (register D-3: zero local retention post-drain; undrained
+  captures are never evicted).
+- event lines -> SessionEvent facts (the §12.1 mirror incl. refusals,
+  register C4) and PageVisit facts (per-navigation history, C3).
+
+Drain semantics (register B2/B3/B6 + C3/C4):
 - Presence-as-queue: a staged file present = pending; gone = drained.
 - Ack-after-commit: a file is deleted only AFTER its fact is durably
   committed — deletion happens when the generator is re-entered for the
-  next item (the runtime commits per yielded fact before resuming it),
-  or after the loop completes normally. A crash mid-run leaves the file
-  staged; the content-hash dedup makes the retry a no-op fact-wise.
+  next item (the runtime commits per yielded fact), or after the loop
+  completes normally. A crash mid-run leaves the file staged; the
+  content-hash dedup makes the retry a no-op fact-wise.
 - At-least-once is harmless: `already_drained` checks (session, sha256)
-  before yielding, so replaying a staged file never duplicates a fact.
+  before yielding; events probe (session, seq, ts). Events are NOT
+  watermarked (deviation from B4 noted in the register): legacy event
+  files contain duplicate seq values across pre-fix daemon restarts, so
+  the drain re-reads each file and probes every line — cheap at this
+  scale, and exact for both legacy and new files.
+- download_captured is FILTERED (D2): it folds into the Attachment
+  fact's metadata and never becomes its own fact.
 
-Provenance (register C1/D2): the download_captured event the daemon now
-emits carries url/captured_at/downloaded_by/size/content_type; the drain
-folds it into the Attachment fact's metadata — no separate event fact.
-Files captured before provenance existed (mtime-only) drain with
-captured_at from the file and url=None.
+Provenance (register C1/D2): the download_captured event carries
+url/captured_at/downloaded_by/size/content_type; the drain folds it into
+the Attachment fact's metadata. Files captured before provenance existed
+(mtime-only) drain with captured_at from the file and url=None.
 """
 
 from __future__ import annotations
@@ -44,6 +54,9 @@ PARTIAL_SUFFIXES = (".crdownload", ".part", ".tmp")
 
 # Staged artifact dirs that drain, and their metadata.stream values.
 STREAM_DIRS = (("downloads", "downloads"), ("screenshots", "screenshots"))
+
+# D2: folded into Attachment metadata — never mirrored as a fact.
+EVENTS_SKIP = ("download_captured",)
 
 
 def _iso(epoch: float) -> str:
@@ -74,9 +87,9 @@ class SessionsImporter:
     # ------------------------------------------------------------------ sync
 
     def sync(self, since=None):
-        """Yield Attachment facts for every staged artifact, deleting each
-        staged file only once its fact is committed (see module docstring).
-        `since` is ignored: presence-as-queue is the cursor."""
+        """Yield facts for every staged artifact and every undrained
+        event line (see module docstring). `since` is ignored:
+        presence-as-queue + dedup probes are the cursor."""
         store = AttachmentStore(self.store_root)
         soil = self._soil_factory()
         pending: Path | None = None
@@ -110,10 +123,104 @@ class SessionsImporter:
                         if pending is not None:
                             self._discard(pending)
                         pending = staged
+                yield from self._drain_events(soil, manifest, sdir)
         if pending is not None:
             # Normal completion: the last fact was committed before the
             # runtime asked for the item after it (StopIteration).
             self._discard(pending)
+
+    def _drain_events(self, soil, manifest: dict, sdir: Path):
+        """Mirror events.jsonl into SessionEvent / PageVisit facts.
+
+        Re-read per run and probed per line (see module docstring) — no
+        watermark, exact for legacy files whose seq values reset across
+        pre-fix daemon restarts."""
+        log = Path(sdir) / "events.jsonl"
+        name = manifest["name"]
+        if not log.is_file():
+            return
+        try:
+            with log.open() as f:
+                for line in f:
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        continue
+                    event = rec.get("event")
+                    seq, ts = rec.get("seq"), rec.get("ts")
+                    if not event or seq is None or ts is None:
+                        continue
+                    if event in EVENTS_SKIP:
+                        continue
+                    if self._event_drained(soil, name, seq, ts):
+                        continue
+                    if event == "page_visited":
+                        yield self._visit_fact(manifest, rec)
+                    else:
+                        yield self._event_fact(manifest, rec)
+        except OSError as e:
+            logger.warning("could not read events for %s: %s", name, e)
+
+    def _event_fact(self, manifest: dict, rec: dict) -> dict:
+        """§12.1 control/lifecycle mirror (register C4): one SessionEvent
+        fact kind, the envelope as data (event = discriminator), actor
+        mapped server-side later via RFC-010 entities."""
+        return {
+            "type": "SessionEvent",
+            "canonical_at": _iso(rec["ts"]),
+            "data": rec,
+            "metadata": {
+                "provider": "memogarden-sessions",
+                "source": "browser_session",
+                "stream": "events",
+                "session": manifest["name"],
+                "machine": manifest.get("machine"),
+                "actor": rec.get("actor"),
+                "drained_at": _iso(time.time()),
+            },
+        }
+
+    def _visit_fact(self, manifest: dict, rec: dict) -> dict:
+        """Per-navigation history (register C3): generically shaped
+        PageVisit (url/title/ts + metadata.source discipline) so other
+        sources (e.g. readly reads) can subsume the kind later."""
+        visited_at = rec.get("visited_at") or _iso(rec["ts"])
+        return {
+            "type": "PageVisit",
+            "canonical_at": visited_at,
+            "data": {
+                "url": rec.get("url"),
+                "title": rec.get("title"),
+                "visited_at": visited_at,
+                "seq": rec.get("seq"),
+                "ts": rec.get("ts"),
+                "actor": rec.get("actor"),
+            },
+            "metadata": {
+                "provider": "memogarden-sessions",
+                "source": "browser_session",
+                "stream": "history",
+                "session": manifest["name"],
+                "machine": manifest.get("machine"),
+                "account": manifest["name"],
+                "drained_at": _iso(time.time()),
+            },
+        }
+
+    @staticmethod
+    def _event_drained(soil, session: str, seq, ts) -> bool:
+        """(session, seq, ts) probe — ts disambiguates legacy files where
+        seq reset across daemon restarts (B3, legacy-safe)."""
+        row = soil._get_connection().execute(
+            """SELECT 1 FROM item
+               WHERE _type IN ('SessionEvent', 'PageVisit')
+                 AND json_extract(metadata, '$.session') = ?
+                 AND json_extract(data, '$.seq') = ?
+                 AND json_extract(data, '$.ts') = ?
+               LIMIT 1""",
+            (session, seq, ts),
+        ).fetchone()
+        return row is not None
 
     # --------------------------------------------------------------- helpers
 
