@@ -48,6 +48,7 @@ from zoneinfo import ZoneInfo
 from tada_importer.client import TadaApiClient, TadaApiError
 from tada_importer.translate import event_facts
 from tada_importer.translate_entities import (
+    cancelled_retire,
     conversion_yields,
     recurrence_upsert,
     task_upsert,
@@ -241,16 +242,28 @@ class TadaProvider:
         events_done = self._landed_event_ids()
         notes_done = self._ingested_note_task_ids()
         items = inventory.get("items") or []
-        open_items = [i for i in items if not i.get("completedAt")]
+        cancelled = [
+            i for i in items
+            if i.get("status") == "cancelled" and not i.get("completedAt")
+        ]
+        open_items = [
+            i for i in items
+            if not i.get("completedAt") and i.get("status") != "cancelled"
+        ]
         resolved = [i for i in items if i.get("completedAt")]
         self._log(
             f"inventory: {len(open_items)} open, {len(resolved)} window-resolved, "
+            f"{len(cancelled)} cancelled (retire-only), "
             f"{len(inventory.get('templates') or [])} templates"
         )
         for item in open_items:
             if not item.get("uid") or not item.get("updatedAt"):
                 continue
             yield task_upsert(item, self._zone)
+        for item in cancelled:
+            if not item.get("uid"):
+                continue
+            yield cancelled_retire(item)
         for template in inventory.get("templates") or []:
             if not template.get("uid") or not template.get("updatedAt"):
                 continue

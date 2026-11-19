@@ -57,6 +57,22 @@ def task_upsert(item: dict, zone: str) -> dict:
     }
 
 
+def cancelled_retire(item: dict) -> dict:
+    """One cancelled tada item -> retire its Task entity, never an upsert.
+
+    Cancelled items stay frozen in tada's store with no completedAt, so
+    the inventory lists them forever (its filter is completedAt-only).
+    task.yaml's Task is in-flight-only — a cancelled item must not mirror
+    as a live entity, and the idempotent retire is also what keeps a
+    post-conversion cancel from resurrecting its retired entity at the
+    next heartbeat (the done-set dedups facts, not entity upserts)."""
+    return {
+        "op": "retire_entity",
+        "type": "Task",
+        "key": {**_SOURCE_KEY, "source_id": item["uid"]},
+    }
+
+
 def recurrence_upsert(template: dict, zone: str) -> dict:
     """One tada series template -> a Recurrence entity upsert."""
     data: dict = {
