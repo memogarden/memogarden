@@ -159,10 +159,11 @@ accepted as Bearer tokens — Bearer is JWT-only).
 | `/api/v1/providers/{name}/run` | POST | Trigger runs (async 202; account-backed providers run every active account) |
 | `/api/v1/providers/{name}/run` | DELETE | Cancel a running run |
 | `/api/v1/providers/run` | POST | Run all due work — providers plus due accounts (heartbeat endpoint) |
+| `/api/v1/providers/{name}/scope-policy` | PUT | Set the provider's scope policy (`{rules, default}`, RFC-011 §4.8; JWT-only) |
 | `/api/v1/providers/{name}/accounts` | GET | List the provider's accounts (RFC-012) |
 | `/api/v1/providers/{name}/accounts` | POST | Bind an upstream account (`{platform, subject, label?, credential_ref?, config?}`) |
 | `/api/v1/providers/{name}/accounts/{id}` | GET | Account manifest (status, last run, error) |
-| `/api/v1/providers/{name}/accounts/{id}` | PATCH | Update label/status/config/interval |
+| `/api/v1/providers/{name}/accounts/{id}` | PATCH | Update label/status/config/scope_policy/interval (`scope_policy` PATCH is JWT-only) |
 | `/api/v1/providers/{name}/accounts/{id}` | DELETE | Remove the binding (the HACM credential is untouched) |
 | `/api/v1/providers/{name}/accounts/{id}/verify` | POST | Server-side credential probe (re-activates `needs_reauth` on success) |
 | `/api/v1/providers/{name}/accounts/{id}/run` | POST | Trigger a run for one account (async 202) |
@@ -178,7 +179,15 @@ walks backward toward its oldest email, one batch per heartbeat, with no
 operator action. Tokens live only in HACM
 on the host — the API stores the credential *reference* (`{platform}:{subject}`)
 and never sees OAuth material. Facts carry `metadata.account` (the verified
-subject), which the provider scope policy can match for per-account labeling:
+subject), which the provider scope policy can match for per-account labeling.
+An account may also carry its own **scope policy override**
+(`provider_accounts.scope_policy`, `{rules, default}` in the RFC-011 §4.8
+shape): when set it REPLACES the provider-level policy entirely for that
+account's runs (runs are per-account, so the effective policy resolves once
+per run); an explicit null clears the override. PATCHing `scope_policy` is
+operator-gated (JWT only — scope labels are authority boundaries, same
+invariant as `PUT /providers/{name}/scope-policy`). `GET` manifests and
+`list accounts` include the field (`null` = inherit the provider policy):
 
 ```bash
 # Link a Gmail account end-to-end (consent + HACM + registry row in one
@@ -192,6 +201,11 @@ memogarden show account --provider gmail --subject you@gmail.com
 memogarden verify account --provider gmail --label work
 memogarden run account --provider gmail --subject you@gmail.com
 memogarden remove account --provider gmail --id <uuid>
+
+# Per-account scope policy (JWT; REF = scope label, triage/personal alias,
+# or uuid; `none` = explicitly unscoped):
+memogarden edit account gmail --label nyjc --default-scope NYJC
+memogarden edit account gmail --label nyjc --clear-scope-policy
 ```
 
 Registration requires the provider module to be importable in the server

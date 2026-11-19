@@ -81,7 +81,18 @@ material**.
    demonstrates on new mail). Backlog sub-choice remains operator's at
    rollout (retroactive default = whole backlog → triage; lean =
    backfill explicit rules only, finance senders → triage, unmatched
-   legacy stays global).
+   legacy stays global). **Per-account override ADDED 2026-11-20**
+   (system `e33c51d` + `7cdc661` — migration 20261120
+   `provider_accounts.scope_policy` + schemas pin `9f7c838`; api
+   `d034278` — account-PATCH field (JWT-only when present), runtime
+   account-over-provider resolution (whole-replacement, RFC-012
+   config-override pattern; runs are per-account so it resolves once
+   per run), scopes-overview `account_policies`; client `4844742` —
+   `edit account --default-scope/--clear-scope-policy`; console
+   pickers on Providers + override table on Scopes; suites 222/485/128).
+   First live use: gmail/nyjc → NYJC scope (user minted + set via
+   console 2026-11-20, NYJC flipped public), ~21k triage-stamped nyjc
+   items backfilled via amend loop (agent-attributed Action facts).
 5. **§4.9 read-path completion** — **DONE, MERGED 2026-11-19** (system
    `e1dcd6b` + `bbaa3dc`, api `5c635c0`; suites system 222 green —
    first fully-green run since E3, api 478 green rebased on the
