@@ -29,10 +29,22 @@
   exact for legacy files whose seq reset across pre-fix daemon restarts.
   Scope policy set via JWT (events/history → null, default triage per D-4).
   Live: 93 legacy events drained unscoped, rerun idempotent (93 stays 93).
-- **Remaining:** session entity slice + `contained_by` backfill, RFC-010 actor
-  entity mapping for SessionEvent facts (needs daemon client identity — API-
-  extraction/MCP slice), explicit operator UI for scopes/triage on drained
-  facts, MCP adapter, operator UI.
+- **Slice 4 — session entities: DONE + LIVE 2026-11-19.** Provider `4414bba`:
+  every session upserts as a Core `Session` entity (ENTITY_UPSERTS contract;
+  natural key (source=memogarden-sessions, session, machine); etag = manifest
+  hash → noop rule exercised live); drained facts gain `contained_by` → Session
+  entity relations, backfilled over pre-slice facts (live: dbs+uob entities,
+  94 relations: 83 uob / 11 dbs; rerun noop). Scope rule added: entities ride
+  `stream: session_entity` → unscoped. **API gap found:** registration has no
+  update path for derived capabilities (PATCH deliberately immutable, no
+  DELETE) — the ENTITY_UPSERTS addition needed a validation-equivalent direct
+  manifest UPDATE; follow-up = registration update route.
+  **Cosmetic:** runtime `relations_created` counts only the per-fact hook, so
+  backfilled relations don't appear in run detail (durable regardless).
+- **Remaining:** RFC-010 actor entity mapping for SessionEvent facts (needs
+  daemon client identity — API-extraction/MCP slice), MCP adapter, operator
+  UI surface (scopes/triage on drained facts, send/grant/commandeer), statement
+  pipeline (separate decision register first).
 
 Context: RFC-013 (§8 flows, §12 findings) · `schemas/sessions.yaml` · RFC-012
 (provider accounts, §4.9) · RFC-011 (scope policy at creation).

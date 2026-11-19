@@ -169,6 +169,17 @@ lifecycle_facts:          # per session
 #                 B4, exact for legacy files whose seq reset across pre-fix
 #                 daemon restarts). Scope policy LIVE: events/history
 #                 streams unscoped (null rules), default triage (D-4).
+#   session entity: IMPLEMENTED 2026-11-19 (register C5, provider 4414bba):
+#                 every session upserts as a Core `Session` entity (ENTITY_
+#                 UPSERTS contract, natural key (source=memogarden-sessions,
+#                 session, machine) — machine-bound per RFC-013 §9), etag =
+#                 manifest hash (noop rule); drained facts gain contained_by
+#                 relations to the entity (backfill covers pre-slice facts;
+#                 entities unscoped via the session_entity null rule). ⚠️
+#                 Deploy note: registration has NO update path for derived
+#                 capabilities — the ENTITY_UPSERTS addition needed a direct
+#                 manifest UPDATE (validation-equivalent; API gap = follow-up).
+#                 Live: dbs+uob entities, 94 relations, rerun noop.
 
 # ==============================================================================
 # SESSION CONFIG (Core-side entity attributes; future — daemon syncs down)
