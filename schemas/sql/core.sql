@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS _schema_metadata (
 );
 
 INSERT OR IGNORE INTO _schema_metadata VALUES
-    ('version', '20261119', datetime('now')),
+    ('version', '20261120', datetime('now')),
     ('base_schema', 'memogarden-core-base', datetime('now')),
     ('description', 'Core base tables only; type schemas in JSON', datetime('now')),
     ('epoch_date', '2020-01-01', datetime('now'));
@@ -213,6 +213,8 @@ CREATE TABLE IF NOT EXISTS provider_accounts (
         CHECK (status IN ('active', 'needs_reauth', 'revoked', 'disabled')),
     credential_ref TEXT NOT NULL,             -- HACM credential id ({platform}:{subject})
     config TEXT NOT NULL DEFAULT '{}',        -- JSON; per-account config (overrides provider config)
+    scope_policy TEXT,                        -- JSON {rules, default}; RFC-011 §4.8 policy scoped to this
+                                              -- account; NULL = inherit provider scope_policy
     capabilities TEXT NOT NULL DEFAULT '[]',  -- JSON; capability grants on this identity
     error TEXT,                               -- last failure summary (CLI display)
     interval INTEGER,                         -- NULL = inherit provider interval
