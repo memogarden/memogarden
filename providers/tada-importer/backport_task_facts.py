@@ -39,23 +39,39 @@ def _day_int() -> int:
     return (datetime.now(UTC) - _RELATION_EPOCH).days
 
 
+def _existing_event_uuid(soil: Soil, source_id: str) -> str | None:
+    """The uuid of the tada Event fact for this source_id, if one landed."""
+    with soil:
+        row = soil._get_connection().execute(
+            """SELECT uuid FROM item
+               WHERE _type = 'Event'
+                 AND json_extract(metadata, '$.source') = 'tada'
+                 AND json_extract(data, '$.source_id') = ?""",
+            (source_id,),
+        ).fetchone()
+    return row["uuid"] if row else None
+
+
 def _event_exists(soil: Soil, source_id: str) -> bool:
-    row = soil._get_connection().execute(
-        """SELECT 1 FROM item
-           WHERE _type = 'Event'
-             AND json_extract(metadata, '$.source') = 'tada'
-             AND json_extract(data, '$.source_id') = ?""",
-        (source_id,),
-    ).fetchone()
+    return _existing_event_uuid(soil, source_id) is not None
+    with soil:
+        row = soil._get_connection().execute(
+            """SELECT 1 FROM item
+               WHERE _type = 'Event'
+                 AND json_extract(metadata, '$.source') = 'tada'
+                 AND json_extract(data, '$.source_id') = ?""",
+            (source_id,),
+        ).fetchone()
     return row is not None
 
 
 def _note_already_linked(soil: Soil, note_uuid: str, event_uuid: str) -> bool:
-    row = soil._get_connection().execute(
-        """SELECT 1 FROM system_relation
-           WHERE kind = 'contained_by' AND source = ? AND target = ?""",
-        (note_uuid, event_uuid),
-    ).fetchone()
+    with soil:
+        row = soil._get_connection().execute(
+            """SELECT 1 FROM system_relation
+               WHERE kind = 'contained_by' AND source = ? AND target = ?""",
+            (note_uuid, event_uuid),
+        ).fetchone()
     return row is not None
 
 
@@ -135,39 +151,46 @@ def main() -> int:
     tasks = [dict(r) for r in rows]
     print(f"legacy tada Task facts (live): {len(tasks)}")
 
-    to_convert, already = [], 0
+    to_convert, to_supersede = [], []
     import json
 
     for t in tasks:
         data = json.loads(t["data"])
-        if _event_exists(soil, data.get("source_id", "")):
-            already += 1
+        source_id = data.get("source_id", "")
+        event_uuid = _existing_event_uuid(soil, source_id)
+        if event_uuid is not None:
+            # Flip-era conversion: the Event exists — the Task fact must
+            # still be superseded ONTO it (a skip that leaves the Task live
+            # keeps a duplicate resolution on the books).
+            to_supersede.append((t, event_uuid))
         else:
             to_convert.append((t, data))
     statuses: dict[str, int] = {}
     for _, data in to_convert:
         statuses[data.get("status", "?")] = statuses.get(data.get("status", "?"), 0) + 1
-    print(f"  already converted (idempotent skips): {already}")
+    print(f"  already converted (supersede onto existing Events): {len(to_supersede)}")
     print(f"  to convert: {len(to_convert)} {statuses}")
 
-    notes = soil._get_connection().execute(
-        """SELECT uuid, metadata FROM item
-           WHERE _type = 'Note'
-             AND json_extract(metadata, '$.source') = 'tada'
-             AND json_extract(metadata, '$.task_source_id') IS NOT NULL
-             AND superseded_by IS NULL"""
-    ).fetchall()
+    with soil:
+        notes = soil._get_connection().execute(
+            """SELECT uuid, metadata FROM item
+               WHERE _type = 'Note'
+                 AND json_extract(metadata, '$.source') = 'tada'
+                 AND json_extract(metadata, '$.task_source_id') IS NOT NULL
+                 AND superseded_by IS NULL"""
+        ).fetchall()
     note_rows = [dict(r) for r in notes]
     repoints = 0
     for n in note_rows:
         n_meta = json.loads(n["metadata"] or "{}")
         event_row = None
         if _event_exists(soil, n_meta.get("task_source_id", "")):
-            event_row = soil._get_connection().execute(
-                """SELECT uuid FROM item WHERE _type = 'Event'
-                   AND json_extract(data, '$.source_id') = ?""",
-                (n_meta["task_source_id"],),
-            ).fetchone()
+            with soil:
+                event_row = soil._get_connection().execute(
+                    """SELECT uuid FROM item WHERE _type = 'Event'
+                       AND json_extract(data, '$.source_id') = ?""",
+                    (n_meta["task_source_id"],),
+                ).fetchone()
             if event_row and not _note_already_linked(
                 soil, n["uuid"], event_row["uuid"]
             ):
@@ -175,9 +198,10 @@ def main() -> int:
     print(f"  Notes to re-point: {repoints} (of {len(note_rows)} tada Notes)")
 
     if not args.execute:
-        for t, data in to_convert[:3]:
-            print(f"  sample: {data.get('source_id', '?')[:8]} [{data.get('status')}] "
-                  f"{data.get('title', '')[:60]!r}")
+        with soil:
+            for t, data in to_convert[:3]:
+                print(f"  sample: {data.get('source_id', '?')[:8]} [{data.get('status')}] "
+                      f"{data.get('title', '')[:60]!r}")
         print("DRY RUN — no writes. Pass --execute to convert.")
         return 0
 
@@ -216,16 +240,40 @@ def main() -> int:
         if converted % 500 == 0:
             print(f"  converted {converted}/{len(to_convert)}")
 
+    superseded = 0
+    for t, event_uuid in to_supersede:
+        # Flip-era Task fact -> supersede ONTO its already-existing Event.
+        with soil as s:
+            s.mark_superseded(
+                original_uuid=t["uuid"],
+                superseded_by_uuid=event_uuid,
+                superseded_at=now,
+            )
+            s.create_relation(SystemRelation(
+                uuid=generate_soil_uuid(),
+                kind="supersedes",
+                source=event_uuid,
+                source_type="item",
+                target=t["uuid"],
+                target_type="item",
+                created_at=day,
+                evidence={"source": "backport", "method": "task_fact_backport"},
+            ))
+        superseded += 1
+    if to_supersede:
+        print(f"  {superseded} flip-era Task facts superseded onto their existing Events")
+
     repointed = 0
     for n in note_rows:
         n_meta = json.loads(n["metadata"] or "{}")
         if not _event_exists(soil, n_meta.get("task_source_id", "")):
             continue
-        event_row = soil._get_connection().execute(
-            """SELECT uuid FROM item WHERE _type = 'Event'
-               AND json_extract(data, '$.source_id') = ?""",
-            (n_meta["task_source_id"],),
-        ).fetchone()
+        with soil:
+            event_row = soil._get_connection().execute(
+                """SELECT uuid FROM item WHERE _type = 'Event'
+                   AND json_extract(data, '$.source_id') = ?""",
+                (n_meta["task_source_id"],),
+            ).fetchone()
         if event_row and not _note_already_linked(soil, n["uuid"], event_row["uuid"]):
             with soil as s:
                 s.create_relation(SystemRelation(
@@ -242,7 +290,7 @@ def main() -> int:
             if repointed % 200 == 0:
                 print(f"  re-pointed {repointed}/{repoints}")
 
-    print(f"DONE: {converted} Task facts -> Event facts; {repointed} Notes re-pointed")
+    print(f"DONE: {converted} Task facts -> Event facts; {superseded} superseded onto existing Events; {repointed} Notes re-pointed")
     return 0
 
 
