@@ -41,10 +41,24 @@
   manifest UPDATE; follow-up = registration update route.
   **Cosmetic:** runtime `relations_created` counts only the per-fact hook, so
   backfilled relations don't appear in run detail (durable regardless).
+- **Operator usage note (2026-11-19):** per-bank sessions are retired as an
+  operating pattern — the operator will consolidate into a **single `finance`
+  session** for Finances-scope work. System needs no change (the drain is
+  session-agnostic; a `finance` session drains under `metadata.session/account
+  = finance`, and scope rules can key on that later). Existing dbs/uob
+  entities + 94 facts remain as history (immutable-belief model; the UOB PDF
+  stays linked to the uob session entity — that's where it happened).
+- **Known consequence of the B4 deviation:** without a watermark, events.jsonl
+  is never compacted (the (session, seq, ts) probes need the drained lines as
+  their anchor) — event files grow for the life of the session. Fine at
+  current volume (93 lines); revisit if visit-history volume makes files
+  large (options: keep a probe-anchor watermark file, or compact with a
+  tombstone marker).
 - **Remaining:** RFC-010 actor entity mapping for SessionEvent facts (needs
   daemon client identity — API-extraction/MCP slice), MCP adapter, operator
   UI surface (scopes/triage on drained facts, send/grant/commandeer), statement
-  pipeline (separate decision register first).
+  pipeline (separate decision register first). Registration capabilities
+  update path filed as memogarden-api#62.
 
 Context: RFC-013 (§8 flows, §12 findings) · `schemas/sessions.yaml` · RFC-012
 (provider accounts, §4.9) · RFC-011 (scope policy at creation).
