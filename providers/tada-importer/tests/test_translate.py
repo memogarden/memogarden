@@ -71,8 +71,23 @@ def test_cancelled_without_slot_falls_back_to_decision_time():
     assert event["canonical_at"] == event["metadata"]["resolved_at"]
 
 
+def test_skipped_yields_event_with_cancel_style_canonical_at():
+    """'skipped' is reserved tada vocabulary (event.yaml FACT section):
+    didn't happen, so canonical time follows the cancelled rule — the
+    slot it was for, else the decision moment."""
+    entry = done_entry(outcome="skipped", at="2026-11-06T20:00",
+                       start="2026-11-06T09:30")
+    event, = facts_for(entry)
+    assert event["metadata"]["status"] == "skipped"
+    assert event["canonical_at"] == event["data"]["start_at"]
+
+    bare = done_entry(outcome="skipped", at="2026-11-06T20:00")
+    bare_event, = facts_for(bare)
+    assert bare_event["canonical_at"] == bare_event["metadata"]["resolved_at"]
+
+
 def test_unknown_outcome_yields_nothing():
-    assert facts_for(done_entry(outcome="skipped")) == []
+    assert facts_for(done_entry(outcome="postponed")) == []
 
 
 def test_notes_become_note_fact_after_event():
