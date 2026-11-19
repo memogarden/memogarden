@@ -233,6 +233,55 @@ def test_conversion_dedups_against_day_walk(soil, state_path):
     assert counts(soil) == {"Event": 1, "relation": 0}
 
 
+def test_cancelled_items_retire_never_upsert(soil, state_path):
+    """Cancelled items must never become live Task entities (task.yaml:
+    in-flight statuses only) — they retire instead, idempotent noop when
+    none exists. Because the inventory lists them forever (its filter is
+    completedAt-only), the retire also permanently suppresses the
+    post-conversion resurrection cycle."""
+    client = lane_client()
+    client.inventory_result["items"].append({
+        "uid": "t-cancel-1", "title": "Wooden key", "kind": "task",
+        "status": "cancelled", "timeZone": "Asia/Singapore", "tags": [],
+        "updatedAt": "2026-11-19T08:00",
+    })
+    provider = make_provider(soil, state_path, client,
+                             backfill_since="2026-11-19")
+    provider._fixed_today = date(2026, 11, 19)
+    facts, relations, ops = consume_sync(soil, provider)
+
+    assert not any(o["op"] == "upsert_entity"
+                   and o["key"]["source_id"] == "t-cancel-1" for o in ops)
+    assert ("retire_entity", "Task") in [(o["op"], o.get("type")) for o in ops]
+    retires = [o for o in ops if o["op"] == "retire_entity"
+               and o["key"]["source_id"] == "t-cancel-1"]
+    assert len(retires) == 1
+
+
+def test_cancelled_with_completed_at_still_converts(soil, state_path):
+    """A double-state item (status cancelled AND completedAt) goes down the
+    conversion lane like any resolution — Event fact with the existing
+    conversion semantics — not the retire-only lane."""
+    client = lane_client()
+    client.inventory_result["items"].append({
+        "uid": "t-cancel-2", "title": "Odd double-state", "kind": "task",
+        "status": "cancelled", "completedAt": "2026-11-19T07:30",
+        "timeZone": "Asia/Singapore", "tags": [],
+        "updatedAt": "2026-11-19T07:30",
+    })
+    provider = make_provider(soil, state_path, client,
+                             backfill_since="2026-11-19")
+    provider._fixed_today = date(2026, 11, 19)
+    facts, relations, ops = consume_sync(soil, provider)
+
+    events = [f for f in facts if f._type == "Event"
+              and f.data["source_id"] == "t-cancel-2"]
+    assert len(events) == 1
+    assert events[0].metadata["status"] == "completed"
+    assert not any(o["op"] == "upsert_entity"
+                   and o["key"]["source_id"] == "t-cancel-2" for o in ops)
+
+
 def test_inventory_failure_defers_entity_lane(soil, state_path):
     """The entity lane's transport failure must not poison the fact lane —
     deferred, not failed (the next heartbeat retries)."""
