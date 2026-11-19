@@ -1,6 +1,6 @@
 # MemoGarden Repository Structure
 
-**Last Updated:** 2026-10-08
+**Last Updated:** 2026-11-19
 **Status:** Session 14+
 
 Complete reference for MemoGarden repositories and their structure.
@@ -22,7 +22,7 @@ described in the root [README](/README.md).)
   - `memogarden-implementation-plan.md` - Implementation roadmap (retired 2026-10-08 — historical)
   - `memogarden_prd_v0_11_0.md` - Platform PRD
   - `budget_prd.md` - Budget app requirements
-  - `rfc_*.md` - RFC documents (RFC-001 through RFC-009)
+  - `rfc_*.md` - RFC documents (RFC-001 through RFC-015)
 - `providers/` - Ingestion providers (tracked in this repo)
   - `gmail-importer/` - Gmail ingestion provider (historyId incremental sync,
     progressive backfill, Provider Protocol implementation; published
@@ -84,10 +84,12 @@ memogarden-system/
 │   │   ├── isodatetime.py  # Timestamp utilities
 │   │   ├── hash_chain.py   # Hash computation
 │   │   └── secret.py      # Secret generation
-│   ├── schemas/             # SQL schemas
-│   │   └── sql/
-│   │       ├── core.sql     # Core schema
-│   │       └── migrations/  # Schema migrations
+│   ├── schemas/             # Schema source (schemas-v1 unification, 2026-11-19)
+│   │   ├── memogarden/      #   SUBMODULE ← memogarden/memogarden (schema docs
+│   │   │                    #   + sql — the single source of truth; the former
+│   │   │                    #   package copies are deleted)
+│   │   └── sql/             #   package-side migrations (load-bearing:
+│   │       └── migrations/  #   _run_migrations reads them package-relatively)
 │   └── host/               # Host environment utilities
 │       └── environment.py   # Path resolution (RFC-004)
 ├── tests/
@@ -102,6 +104,14 @@ memogarden-system/
 **Git:** Separate repository
 **Commits affect:** system/
 **Dependencies:** None (base library)
+
+**Schema submodule:** `system/schemas/memogarden` is a git submodule pinning
+`memogarden/memogarden` (tag `schemas-v1`, bumped to `schemas-v2` on
+2026-11-19) — schema docs AND sql live there now; the old package copies were
+retired (memogarden/memogarden PR #7, memogarden-system PR #4). Accessor
+constants and fallback chains resolve mount-first. **The deploy protocol
+includes `git submodule update --init`** after pulling — a missing mount
+fails schema loading at boot.
 
 ---
 

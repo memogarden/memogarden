@@ -757,7 +757,8 @@ curl -X POST http://localhost:8080/mg \
   -d '{
     "op": "query",
     "filters": {
-      "_type": "Transaction"
+      "_type": "Task",
+      "source_id": "01a1a5fc-52cf-768a-8261-e3b94da7972a"
     },
     "limit": 10
   }'
@@ -766,9 +767,11 @@ curl -X POST http://localhost:8080/mg \
 **Request Fields:**
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `filters` | object | No | Type filter: `{"_type": "Transaction"}` |
+| `filters` | object | No | `_type` narrows the entity type. Any other key is a **data-field equality** filter (#27): plain or dotted keys address `entity.data` (dotted segments become nested JSON paths), composable with `_type` and each other. Filtering runs in the WHERE clause — before pagination, and the count shares the predicate. |
 | `start` | integer | No | Pagination start index (default: 0) |
 | `limit` | integer | No | Max results (default: 20) |
+
+Superseded entities are excluded by default (`superseded_by IS NULL`).
 
 **Response:**
 ```json
