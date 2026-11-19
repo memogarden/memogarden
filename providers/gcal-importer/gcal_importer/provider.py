@@ -409,7 +409,7 @@ class GoogleCalendarProvider:
             # semantics): Google resources arrive complete on change, so
             # an absent optional field means "cleared at source" — the
             # runtime merge needs the null to clear the stored value.
-            "title": item.get("title") or None,
+            "title": item.get("summary") or None,
             "description": item.get("description") or None,
             "location": item.get("location") or None,
             "ends_at": self._moment(end),

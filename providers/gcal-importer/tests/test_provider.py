@@ -68,6 +68,20 @@ class TestSeed:
         assert by_id["old"]["metadata"]["captured_after_fact"] is True
         assert "captured_after_fact" not in by_id["future"]["metadata"]
 
+    def test_summary_maps_to_title(self, provider):
+        # Google Calendar API v3 carries the event title in `summary`
+        # (regression: provider.py read item.get("title"), which Google
+        # never sends — every seeded Event stored title:null, DEFECT #4).
+        provider._client.pages["me@gmail.com"] = [
+            {"items": [
+                make_event("titled", {"dateTime": "2026-11-20T09:00:00Z"},
+                           {"dateTime": "2026-11-20T10:00:00Z"},
+                           summary="Dentist — Dr Lim"),
+            ], "nextSyncToken": "T1"},
+        ]
+        yields = list(provider.sync())
+        assert yields[0]["data"]["title"] == "Dentist — Dr Lim"
+
     def test_cleared_fields_translated_as_null(self, provider):
         provider._client.pages["me@gmail.com"] = [
             {"items": [
