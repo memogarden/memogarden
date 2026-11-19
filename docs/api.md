@@ -1194,20 +1194,24 @@ All timestamps use ISO 8601 format: `2026-02-14T10:30:00Z`
 | Type | Description |
 |------|-------------|
 | `Transaction` | Financial transaction |
-| `Recurrence` | Recurring transaction pattern |
-| `Contact` | Contact information |
-| `Account` | Financial account |
+| `Recurrence` | **The shared recurrence entity** — a rule + anchor; occurrences instantiate it via native `recurrence_of`. Generalizes the finance recurring-transaction type; tada series is the first conformer (schemas/recurrence.yaml) |
+| `Task` | **A request** — the mutable belief while in flight (tada ontology; statuses confirmed/tentative only). Resolution is CONVERSION into an Event fact + entity retirement, never a stamp (schemas/task.yaml) |
+| `Event` | Calendar-event belief (gcal; RFC-014). **Disambiguation:** the Event *fact* below is the occurrence record — same word, different layers (`core_` vs `soil_`) |
 | `Artifact` | Project Studio artifact |
 | `Scope` | Project Studio scope (RFC-003) |
+| `Contact` / `Account` | Legacy finance-domain types — not in the `/mg` create baseline; retained for existing data |
 
 ### Fact Types (Items)
 
 | Type | Description |
 |------|-------------|
+| `Event` | **The universal occurrence record** — immutable memory that something happened; verdict in `metadata.status` (source vocabulary: tada `completed`/`cancelled`, gcal `occurred` via mark-occurred). Authored by Task conversion, provider yield, or `/mg add` (baselined; schemas/event.yaml FACT section). The legacy `Task` fact type is retired — all history superseded onto Events (2026-11-19) — and `EventOccurrence` is retired with it (#31) |
 | `Message` | Conversation message |
 | `Email` | Imported email (gmail provider / mbox importer) |
-| `Note` | User note |
+| `Note` | User note — the content carrier: prose lives in Note facts (`contained_by`), never inline on Events/Tasks |
 | `ToolCall` | Agent tool invocation |
+| `Entry` / `Subscription` | RSS/Atom article + feed (rss-importer) |
+| `EntityDelta` | Entity change record — every provider entity update/retirement writes one (the delta stream IS the change history) |
 
 ---
 
