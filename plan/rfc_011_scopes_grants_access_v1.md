@@ -1,6 +1,6 @@
 # RFC-011: Scopes, Grants, and Attention-Gated Access
 
-**Version:** 1.2
+**Version:** 1.3
 **Status:** Accepted
 **Author:** MemoGarden Project
 **Created:** 2026-11-09
@@ -139,8 +139,9 @@ scopes, both ordinary restricted scopes:
 
 - `triage` (label: "Triage / Untrusted") — where ingested items land pending
   sorting, and where sorting work happens.
-- `private` — operator-only material. Provisioned with no key grants; only the
-  operator may enter.
+- `personal` (renamed from `private`, 2026-11-19 — the word "private" is
+  reserved for the visibility axis, see the visibility addendum) — operator-only
+  material. Provisioned with no key grants; only the operator may enter.
 
 "Unscoped" is not provisioned because it is not a scope — it is the absence of a
 label (§4.2).
@@ -409,7 +410,7 @@ same verb under sovereignty. Builtin scopes are seeded at startup (§4.1).
 
 1. **Schema:** `api_keys.grants` column (JSON, default `[]`); `context_frame`
    migration to singular `active_scope` (fold `primary_scope`/`active_scopes`
-   during the window; see §11). Provision `triage` and `private` builtin scopes
+   during the window; see §11). Provision `triage` and `personal` builtin scopes
    idempotently.
 2. **Enforcement flag:** config `scope_enforcement = off | on`, default `off`.
    With the flag off, enter/leave behave as today (advisory), labels may be
@@ -534,6 +535,7 @@ implemented, per the RFC-010 precedent).
 | 1.0 | 2026-11-09 | Initial draft. Unifies RFC-003 scopes with access control via grants and exclusive activation; retires "scope" as a permission term; defines provider labeling, triage workflow, enforcement points, rollout. |
 | 1.1 | 2026-11-09 | Ratified. §11 amendments executed: RFC-003 → v5, RFC-005 → v8, RFC-001 → v5, RFC-010 → v1.2, RFC-009 → v1.1, entity schema descriptions, Budget PRD prerequisite note; §11 converted to executed-amendment log. |
 | 1.2 | 2026-11-10 | **Gap-audit amendment.** D1: scope creation is operator-gated (Semantic create rejects Scope from API keys; RFC-010 invariant applied to boundaries). D2: symmetric label grants — removing a label requires the same grant as adding it (de-scope is the exposure-widening direction). Rider: §4.9(5) resolved to suppress — non-members receive nothing for scoped-item events. Open question 2 closed. |
+| 1.3 | 2026-11-19 | **Erratum: builtin scope renamed.** Builtin scope `private` (label "Private") renamed to `personal` (label "Personal") — scope names name entity domains, never visibility; the word "private" is reserved for the `visibility: public | private` scope attribute (see `rfc_011_visibility_addendum.md`). Rename lands as a NEW Scope entity (immutable memory: old entity superseded); startup migration moves references (grants, labels, frames, policies) to the new UUID and stamps `visibility: "private"` on scopes predating the attribute. Aliases break clean: no legacy `private` alias. |
 
 ---
 

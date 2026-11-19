@@ -301,7 +301,7 @@ immediately matchable:
 ```json
 {"rules": [
   {"match": {"account": "work@company.com"}, "scope": "<work-scope-uuid>"},
-  {"match": {"account": "ngjunsiang@gmail.com"}, "scope": "private"}
+  {"match": {"account": "ngjunsiang@gmail.com"}, "scope": "personal"}
 ], "default": "triage"}
 ```
 

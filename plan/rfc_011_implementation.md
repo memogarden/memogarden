@@ -7,7 +7,16 @@
 **Status 2026-11-10:** core mechanism **live** (merged to main in
 memogarden-system `f651649` + memogarden-api `7faf180`; service deployed;
 live core.db migrated to schema `20261109`; builtin scopes
-`Triage / Untrusted` + `Private` seeded; enforcement **off**).
+`Triage / Untrusted` + `Personal` seeded; enforcement **off**).
+
+**Status 2026-11-19:** builtin scope renamed `Private` → `Personal` (RFC-011 v1.3
+erratum) with startup reference migration `migrate_private_scope_rename` (system
+`feat/scope-personal-rename`); canonical schema declares Scope `visibility`
+(public | private, default private — decisions in
+`rfc_011_visibility_addendum.md`, implementation pending item 5). Deploy note:
+after the root schemas change merges, cut the next schema-release tag and bump
+the system repo's `system/schemas/memogarden` submodule pin so the served copy
+carries the attribute.
 
 ## Done
 
@@ -60,7 +69,8 @@ material**.
    `providers.scope_policy`; api `0a36b79` — runtime application at the
    `_to_fact`/`create_fact` seam (children included; providers cannot
    forget), `PUT /providers/<name>/scope-policy` JWT-only, builtin
-   aliases triage/private). Ratified design: rules-based, ordered
+   aliases triage/personal — renamed from triage/private 2026-11-19,
+   see the RFC-011 v1.3 erratum). Ratified design: rules-based, ordered
    matchers over merged data+metadata fields, first match wins, default
    catch-all → triage (fail-closed), null = unscoped, provider-set
    labels win. Live: schema migrated, gmail at NULL policy = the
