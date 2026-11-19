@@ -20,10 +20,19 @@
   (`425f8c47…`, Tier-1 env `agents/sessions-daemon/env` 0600); live-verified:
   trigger 202, providers read 403, admin key unaffected.
 - **Operator side done:** Finances scope created (triage destination).
-- **Remaining:** event drains (C4 `SessionEvent` mirror — daemon seq fix already
-  in; C3 `PageVisit` capture needs daemon history events), session entity slice +
-  `contained_by` backfill, explicit scope policy via JWT (null policy already
-  = fail-closed Triage), §G docs (sessions.yaml v2 + RFC-013 §8 — done this pass).
+- **Slice 3 — event drains: DONE + LIVE 2026-11-19.** Daemon `page_visited`
+  capture (`73f8a03`: main-frame navigations + adoption URLs, edge policy skips
+  chrome/about/iframe navigations, actor from arbiter state); provider event
+  drain (`e29f438`: full §12.1 mirror as `SessionEvent`, `page_visited` as
+  `PageVisit`, `download_captured` filtered per D2). **B4 deviation:** no seq
+  watermark — events re-read per run with (session, seq, ts) dedup probes,
+  exact for legacy files whose seq reset across pre-fix daemon restarts.
+  Scope policy set via JWT (events/history → null, default triage per D-4).
+  Live: 93 legacy events drained unscoped, rerun idempotent (93 stays 93).
+- **Remaining:** session entity slice + `contained_by` backfill, RFC-010 actor
+  entity mapping for SessionEvent facts (needs daemon client identity — API-
+  extraction/MCP slice), explicit operator UI for scopes/triage on drained
+  facts, MCP adapter, operator UI.
 
 Context: RFC-013 (§8 flows, §12 findings) · `schemas/sessions.yaml` · RFC-012
 (provider accounts, §4.9) · RFC-011 (scope policy at creation).

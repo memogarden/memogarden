@@ -163,6 +163,12 @@ lifecycle_facts:          # per session
 #                 the full §12.1 SessionEvent mirror incl. refusals (C4);
 #                 download_captured is folded into Attachment metadata and
 #                 never mirrored as a SessionEvent (D2).
+#                 BOTH IMPLEMENTED 2026-11-19 (provider e29f438; daemon visit
+#                 capture 73f8a03): events re-read per run with (session,
+#                 seq, ts) dedup probes — NO seq watermark (deviation from
+#                 B4, exact for legacy files whose seq reset across pre-fix
+#                 daemon restarts). Scope policy LIVE: events/history
+#                 streams unscoped (null rules), default triage (D-4).
 
 # ==============================================================================
 # SESSION CONFIG (Core-side entity attributes; future — daemon syncs down)
