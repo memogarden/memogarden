@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.memogarden.net/entities/recurrence.schema.json",
+  "title": "Recurrence (entity)",
+  "description": "The SHARED recurrence entity: a rule + anchor; occurrences are instantiations linked by native recurrence_of. Generalizes the previously-undocumented finance Recurrence entity type (already whitelisted in BASELINE_ENTITY_TYPES) — one type, tada series and finance recurring transactions the first conformers, gcal patterns the candidate third. Instantiation links are named recurrence_of deliberately — NOT recurrence_id, which in iCalendar means the RECURRENCE-ID property (which instance was modified), different semantics. Storage merges provider metadata FLAT into entity.data: source (natural-key half), etag (no-op field), source_status (pattern lifecycle: 'ended' | absent — a Recurrence DOES carry it; its lifecycle ends by stamping, unlike Task, which ends by conversion), tada_source.",
+  "allOf": [
+    { "$ref": "entity.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "_type": { "const": "Recurrence" },
+        "data": {
+          "type": "object",
+          "properties": {
+            "source_id": {
+              "type": "string",
+              "description": "Native pattern id (tada template uid). Natural key: (source, source_id)."
+            },
+            "title": { "type": "string" },
+            "kind": {
+              "type": "string",
+              "description": "Conventions 'task' | 'event' (tada); other sources extend per source vocabulary."
+            },
+            "rrule": {
+              "type": "string",
+              "description": "RRULE text, verbatim from the source."
+            },
+            "start_at": {
+              "type": ["string", "null"],
+              "description": "Anchor slot (ISO 8601 UTC); absent = slot-less pattern."
+            },
+            "duration": { "type": "string" },
+            "time_zone": { "type": "string" },
+            "notify": { "type": "boolean" },
+            "tags": { "type": "array", "items": { "type": "string" } }
+          },
+          "required": ["source_id", "title", "rrule"]
+        }
+      },
+      "required": ["_type", "data"]
+    }
+  ]
+}

@@ -14,12 +14,14 @@ class FakeTadaClient:
     fail_show: uids whose show() raises a server error.
     """
 
-    def __init__(self, days=None, items=None, zone="Asia/Singapore", fail_show=()):
+    def __init__(self, days=None, items=None, zone="Asia/Singapore", fail_show=(),
+                 inventory_result=None):
         self.days = days or {}
         self.items = items or {}
         self.zone = zone
         self.fail_show = set(fail_show)
         self.calls = []  # (op, args) in call order
+        self.inventory_result = inventory_result or {"items": [], "templates": []}
 
     def zone(self):
         return self.zone
@@ -33,6 +35,10 @@ class FakeTadaClient:
         if ref in self.fail_show:
             raise TadaApiError("boom", status_code=500)
         return self.items.get(ref)
+
+    def inventory(self, resolved_within=2):
+        self.calls.append(("inventory", {"resolved_within": resolved_within}))
+        return self.inventory_result
 
 
 def done_entry(uid="01a1ab6b-be1e-701a-b7d5-8c09a7a62938", **overrides):
