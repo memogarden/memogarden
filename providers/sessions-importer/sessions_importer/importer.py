@@ -45,6 +45,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from system.soil import get_soil
+from system.soil.fact import generate_soil_uuid
+from system.soil.relation import SystemRelation
 from utils.attachments import AttachmentStore
 
 logger = logging.getLogger(__name__)
@@ -63,14 +65,30 @@ def _iso(epoch: float) -> str:
     return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
 
 
+# Relation-timestamp convention shared with the mbox/gmail importers.
+_RELATION_EPOCH = datetime(2020, 1, 1, tzinfo=timezone.utc)
+
+
+def _days_since_epoch() -> int:
+    return (datetime.now(timezone.utc) - _RELATION_EPOCH).days
+
+
 class SessionsImporter:
     """Provider contract: cls(config) + sync(since) -> yields fact dicts.
+
+    ENTITY_UPSERTS: every session becomes a first-class Core `Session`
+    entity (register C5), natural key (source, session, machine) —
+    sessions are machine-bound (RFC-013 §9). Drained facts of that
+    session gain `contained_by` relations to the entity (backfilled,
+    covering facts drained before this slice).
 
     Config keys (registry config):
     - sessions_root: staging cache root (default: the daemon's default).
     - store_root:    content-addressed store (default: the shared
                      <data_dir>/attachments residence gmail uses).
     """
+
+    ENTITY_UPSERTS = True
 
     def __init__(self, config: dict):
         config = config or {}
@@ -124,6 +142,20 @@ class SessionsImporter:
                             self._discard(pending)
                         pending = staged
                 yield from self._drain_events(soil, manifest, sdir)
+                # C5: the session becomes a Core entity; its drained facts
+                # (this run's AND legacy) gain contained_by relations. The
+                # upsert yield resumes only after the runtime committed it,
+                # and every earlier yield of this session is committed by
+                # then too — the backfill sees all of them.
+                yield self._session_upsert(manifest)
+                entity_uuid = self._session_entity_uuid(
+                    manifest["name"], manifest.get("machine"))
+                if entity_uuid:
+                    self._backfill_relations(soil, manifest, entity_uuid)
+                else:
+                    logger.warning(
+                        "Session entity for %s not found after upsert; "
+                        "relations retried next run", manifest["name"])
         if pending is not None:
             # Normal completion: the last fact was committed before the
             # runtime asked for the item after it (StopIteration).
@@ -221,6 +253,105 @@ class SessionsImporter:
             (session, seq, ts),
         ).fetchone()
         return row is not None
+
+    # ------------------------------------------------------------- C5 entity
+
+    SESSION_KEY = {"source": "memogarden-sessions"}
+
+    @classmethod
+    def _session_etag(cls, manifest: dict) -> str:
+        """Manifest-derived etag: any manifest change (state transition,
+        reopen) makes the upsert an update; unchanged manifests noop."""
+        import hashlib
+
+        payload = json.dumps(manifest, sort_keys=True, default=str)
+        return hashlib.sha256(payload.encode()).hexdigest()
+
+    def _session_upsert(self, manifest: dict) -> dict:
+        """C5: the Session as a Core entity — mutable snapshot of the
+        manifest, machine-bound natural key. Scope: entities ride the
+        session_entity stream (null-scope policy rule; entities are
+        config, not content)."""
+        name = manifest["name"]
+        machine = manifest.get("machine")
+        data = {
+            "source": "memogarden-sessions",
+            "session": name,
+            "machine": machine,
+            "label": name,
+            "title": name,  # searchable like other entities
+            "created_at": manifest.get("created_at"),
+            "state": manifest.get("state"),
+            "last_opened_at": manifest.get("last_opened_at"),
+            "etag": self._session_etag(manifest),
+        }
+        return {
+            "op": "upsert_entity",
+            "type": "Session",
+            "key": {"source": "memogarden-sessions",
+                    "session": name, "machine": machine},
+            "data": data,
+            "metadata": {
+                "provider": "memogarden-sessions",
+                "stream": "session_entity",
+            },
+        }
+
+    def _session_entity_uuid(self, name: str, machine) -> str | None:
+        """Natural-key lookup for the freshly upserted Session entity.
+        Own Core connection — the runtime's is internal (RFC-014 §3.2)."""
+        from system.core import get_core
+
+        with get_core() as core:
+            stored = core.entity.find_by_data(
+                "Session",
+                {"source": "memogarden-sessions",
+                 "session": name, "machine": machine},
+            )
+            return stored["uuid"] if stored else None
+
+    def _backfill_relations(self, soil, manifest: dict, entity_uuid: str):
+        """contained_by: every drained fact of this session -> the Session
+        entity. Covers this run's facts AND everything drained before this
+        slice (backfill mandate, register C5). UNIQUE(kind, source,
+        target) + the NOT EXISTS probe make reruns no-ops."""
+        session = manifest["name"]
+        rows = soil._get_connection().execute(
+            """SELECT uuid FROM item
+               WHERE json_extract(metadata, '$.session') = ?
+                 AND json_extract(metadata, '$.provider') = 'memogarden-sessions'
+                 AND NOT EXISTS (
+                     SELECT 1 FROM system_relation r
+                     WHERE r.kind = 'contained_by'
+                       AND r.source = item.uuid
+                       AND r.target = ?)
+               LIMIT 5000""",
+            (session, entity_uuid),
+        ).fetchall()
+        if not rows:
+            return
+        created = 0
+        for row in rows:
+            relation = SystemRelation(
+                uuid=generate_soil_uuid(),
+                kind="contained_by",
+                source=row["uuid"],
+                source_type="item",
+                target=entity_uuid,
+                target_type="entity",
+                created_at=_days_since_epoch(),
+                evidence=None,
+                metadata=None,
+            )
+            soil.create_relation(relation)
+            created += 1
+        logger.info("backfilled %d contained_by relations -> Session %s",
+                    created, session)
+
+    def create_relations(self, fact):
+        """Contract hook — unused: relations are backfilled per session in
+        sync() (covers legacy facts, which the per-fact hook cannot)."""
+        return []
 
     # --------------------------------------------------------------- helpers
 

@@ -53,17 +53,25 @@ def provider(sessions_root, tmp_path) -> SessionsImporter:
         return soil
 
     p._soil_factory = _factory
+    # No Core db in provider tests: stub the natural-key lookup the way
+    # the runtime's upsert would have satisfied it (entity uuid returned).
+    p._session_entity_uuid = (
+        lambda name, machine: f"core_session_{name}-{machine}")
     return p
 
 
 @pytest.fixture
 def drain(provider):
     """Consume provider.sync() exactly like the runtime: create + commit
-    per yielded fact, then ask for the next item."""
+    per yielded fact, then ask for the next item. Entity upserts are
+    recorded on .last_upserts (the runtime's core-side handling is
+    integration-tested in the api repo); the provider resumes as if
+    committed."""
 
     def _drain() -> list[Fact]:
         soil = provider._soil_factory()
         facts = []
+        upserts = []
         with soil:
             gen = provider.sync()
             while True:
@@ -71,6 +79,10 @@ def drain(provider):
                     y = next(gen)
                 except StopIteration:
                     break
+                if isinstance(y, dict) and y.get("op") == "upsert_entity":
+                    upserts.append(y)
+                    soil.commit()   # core-first ordering, then soil (deltas)
+                    continue
                 fact = Fact(
                     uuid=generate_soil_uuid(),
                     _type=y["type"],
@@ -84,6 +96,8 @@ def drain(provider):
                 soil.create_fact(fact)
                 soil.commit()   # the runtime commits before resuming
                 facts.append(fact)
+        _drain.last_upserts = upserts
         return facts
 
+    _drain.last_upserts = []
     return _drain
