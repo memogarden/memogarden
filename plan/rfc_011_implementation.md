@@ -13,10 +13,11 @@ live core.db migrated to schema `20261109`; builtin scopes
 erratum) with startup reference migration `migrate_private_scope_rename` (system
 `feat/scope-personal-rename`); canonical schema declares Scope `visibility`
 (public | private, default private — decisions in
-`rfc_011_visibility_addendum.md`, implementation pending item 5). Deploy note:
-after the root schemas change merges, cut the next schema-release tag and bump
-the system repo's `system/schemas/memogarden` submodule pin so the served copy
-carries the attribute.
+`rfc_011_visibility_addendum.md`, implementation pending item 5). Deploy note executed:
+schemas-v2 tagged on the root repo (2026-11-19) and the system repo's
+`system/schemas/memogarden` submodule pin bumped to it (system `1f35192`) —
+the served copy carries the attribute (no runtime consumer; no restart
+needed).
 
 ## Done
 
