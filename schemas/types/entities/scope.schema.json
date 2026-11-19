@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://schemas.memogarden.net/entities/scope.schema.json",
   "title": "Scope",
-  "description": "First-class work container with context tracking (RFC-003, RFC-009). Scopes organize work and own ContextFrames for attention tracking, and are access boundaries (RFC-011): entering requires a grant; items carry scope membership in metadata.scopes.",
+  "description": "First-class work container with context tracking (RFC-003, RFC-009). Scopes organize work and own ContextFrames for attention tracking, and are access boundaries (RFC-011): entering requires a grant; items carry scope membership in metadata.scopes. Visibility (RFC-011 visibility addendum) is a read axis: public scopes' items are readable from any frame; private scopes keep frame-gated reads.",
   "allOf": [
     {
       "$ref": "entity.schema.json"
@@ -18,8 +18,14 @@
           "properties": {
             "label": {
               "type": "string",
-              "description": "Human-readable name for this scope",
+              "description": "Human-readable name for this scope. Names the entity domain, never the visibility — e.g. 'Personal', not 'Private'.",
               "examples": ["Q1 Planning", "Budget Review", "Research Project"]
+            },
+            "visibility": {
+              "type": "string",
+              "enum": ["public", "private"],
+              "default": "private",
+              "description": "Read-visibility axis (RFC-011 visibility addendum). public: items labeled with this scope are readable by all principals from any frame. private: items are readable only inside the scope's frame (entry grant-gated). Defaults to private (restricted-by-default, RFC-011 §4.1)."
             },
             "active_participants": {
               "type": "array",

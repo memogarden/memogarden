@@ -109,7 +109,7 @@ memogarden query --type Action --filter actor=core_... --limit 50
 memogarden track core_...
 ```
 
-Scope references resolve labels, builtin aliases (`triage`, `private`),
+Scope references resolve labels, builtin aliases (`triage`, `personal`),
 and uuids client-side via the scopes overview. `relabel` is client-side
 sugar over `/mg amend` — D2's per-label grant gate applies unchanged.
 
@@ -492,9 +492,9 @@ results are returned — scoped items never surface as matches.
 **Current limitations (v1, tracked in
 [RFC-011 implementation progress](../plan/rfc_011_implementation.md)):**
 entity and relation reads are not yet scope-enforced (facts are);
-relabeling has no dedicated verb and amend's label changes are not yet
-grant-checked; query filtering happens after pagination (pages can be
-short). Providers are never scope-gated — they label at creation per
+relabeling has no dedicated verb (amend's label changes are
+grant-checked per D2); query filtering happens after pagination (pages
+can be short). Providers are never scope-gated — they label at creation per
 operator policy (`unscoped | triage | rules`).
 
 ---
@@ -585,7 +585,7 @@ memogarden query --type Action --filter actor=core_... --limit 50
 memogarden track core_...
 ```
 
-Scope references resolve labels, builtin aliases (`triage`, `private`),
+Scope references resolve labels, builtin aliases (`triage`, `personal`),
 and uuids client-side via the scopes overview. `relabel` is client-side
 sugar over `/mg amend` — D2's per-label grant gate applies unchanged.
 
