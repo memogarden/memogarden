@@ -27,7 +27,11 @@ MemoGarden provides three API interfaces:
 
 JWT-only operator conveniences backing the Operator Console
 (`/console/*` pages — Triage, Scopes & grants, Keys & agents, Providers,
-Occurrences, Audit; no dashboard by operator decision):
+Occurrences, Audit, Settings; no dashboard by operator decision).
+Since the 2026-11-19 consolidation the console is the single web GUI:
+Keys & agents does full mint/bind/revoke in-console and the standalone
+login/api-keys/agents/settings pages are retired (their URLs redirect
+into the console):
 
 ```bash
 # Triage queue: facts + entities labeled into a scope (default: builtin triage)
@@ -510,7 +514,11 @@ creation per operator policy (`unscoped | triage | rules`).
 
 JWT-only operator conveniences backing the Operator Console
 (`/console/*` pages — Triage, Scopes & grants, Keys & agents, Providers,
-Occurrences, Audit; no dashboard by operator decision):
+Occurrences, Audit, Settings; no dashboard by operator decision).
+Since the 2026-11-19 consolidation the console is the single web GUI:
+Keys & agents does full mint/bind/revoke in-console and the standalone
+login/api-keys/agents/settings pages are retired (their URLs redirect
+into the console):
 
 ```bash
 # Triage queue: facts + entities labeled into a scope (default: builtin triage)

@@ -144,5 +144,14 @@ Verb-first `memogarden <verb> <noun>` per the accepted grammar. `register` stays
 3. docs: `docs/api.md` gains the new endpoints + refreshed CLI block (root repo).
 4. Enforcement flag stays OFF; nothing in this RFC flips advisory gates.
 
+## 8. Addendum — single-GUI consolidation (2026-11-19, same day as v1 ship)
+
+The operator reviewed the result and found **two GUIs** sharing one domain: the console (read-only identity overview) and the pre-RFC-010 pages it linked to (`/api-keys`, `/api-keys/new`, `/agents/`, `/settings`). Decision: one GUI — the console absorbs everything; the legacy pages retire.
+
+1. **`/console/identity` is now full management** (was deliberately read-only in §4.1): agent mint form, key mint form (name / optional expiry / bind-at-creation) with the one-time reveal modal, per-key bind/unbind + revoke, unbound-key banner. Same section/table styling as `/console/scopes`; actions update in place. The §4.1 row "links/extends the existing … pages (which keep working)" is superseded — those pages are gone.
+2. **`/console/settings` (seventh screen)** — operator profile (`GET /auth/me`) + change-password form (`POST /auth/change-password`, §3.1). The endpoint had no UI anywhere; the read-only `/settings` page it absorbs is retired.
+3. **Retirement with soft landings** — the four legacy page routes + templates are deleted; `console_bp` serves 302s: `/api-keys`, `/api-keys/new`, `/agents/` → `/console/identity`; `/settings` → `/console/settings`; `/` → `/console` redirect (was: render login directly). `/login` stays (console's own auth entry, console-branded, post-login → `/console/triage`); `/admin/register` stays (localhost first-run bootstrap). JSON contracts (`GET /agents`, `GET /api-keys/`, PATCH/DELETE `/api-keys/<id>`) untouched.
+4. **IA note** — this grows §4.1's six screens to seven and inverts the identity screen's role, but keeps the no-dashboard decision untouched.
+
 ---
-**Last updated**: 2026-11-19
+**Last updated**: 2026-11-19 (addendum §8: single-GUI consolidation)
