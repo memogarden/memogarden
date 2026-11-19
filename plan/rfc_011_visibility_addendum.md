@@ -125,9 +125,10 @@ alias maps break clean (no legacy `private` alias). See
 4. **Bulk visibility flips** — flipping a scope `public↔private` re-labels
    every member item's effective visibility in one audited operator edit;
    acceptable (containerizing), but the console should warn on flip.
-5. **Relation edge rule** — relations carry no scopes; explore traversal
-   from a public node can name private ones. Likely rule: an edge is visible
-   iff both endpoints are; settle with item 5.
+5. **Relation edge rule** — SETTLED with item 5 (2026-11-19), the other
+   way: edges stay fully listed (uuid/kind/endpoint-type only, no item
+   data) per containerizing-not-hiding; nodes the reader cannot access
+   are presented as unresolved references.
 6. **UI surfacing** — visibility badge/filter on console + Studio scope
    views; query param for "public only" if a consumer wants it.
 7. **Second-human principals** — deferred until a second human exists.

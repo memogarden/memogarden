@@ -81,19 +81,34 @@ material**.
    rollout (retroactive default = whole backlog → triage; lean =
    backfill explicit rules only, finance senders → triage, unmatched
    legacy stays global).
-5. **§4.9 read-path completion** — OPEN.
-   - Relation traversal (`explore`) filtering with
-     unresolved-reference semantics (§4.9(4)) — the statement flow
-     will traverse `contained_by` (email → attachment).
-   - Entity handlers get/query/edit (§4.9(2)) — an Artifact with
-     `data.scopes` is currently decorated, not protected.
-   - Search pre-match (§4.9(3)) — scoped items currently participate
-     in matching before exclusion; the limit is applied before
-     filtering so scoped hits displace real matches. Add the RFC-005
-     v8 `scope` convenience param while in there.
-   Facts-only enforcement is the interim safe rule (documents as
-   Attachment facts are covered); close the rest before agents
-   traverse.
+5. **§4.9 read-path completion** — **DONE, MERGED 2026-11-19** (system
+   `e1dcd6b` + `bbaa3dc`, api `5c635c0`; suites system 222 green —
+   first fully-green run since E3, api 478 green rebased on the
+   metadata-filters merge).
+   - Entity reads enforce §4.5 (get 403 `scope_read_denied`, query
+     visibility-filtered, SG-10) — §4.9(2).
+   - Entity writes enforce like amend: edit strict frame gate + D2
+     symmetric label grants on `data.scopes`; forget write-gated.
+   - Search PRE-MATCH (§4.9(3)): system `search_items`/`entity.search`
+     gain `allowed_scopes` (None=unrestricted, []=unlabeled-only per
+     SG-1) + `scope_uuid` (RFC-005 v8 convenience param); the old
+     post-fetch search filter is retired — scoped hits can no longer
+     displace real matches.
+   - Explore (§4.9(4)): anchor gates like a read; inaccessible nodes
+     are UNRESOLVED REFERENCES (uuid+layer stub, no type; truthful
+     count); EDGES STAY FULLY LISTED — the addendum's open item 5
+     ("edge visible iff both endpoints") settled the other way per
+     containerizing-not-hiding (edges carry uuid/kind/endpoint-type
+     only, no item data).
+   - Visibility wired into reads only: public-visibility labels relax
+     read gates from any frame (most permissive wins); write gates
+     stay strictly frame-gated (visibility addendum).
+   - Review found + fixed P0: explore node checks initially ran
+     unconditionally (would have stubbed labeled nodes flag-off and
+     for sovereign JWT — SG-11); regression pins added.
+   - NEW tracked follow-up: `handle_track` remains ungated
+     (reference-level disclosure only: uuid+type) — candidate for a
+     §4.9(2) completion pass.
 
 ### P2 — with extraction / observation
 
