@@ -119,3 +119,17 @@ class TestConversionYields:
         event, = [y for y in conversion_yields(item, "2026-11-19", ZONE)
                   if y.get("type") == "Event"]
         assert event["metadata"]["resolved_at"] == "2026-11-18T23:45:00+00:00"
+
+
+class TestCancelledRetire:
+    def test_retire_shape_never_upsert(self):
+        """A cancelled tada item retires its Task entity — it must never
+        mirror as a live entity (task.yaml: Task is in-flight-only)."""
+        from tada_importer.translate_entities import cancelled_retire
+
+        retire = cancelled_retire(open_item(status="cancelled"))
+        assert retire == {
+            "op": "retire_entity",
+            "type": "Task",
+            "key": {"source": "tada", "source_id": "t-open-1"},
+        }
