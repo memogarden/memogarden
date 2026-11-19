@@ -1,7 +1,29 @@
 # RFC-013 addendum: sessions → Core ingestion — decision register
 
-**Status:** DECIDED 2026-11-18 (two batch passes). No user-blocking items remain;
-implementation pending. Residual OPENs are implementation-internal.
+**Status:** DECIDED 2026-11-18 (two batch passes); SLICES 1–2 IMPLEMENTED + LIVE
+2026-11-18/19. Residual work is sequenced at the bottom.
+
+## Implementation status (2026-11-19)
+
+- **Slice 1 — downloads drain: DONE + LIVE.** C1 provenance events +
+  arbiter seq persistence (sessions `f2fe01b`); `AttachmentStore` promoted to
+  `memogarden-utils` (`aab3275`); `providers/sessions-importer` (root `93d47c4`);
+  registered `sessions` @900s; UOB PDF drained live (sha256-verified, staged copy
+  deleted, Triage auto-applied).
+- **Slice 2 — trigger + restricted key: DONE + LIVE.** E3 = `api_keys.capabilities`
+  (system `0b4f48d` + `b16b727` chain bump — lesson: the migration file alone does
+  not deploy; `EXPECTED_SCHEMA_VERSION` + `SCHEMA_VERSION_CHAIN` must move too,
+  live-found via a 500 against the un-migrated column); middleware enforcement
+  (api `790f7e9`) — restricted keys get 403 `capability_denied` outside
+  `provider_run`'s route set; daemon post-close trigger (sessions `1dff414`,
+  fire-and-forget, heartbeat fallback); daemon key minted
+  (`425f8c47…`, Tier-1 env `agents/sessions-daemon/env` 0600); live-verified:
+  trigger 202, providers read 403, admin key unaffected.
+- **Operator side done:** Finances scope created (triage destination).
+- **Remaining:** event drains (C4 `SessionEvent` mirror — daemon seq fix already
+  in; C3 `PageVisit` capture needs daemon history events), session entity slice +
+  `contained_by` backfill, explicit scope policy via JWT (null policy already
+  = fail-closed Triage), §G docs (sessions.yaml v2 + RFC-013 §8 — done this pass).
 
 Context: RFC-013 (§8 flows, §12 findings) · `schemas/sessions.yaml` · RFC-012
 (provider accounts, §4.9) · RFC-011 (scope policy at creation).

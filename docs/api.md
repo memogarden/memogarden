@@ -329,6 +329,19 @@ their canonical identity via `GET /auth/me` with their key. See
 | Key unbound | owning username | `api_key` |
 | JWT session | username | `operator` |
 
+**Restricted key classes (capabilities):** keys minted with a non-empty
+`capabilities` list are *restricted* — the middleware allows them only on
+endpoints covered by those capabilities and returns `403 capability_denied`
+for everything else. Known capability: `provider_run` (may request provider
+runs — `POST /api/v1/providers/run`, `POST /api/v1/providers/<name>/run`,
+`POST /api/v1/providers/<name>/accounts/<id>/run` — but cannot read or write
+facts, entities, keys, or provider config). Keys minted without capabilities
+are unrestricted (legacy behavior). Capability sets are set at creation or
+via `PATCH /api-keys/<id> {"capabilities": [...]}` (JWT only, audited as
+`set_capabilities` Action facts). Use case: infrastructure daemons that
+should trigger work but hold no read/write authority (e.g. the browser
+sessions daemon's post-close drain trigger — RFC-013 ingestion register E3).
+
 **Create API key:**
 ```bash
 curl -X POST http://localhost:8080/api-keys/ \

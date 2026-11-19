@@ -6,19 +6,26 @@
 # ITEM TYPE
 # ==============================================================================
 type: Session
-extends: Entity (Core) + local manifest (daemon custody)
+extends: Entity (Core) + local staging cache (daemon custody)
 description: >
   A browser session is a named Chromium profile (user-data-dir) with lifecycle,
-  operator⇄agent co-control, and download custody. Opaque browser state
+  operator⇄agent co-control, and download capture. Opaque browser state
   (cookies, site data, SNSS restore files) stays browser-modeled INSIDE the
   profile directory — the PIS never models it (RFC-013 §3 boundary).
   The schema has TWO LAYERS with different truth and different owners:
-    LAYER 1 — LOCAL MANIFEST (session.json): custody/runtime state, owned by
-      the session daemon on the machine that runs the browser. Never PIS truth.
-    LAYER 2 — CORE VOCABULARY: the session entity's config + the fact-shaped
-      events the daemon emits, mirrored asynchronously into Core (invariant:
-      live arbitration is local; Core is eventually-consistent history —
-      a control transition never blocks on Core).
+    LAYER 1 — LOCAL MANIFEST + STAGING CACHE (session.json, downloads/,
+      screenshots/, events.jsonl): custody/runtime state + captured
+      artifacts pending drain, owned by the session daemon on the machine
+      that runs the browser. Never PIS truth. The staging area is a CACHE,
+      not a residence (RFC-013 ingestion register, D-1/D-3): steady state
+      is drained and near-empty — the sessions-importer provider pulls
+      everything into MemoGarden's content-addressed store and deletes
+      the staged copy; undrained captures are never evicted (loss-free).
+    LAYER 2 — SOIL VOCABULARY: the session entity's config + the fact-shaped
+      events the daemon emits, mirrored asynchronously into Soil by the
+      sessions-importer provider (drain; facts only — Core entities come
+      via the session-entity slice). Invariant: live arbitration is local
+      (a control transition never blocks on the drain).
 
 # ==============================================================================
 # LAYER 1 — LOCAL MANIFEST (custody/runtime state; daemon-owned)
@@ -28,8 +35,11 @@ description: >
 #   <name>/profile/        Chromium user-data-dir — the dehydrated state itself
 #   <name>/session.json    this manifest
 #   <name>/browser.log     stdout/stderr of the most recent open
-#   <name>/downloads/      captured downloads (see download_captured fact)
-#   <name>/events.jsonl    fact-shaped event log (LAYER 2 vocabulary, local)
+#   <name>/downloads/      STAGING: captured downloads, deleted on drain
+#                          (sessions-importer; see download_captured event)
+#   <name>/screenshots/    STAGING: screenshot verb output, deleted on drain
+#   <name>/events.jsonl    fact-shaped event log (LAYER 2 vocabulary, local;
+#                          drain watermark = per-session seq)
 
 manifest:
   name:
@@ -104,16 +114,55 @@ lifecycle_facts:          # per session
   event: session_opened         # mode: governed | detached
   event: session_dehydrated     # cache_reclaimed bytes on the event
   event: session_rehydrated
-  event: session_culled         # profile deleted (reserved)
-  event: download_captured      # filename, size, content_type; future link to
-                                #   a Core Document fact (RFC-013 §8: the
-                                #   downloads->Soil path — PROVEN live on UOB)
+  event: session_culled         # profile deleted (reserved; refuses when
+                                #   staging cache non-empty — never strand
+                                #   undrained captures)
+  event: download_captured      # IMPLEMENTED 2026-11-18 (register C1/D2):
+                                #   filename, url, size, content_type,
+                                #   captured_at, downloaded_by (arbiter tab
+                                #   state: operator|agent|unknown), session,
+                                #   machine. The drain folds this event into
+                                #   the Attachment fact's metadata (gmail-
+                                #   parity kind; D2) — never a separate fact.
+                                #   Drain path PROVEN live on UOB (2026-11-18:
+                                #   first real drain, sha256-verified).
 
   # Dehydration semantics (§6): SIGTERM close (complete crash-classified
   # snapshot; Chromium marks ALL programmatic closes as crashes — restore
   # works from the recovery path via --restore-last-session), Cache* purge
   # (cache != state: Cookies/Local Storage/Sessions/ kept), cache reclaimed
   # recorded. Rehydration is REQUESTED, never automatic (§8).
+
+# ==============================================================================
+# DRAIN (staging cache -> MemoGarden; implemented 2026-11-18/19)
+# ==============================================================================
+# Provider: `sessions` (providers/sessions-importer, in-server, interval 900s
+# fallback). Decisions of record: plan/rfc_013_ingestion_decision_register.md.
+#   semantics:    presence-as-queue (staged file present = pending)
+#                 ack-after-commit (staged file deleted only after its fact
+#                   is durably committed; crash-safe, never in `finally`)
+#                 (session, sha256) dedup — at-least-once is harmless
+#                 partials (.crdownload/.part/.tmp) never drain
+#                 loss-free: undrained captures are never evicted (D-3)
+#                 zero local retention post-drain; empty dirs pruned (F2)
+#   fact shape:   gmail-parity Attachment; data {filename, mime_type, size,
+#                 sha256, title, content_path}; metadata {provider=
+#                 memogarden-sessions, source=browser_session, stream=
+#                 downloads|screenshots, session, machine, account=<session>,
+#                 url, downloaded_by, captured_at, storage_root, drained_at}
+#   scoping:      all downloads -> Triage (runtime fail-closed default; D-4);
+#                 Finances scope = manual triage destination; metadata.account
+#                 (session name) stamped for future rules and relabeling
+#   trigger:      daemon POSTs /providers/sessions/run after a session close
+#                 with staged captures (D-2) using a TRIGGER-ONLY key
+#                 (api_keys.capabilities=["provider_run"], E3 restricted
+#                 class, Tier-1 env file agents/sessions-daemon/env 0600);
+#                 fire-and-forget — failure never blocks close (INV-4);
+#                 heartbeat drains if the trigger misses or Core was down.
+#   planned streams: PageVisit facts (per-navigation, ALL sessions — C3) and
+#                 the full §12.1 SessionEvent mirror incl. refusals (C4);
+#                 download_captured is folded into Attachment metadata and
+#                 never mirrored as a SessionEvent (D2).
 
 # ==============================================================================
 # SESSION CONFIG (Core-side entity attributes; future — daemon syncs down)
