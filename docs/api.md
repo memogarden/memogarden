@@ -485,17 +485,24 @@ carries the original's labels).
 
 **Enforcement flag:** `MEMOGARDEN_SCOPE_ENFORCEMENT` (default **off**).
 While off, reads are unfiltered and the rollout is provisioning-only.
-When on, every read path (get, query, search, events) excludes items
-outside the requester's active scope; search filtering happens before
-results are returned — scoped items never surface as matches.
+When on, every read path (fact get, entity get/query, search, explore,
+events) excludes items outside the requester's active scope. Reads
+honor the visibility axis: a label on a `visibility: public` scope is
+readable from any frame (most permissive wins on mixed labels) —
+writes stay frame-gated (visibility addendum). Search enforcement is
+pre-match at the SQL level: scoped items outside the allowed set never
+become matches, so scoped hits cannot displace real ones. `explore`
+gates its anchor like a read and presents inaccessible nodes as
+unresolved references (truthful count, edges unlisted never). Entity
+edit/forget are write-gated and D2 label-grant-checked like amend.
 
 **Current limitations (v1, tracked in
 [RFC-011 implementation progress](../plan/rfc_011_implementation.md)):**
-entity and relation reads are not yet scope-enforced (facts are);
-relabeling has no dedicated verb (amend's label changes are
-grant-checked per D2); query filtering happens after pagination (pages
-can be short). Providers are never scope-gated — they label at creation per
-operator policy (`unscoped | triage | rules`).
+query filtering happens after pagination (`total` reflects the fetched
+set, pages can be short — cardinality leak is ratified); SSE payload
+routing by label remains open (item 7); SG-9 `derive_inherit_scope`
+config not built. Providers are never scope-gated — they label at
+creation per operator policy (`unscoped | triage | rules`).
 
 ---
 
