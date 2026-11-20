@@ -50,9 +50,12 @@ def _defaults_for(subject: Optional[str]) -> dict:
         # The content-addressed attachment store is a data-dir fixture, not
         # per-account state (RFC-013 sessions share the same residence).
         "attachment_store_root": _DEFAULT_ATTACHMENT_STORE,
-        # Stage 3 kill switch (bisecting the 2026-11-20 worker-timeout
-        # deaths — see _attachments_stage). Config key wins.
-        "attachments_stage": False,
+        # Stage 3 kill switch. Was gated OFF while bisecting the
+        # 2026-11-20 worker-timeout massacre — root cause turned out to be
+        # the dedup-index construction spike (fixed by the slim scan,
+        # importer.py), NOT this stage; re-enabled default-ON after a
+        # clean gated run. Config key wins.
+        "attachments_stage": True,
     }
     if subject:
         defaults["sync_state_path"] = (
