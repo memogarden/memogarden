@@ -7,6 +7,8 @@ Persistence-side assertions here go through conftest.store_yielded, the
 test-double of that runtime behavior.
 """
 
+from datetime import datetime, timezone
+
 import pytest
 from system.soil import create_email_item
 
@@ -231,7 +233,7 @@ class TestAttachmentExtractor:
         importer, _ = importer_with_email
 
         class GoneApi:
-            def get_message(self, message_id):
+            def get_message(self, message_id):  # pragma: no cover
                 raise GmailApiError("gone", status_code=404)
 
             def get_attachment(self, message_id, attachment_id):  # pragma: no cover
@@ -241,6 +243,34 @@ class TestAttachmentExtractor:
         assert stats["emails_deleted"] == 1
         assert stats["errors"] == 0
         assert items == []
+
+    def test_amended_email_stays_covered_no_recapture(self, importer_with_email, store):
+        """system#11: a scope relabel supersedes the email under a NEW uuid;
+        coverage keys on the immutable gmail_message_id, so the amended
+        email is still covered — no refetch, no duplicate re-capture."""
+        importer, email_uuid = importer_with_email
+        items, _ = _drain(importer, store, FakeAttachmentApi())
+        store_yielded(importer.soil, items)
+
+        # amend the email: supersede it with a new uuid (same gmail id)
+        email_dict = importer.translate_gmail_to_email(simple_message())
+        with importer.soil:
+            new_uuid = importer.soil.create_fact(create_email_item(**email_dict))
+            importer.soil.mark_superseded(
+                email_uuid, new_uuid, datetime.now(timezone.utc).isoformat()
+            )
+
+        api2 = FakeAttachmentApi()
+        items2, stats2 = _drain(importer, store, api2)
+        assert items2 == []                       # no duplicate re-capture
+        assert stats2["emails_covered"] == 1      # the amended email is covered
+        assert api2.fetched_messages == []        # zero network
+        with importer.soil:
+            # still exactly one live attachment fact per instance
+            live = [f for f in importer.soil.list_items(_type="Attachment", limit=10)
+                    if not f.superseded_by]
+        assert len(live) == 1
+        assert live[0].metadata["email_uuid"] == email_uuid  # original parent kept
 
 
 class TestAccountScoping:
