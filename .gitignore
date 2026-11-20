@@ -111,3 +111,7 @@ package.json
 test-results/
 mg-project-studio/
 wt/
+
+# Agent/session artifacts
+.playwright-mcp/
+.zcode/
