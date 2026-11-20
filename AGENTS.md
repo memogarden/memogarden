@@ -20,11 +20,11 @@ This document provides context and guidelines for AI assistants (Claude, GPT, et
 
 ### Sibling Repositories (own git history, gitignored by root)
 
-1. **Root** (`/`) - Planning, docs, schemas, scripts, agent configuration, `providers/` (gmail + mbox ingestion providers), `gmail-oauth/`, published standalone repos `memogarden-gmail-provider` + `memogarden-mbox-importer`
+1. **Root** (`/`) - Planning, docs, schemas, scripts, agent configuration, `providers/` (gmail, mbox, tada, rss, gcal, sessions ingestion providers), `gmail-oauth/`, published standalone repos `memogarden-gmail-provider` + `memogarden-mbox-importer`
 2. **System** (`memogarden-system/`) - Core library (Soil + Core layers)
 3. **API** (`memogarden-api/`) - Flask REST + Semantic API + SSE
 4. **Client** (`memogarden-client/`) - Python SDK (`mg_client`) for the MemoGarden API
-5. **Utils** (`memogarden-utils/`) - Shared utilities (uid, hashing, config, recurrence) — NOTE: also tracked in the root repo (files appear in both; treat root as source of truth for now)
+5. **Utils** (`memogarden-utils/`) - Shared utilities (uid, hashing, config, recurrence, AttachmentStore) — its own repo is the SOLE source of truth (root previously tracked 4 stale copies; untracked 2026-11-21)
 6. **Project Studio** (`mg-project-studio/`) - Svelte web app (RFC-009 MemoGarden App)
 7. **MUSH** (`mush/`) - Multi-User Session Host (PTY daemon for human-agent shared terminals)
 8. **CD** (`memogarden-devcd/`) - Webhook-based deployment automation
@@ -41,7 +41,7 @@ This document provides context and guidelines for AI assistants (Claude, GPT, et
 ### Tracked Directories (part of the root repo)
 
 - `gmail-oauth/` - Gmail OAuth flow, stores credentials in HACM
-- `providers/` - Ingestion providers (`mbox-importer`, `gmail-importer` email ingestion; `tada-importer` task ingestion → Task facts, see `schemas/task.yaml`)
+- `providers/` - Ingestion providers (`gmail-importer` + `mbox-importer` email ingestion; `tada-importer` task ingestion → Task facts, see `schemas/task.yaml`; `rss-importer` RSS → Entry/Subscription facts; `gcal-importer` Calendar → Event facts, RFC-014; `sessions-importer` browser-session ingestion, RFC-013)
 - `schemas/` - Canonical data model (YAML, SQL, JSON Schema)
 
 **For detailed repository structure, file listings, and module breakdowns, see [docs/repositories.md](docs/repositories.md).**
@@ -304,6 +304,6 @@ If stuck or unsure:
 
 ---
 
-**Last Updated**: 2026-10-08
+**Last Updated**: 2026-11-21
 **For**: AI agents working on MemoGarden
 **Maintained by**: Project contributors
