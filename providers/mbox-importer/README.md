@@ -6,7 +6,11 @@ Import emails from mbox files (Google Takeout format) into MemoGarden Soil datab
 
 - Bulk import from mbox files
 - RFC 5322 email parsing
-- Deduplication by Message-ID
+- Deduplication by `(account, Message-ID)` (RFC-012 D1 — per-mailbox facts),
+  built from a projected SQL scan (0.1.1: never materializes the Email corpus
+  — the old `list_items`-based construction transiently allocated ~2 GB on
+  large corpora and contributed to the 2026-11-20 gmail worker-timeout
+  massacre; see the memogarden sysadmin incident 2026-11-20)
 - Thread reconstruction (replies_to relations)
 - Attachment detection and filename extraction
 - Provider-agnostic data/metadata separation
