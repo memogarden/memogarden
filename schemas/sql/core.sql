@@ -234,8 +234,16 @@ CREATE INDEX IF NOT EXISTS idx_provider_accounts_due
 -- TRIGGERS
 -- ============================================================================
 
+-- Auto-touch updated_at ONLY when the writer did not set it. The
+-- unguarded version desynchronized the hash chain: sanctioned edits
+-- (update_hash / update_data / supersede) set updated_at = isodatetime.now()
+-- and chain that exact value into the entity hash, but the old trigger
+-- stomped the column to datetime('now') afterwards, so the stored hash
+-- no longer matched the stored fields (RFC-008 v1.3, memogarden-system#6).
 CREATE TRIGGER IF NOT EXISTS entity_update_timestamp
 AFTER UPDATE ON entity
+    FOR EACH ROW
+    WHEN NEW.updated_at = OLD.updated_at
 BEGIN
     UPDATE entity SET updated_at = datetime('now')
     WHERE uuid = NEW.uuid;
