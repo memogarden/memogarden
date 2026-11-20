@@ -1011,4 +1011,57 @@ def test_power_loss_during_commit():
 
 ---
 
+---
+
+## Addendum v1.3 (2026-11-20, memogarden-system#6): Hash Integrity Semantics
+
+The original hash-chain description above ("Entity Hash Chains",
+"Full lineage: Trace back through previous_hash links", and the
+consistency-check SQL resolving previous_hash against other entity rows)
+described an invariant the writers never established. Ratified instead:
+
+**The entity hash is a per-row integrity seal.**
+
+```
+entity.hash = SHA256(lifecycle fields + previous_hash)
+```
+
+- `previous_hash` stores the previous version's hash VALUE — the link
+  chained into the current hash. In-place edits (`entity.update_hash` /
+  `update_data`, the sanctioned edit path behind the Semantic API, triage
+  relabels, scope stamping) overwrite that value in the same row by
+  design; it is NOT resolvable against other entity rows, and no writer
+  path ever produced a cross-entity link. The old "broken chain"
+  (previous_hash resolvability) check therefore false-positived on every
+  edited entity (12,713 of 21,325 live rows by 2026-11-20) and was
+  retired in favor of per-row recomputation:
+  `hash == SHA256(row lifecycle fields + row.previous_hash)`.
+- `supersede` now records the pre-supersede hash in `previous_hash`
+  (previously the column was left stale, so superseded rows were also
+  unverifiable).
+- The `entity_update_timestamp` trigger is guarded
+  (`WHEN NEW.updated_at = OLD.updated_at`): sanctioned writers set
+  `updated_at = isodatetime.now()` and chain that exact value into the
+  hash, but the unguarded trigger stomped the column to
+  `datetime('now')` afterwards, desynchronizing hash and fields for
+  every updated row. Writers that leave updated_at unset keep the
+  auto-touch behavior.
+- Entity `data` is NOT part of the hash (unchanged); content audit
+  remains in Soil facts and EntityDeltas.
+- Migration `20261120 -> 20261121` re-signs every entity once from its
+  stored fields: pre-2026-11 hashes predate the current field format
+  (99.3% of live rows) and were unverifiable by construction, so
+  re-signing loses no detectable history. The schemas seed stamp bumps
+  to 20261121 so fresh databases are born at the new semantics.
+
+**What this buys:** SAFE_MODE now means real tampering (any mutation of
+`type`/`created_at`/`updated_at`/`group_id`/`derived_from`/
+`superseded_by`/`superseded_at`/`previous_hash`/`hash` outside the
+writers breaks the seal) instead of permanent false alarm. What it does
+not buy: cross-version lineage tracing and entity-`data` integrity —
+lineage lives in supersede references and EntityDeltas; data integrity
+is Soil's domain.
+
+---
+
 **END OF RFC**
