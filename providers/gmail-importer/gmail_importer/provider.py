@@ -50,6 +50,9 @@ def _defaults_for(subject: Optional[str]) -> dict:
         # The content-addressed attachment store is a data-dir fixture, not
         # per-account state (RFC-013 sessions share the same residence).
         "attachment_store_root": _DEFAULT_ATTACHMENT_STORE,
+        # Stage 3 kill switch (bisecting the 2026-11-20 worker-timeout
+        # deaths — see _attachments_stage). Config key wins.
+        "attachments_stage": False,
     }
     if subject:
         defaults["sync_state_path"] = (
@@ -95,6 +98,7 @@ class GmailProvider:
             **(config or {}),
         }
         self.batch_limit = int(merged.get("batch_limit", _DEFAULT_BATCH_LIMIT))
+        self.attachments_stage_enabled = bool(merged.get("attachments_stage"))
         expand = lambda p: str(Path(p).expanduser())
         self.attachment_store_root = expand(merged["attachment_store_root"])
 
@@ -326,8 +330,16 @@ class GmailProvider:
             # scope policy (RFC-011 §4.8, per-account override included)
             # stamps them like every other fact — the reason this pass
             # exists as yields rather than direct soil writes.
-            for item in self._attachments_stage(api):
-                yield item
+            #
+            # Currently gated OFF: post-deploy, every gmail run died in a
+            # gunicorn worker-timeout massacre (~10-min cadence, all runs
+            # orphaned), and the only behavioral delta vs the surviving
+            # pre-deploy runs is this stage. Bisecting with the gate before
+            # re-enabling; the standalone CLI pass stays retired meanwhile
+            # (extraction pauses; the backlog sweep is unaffected).
+            if self.attachments_stage_enabled:
+                for item in self._attachments_stage(api):
+                    yield item
 
             completed = True
         finally:
