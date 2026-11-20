@@ -118,43 +118,42 @@ class AttachmentExtractor:
         return self._clients[subject]
 
     def _existing_index(self, account_filter: Optional[str] = None) -> dict:
-        """(email uuid, attachment filename) -> Attachment fact uuid.
+        """(gmail_message_id, filename) -> Attachment fact uuid.
 
-        NB: Gmail attachment IDs are NOT stable — the same message's
-        attachment gets a different id on every fetch — so they identify a
-        download session, never an extracted instance. Filename is stable.
+        Coverage key = message id + filename (system#11, 2026-11-20) — NOT
+        (email_uuid, filename). Gmail attachment IDs are NOT stable (a
+        per-fetch handle), so the filename is the per-message instance
+        key; and the EMAIL's soil uuid churns on every amend (a scope
+        relabel supersedes the row under a new uuid) while its attachments'
+        gmail ids are immutable — uuid-keying made every amended email look
+        uncovered and re-captured its attachments as no-key duplicates
+        (observed live: an 8,482-fact nyjc storm). Message-id keying means
+        an amended email stays covered; its attachment facts keep parented
+        to the email version they were captured for (resolvable via the
+        supersedes chain — consumers resolve attachments via
+        gmail_message_id, which rides in metadata on both sides of an
+        amend).
 
         Projected in SQL (only the three keys are read): fact-level
         materialization of the whole corpus peaked an hourly no-op run at
         ~1.6 GB. With an account_filter, only that account's attachments
         are indexed (per-account runs cover their own emails).
         """
+        sql = """SELECT uuid,
+                        json_extract(metadata, '$.gmail_message_id') AS mid,
+                        json_extract(data, '$.filename') AS filename
+                 FROM item
+                 WHERE _type = 'Attachment'"""
+        params: list = []
         if account_filter is not None:
-            rows = self.soil._get_connection().execute(
-                """SELECT uuid,
-                          json_extract(metadata, '$.email_uuid') AS email_uuid,
-                          json_extract(data, '$.filename') AS filename
-                   FROM item
-                   WHERE _type = 'Attachment'
-                     AND json_extract(metadata, '$.account') = ?""",
-                (account_filter,),
-            ).fetchall()
-        else:
-            rows = self._existing_index_all()
+            sql += " AND json_extract(metadata, '$.account') = ?"
+            params.append(account_filter)
+        rows = self.soil._get_connection().execute(sql, params).fetchall()
         return {
-            (row["email_uuid"], row["filename"]): row["uuid"]
+            (row["mid"], row["filename"]): row["uuid"]
             for row in rows
-            if row["email_uuid"] and row["filename"]
+            if row["mid"] and row["filename"]
         }
-
-    def _existing_index_all(self) -> list:
-        return self.soil._get_connection().execute(
-            """SELECT uuid,
-                      json_extract(metadata, '$.email_uuid') AS email_uuid,
-                      json_extract(data, '$.filename') AS filename
-               FROM item
-               WHERE _type = 'Attachment'"""
-        ).fetchall()
 
     def iter_uncovered(
         self, account_filter: Optional[str] = None, dry_run: bool = False
@@ -181,7 +180,11 @@ class AttachmentExtractor:
                 email_uuid = row["uuid"]
                 account = row["account"]
                 declared = json.loads(row["filenames"]) if row["filenames"] else []
-                if declared and all((email_uuid, fn) in existing for fn in declared):
+                # Coverage keys on the message id (system#11): immutable
+                # across amends, so a relabeled email stays covered.
+                if declared and all(
+                    (row["gmail_id"], fn) in existing for fn in declared
+                ):
                     self.stats["emails_covered"] += 1
                     continue
                 email = self.soil.get_fact(email_uuid)
@@ -212,7 +215,7 @@ class AttachmentExtractor:
                     logger.warning("Refetch failed for %s: %s", email_uuid, e)
                     continue
                 for item in self._parts_for_email(api, email, message, existing, dry_run):
-                    existing[(item["metadata"]["email_uuid"], item["data"]["filename"])] = "new"
+                    existing[(item["metadata"]["gmail_message_id"], item["data"]["filename"])] = "new"
                     self.stats["downloaded"] += 1
                     yield item
 
@@ -232,6 +235,7 @@ class AttachmentExtractor:
                         json_extract(data, '$.attachment_filenames') AS filenames
                  FROM item
                  WHERE _type = 'Email'
+                   AND superseded_by IS NULL
                    AND json_extract(data, '$.attachment_count') > 0
                    AND json_extract(metadata, '$.gmail_message_id') IS NOT NULL"""
         params: list = []
@@ -261,7 +265,7 @@ class AttachmentExtractor:
             if not (filename and "attachment" in disposition.lower() and attachment_id):
                 continue
             self.stats["attachments_found"] += 1
-            if (email.uuid, filename) in existing:
+            if (email.metadata.get("gmail_message_id"), filename) in existing:
                 self.stats["skipped_existing"] += 1
                 continue
             self._log(f"fetching {filename} ({attachment_id}) for {email.uuid}")
