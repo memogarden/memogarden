@@ -1,9 +1,14 @@
 ---
 name: continue-implementation
-description: MemoGarden implementation plan execution workflow. Use when continuing implementation on sessions from plan/memogarden-implementation-plan.md.
+description: MemoGarden session execution workflow (unpack session, execute, test, review, commit, improve). The core implementation plan is RETIRED (2026-10-08); use this workflow only for per-project plans that follow the same session format.
 ---
 
 # MemoGarden Implementation Plan Workflow
+
+> **NOTE (2026-10-08):** `plan/memogarden-implementation-plan.md` is **retired** — it is a
+> historical record through Session 14 and no longer tracks current work. This workflow
+> remains as a reference and may be adapted for per-project plans (e.g.
+> `plan/project_studio_implementation_plan.md`).
 
 This skill defines the standard execution cycle for working on the MemoGarden implementation plan.
 

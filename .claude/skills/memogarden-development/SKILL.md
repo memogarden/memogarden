@@ -1,6 +1,6 @@
 ---
 name: memogarden-development
-description: Development environment setup, running the API server, architectural constraints, anti-patterns to avoid, shell command best practices, and working with the implementation plan. Use when doing ANY development work on MemoGarden.
+description: Development environment setup, running the API server, architectural constraints, anti-patterns to avoid, shell command best practices, and working with per-project plans. Use when doing ANY development work on MemoGarden.
 ---
 
 # MemoGarden Development
@@ -13,7 +13,7 @@ When beginning work on any MemoGarden task:
    ```bash
    cat plan/memogarden_prd_v0_11_0.md  # Understand platform architecture
    cat plan/budget_prd.md                # Understand budget app (when needed)
-   cat plan/memogarden-implementation-plan.md  # Check current step
+   cat plan/memogarden-implementation-plan.md  # RETIRED (historical only)
    ```
 
 2. **Navigate to working directory**
@@ -265,9 +265,13 @@ cd mg-project-studio
 
 ## Working with the Implementation Plan
 
+> **NOTE (2026-10-08):** `plan/memogarden-implementation-plan.md` is **retired** —
+> historical record of platform-core Sessions 1–14 only. It no longer tracks current
+> work. For current state, check each repo's git history and per-project plans.
+
 ### Understanding Progress
 
-The implementation plan (`plan/memogarden-implementation-plan.md`) has this structure:
+The implementation plan (`plan/memogarden-implementation-plan.md`) had this structure while active:
 
 ```
 Step 1: Core Backend Foundation ⚡ CURRENT STEP
@@ -319,7 +323,7 @@ Always update:
 ├── plan/
 │   ├── budget_prd.md                   # Budget App Requirements (financial focus)
 │   ├── memogarden_prd_v0_11_0.md       # Complete Platform PRD (Soil + Core + apps)
-│   └── memogarden-implementation-plan.md # Current step and progress
+│   └── memogarden-implementation-plan.md # Retired 2026-10-08 (historical)
 ├── memogarden-system/                 # System package
 │   ├── system/                        # Core library
 │   │   ├── core/                     # Core database operations
@@ -385,7 +389,7 @@ If stuck:
 - **[docs/configuration.md](../../../docs/configuration.md)** - Configuration reference
 - **[memogarden_prd_v0_11_0.md](../../../plan/memogarden_prd_v0_11_0.md)** - Complete platform architecture
 - **[budget_prd.md](../../../plan/budget_prd.md)** - Budget app requirements (when needed)
-- **[memogarden-implementation-plan.md](../../../plan/memogarden-implementation-plan.md)** - Current step and progress
+- **[memogarden-implementation-plan.md](../../../plan/memogarden-implementation-plan.md)** - RETIRED — historical record of platform-core sessions
 
 ## Future Design Reference
 
@@ -473,8 +477,8 @@ When implementing related features or making architectural decisions, consult th
    - Rest of codebase uses the abstraction
    - Example: JWT tokens (only `auth/token.py` imports PyJWT)
 
-5. **Follow the implementation plan**
-   - Check current step in `plan/implementation.md`
+5. **Follow the relevant project's plan**
+   - Check the project's own plan/roadmap before starting work
    - Don't jump ahead to future steps
 
 6. **Test everything**
@@ -538,7 +542,7 @@ The following commands are pre-approved in `.claude/settings.local.json` and won
 ❌ **Don't** skip tests "for now"
 ❌ **Don't** use local time zones
 ❌ **Don't** over-engineer for future needs
-❌ **Don't** ignore the implementation plan
+❌ **Don't** ignore the project's plan/roadmap
 ❌ **Don't** batch multiple unrelated changes
 ❌ **Don't** use `2>&1` in shell commands (triggers approval workflow unnecessarily)
 ❌ **Don't** import `datetime` directly in business logic (use `isodatetime`)
