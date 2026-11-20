@@ -71,6 +71,16 @@ class GmailImporter(EmailImporter):
         sync_state_path: Optional[str] = None,
         excluded_ids_path: Optional[str] = None,
     ):
+        # Slim-scan memo (2026-11-20): the base class builds email_index and
+        # dedup_index via TWO separate json_extract scans of the item table.
+        # At the current corpus (39.5k attributed emails over a 1.86 GB
+        # table) that construction transiently allocates ~2 GB — past the
+        # service's MemoryHigh=1G cap, triggering the swap-storm → gunicorn
+        # worker-timeout massacre (every gmail run orphaned 2026-11-20
+        # 16:28–17:13). ONE combined pass with a small page cache does both
+        # indexes at ~56 MB / 1.5 s. Must precede super().__init__ (which
+        # calls the builders).
+        self._slim_email_scan: Optional[list] = None
         super().__init__(soil, batch_size)
         self.account_id = account_id
         self.hacm_path = hacm_path
@@ -124,6 +134,44 @@ class GmailImporter(EmailImporter):
         sys.modules["gmail_oauth"] = module
         spec.loader.exec_module(module)
         return module.GmailOAuthClient
+
+    def _slim_scan_rows(self) -> list:
+        """One projected pass over Email facts for both dedup indexes.
+
+        The slim-SQL override flagged pending since the Gmail ingestion
+        implementation (trigger: "batch-1000 runs creep" — reached): the
+        base class's two full-table json_extract scans transiently
+        allocated ~2 GB per importer construction; this single pass with
+        PRAGMA cache_size pinned to 2 MB measures ~56 MB / 1.5 s over the
+        same corpus. Runs once per importer (both indexes share it).
+        """
+        if self._slim_email_scan is None:
+            conn = self.soil._get_connection()
+            conn.execute("PRAGMA cache_size = -2000")  # 2 MB page cache
+            self._slim_email_scan = conn.execute(
+                """SELECT uuid,
+                          json_extract(data, '$.rfc_message_id') AS mid,
+                          json_extract(metadata, '$.account') AS account
+                   FROM item
+                   WHERE _type = 'Email'"""
+            ).fetchall()
+        return self._slim_email_scan
+
+    def _build_index(self) -> dict[str, str]:
+        """rfc_message_id -> uuid, from the shared slim scan."""
+        return {
+            row["mid"]: row["uuid"]
+            for row in self._slim_scan_rows()
+            if row["mid"]
+        }
+
+    def _build_dedup_index(self) -> dict[tuple[str | None, str], str]:
+        """(account, rfc_message_id) -> uuid, from the shared slim scan."""
+        return {
+            (row["account"], row["mid"]): row["uuid"]
+            for row in self._slim_scan_rows()
+            if row["mid"]
+        }
 
     def _build_api_client(self) -> GmailApiClient:
         """Refresh the access token via HACM-stored credentials.
