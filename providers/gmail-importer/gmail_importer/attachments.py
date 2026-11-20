@@ -1,13 +1,29 @@
-"""Content-addressed attachment storage + Attachment facts.
+"""Content-addressed attachment storage + Attachment planning.
 
 Binaries live under <data_dir>/attachments/<h2>/<h2>/<sha256><ext>: the
 file is named by its own content hash, so identical files deduplicate and
 any copy can be integrity-checked against the fact's sha256.
 
-Each (email, attachment) instance becomes an immutable Attachment fact
-linked to its email with a `contained_by` relation. Search indexes the
-fact metadata (original filename, mime, size, sha256, gmail ids); the
-email facts themselves are never modified and Gmail stays read-only.
+Attachment facts are created by the RUNTIME (providers yield, MemoGarden
+stores — RFC-012 §4.9: binaries joined the provider contract 2026-11-20).
+This module only PREPARES attachments: for every Email fact that declares
+attachments, the Gmail message is refetched by its stored gmail_message_id
+(facts predate attachment-id metadata), each attachment part is downloaded
+into the store, and a runtime-normalized dict is yielded. The runtime then
+creates the fact (applying the operator's scope policy, RFC-011 §4.8) and
+the `contained_by` relation via the provider's create_relations hook.
+Re-runs skip instances already extracted, keyed on (email uuid, attachment
+filename) — Gmail's attachment ids are per-fetch handles that change
+between fetches. The yield contract replaces the former standalone CLI
+pass, whose facts never passed the runtime's scope seam and landed
+unstamped.
+
+Account routing (RFC-012 §4.6): the refetch goes through the client of
+the account that OWNS the email fact (its metadata.account) — fetching
+account B's mail with account A's token 404s and would masquerade as a
+deletion. `api_factory(account_subject)` is called lazily per account,
+only when an uncovered email forces a refetch; None-keyed legacy facts
+(pre-attribution) map to the caller's default account.
 """
 
 from __future__ import annotations
@@ -16,11 +32,9 @@ import base64
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Callable, Optional
+from typing import Callable, Iterator, Optional
 
 from system.soil import Soil
-from system.soil.fact import Fact, generate_soil_uuid
-from system.soil.relation import SystemRelation
 
 from gmail_importer.gmail_api import GmailApiError
 
@@ -33,30 +47,16 @@ from utils.attachments import AttachmentStore, safe_ext as _safe_ext
 
 logger = logging.getLogger(__name__)
 
-# Same convention as the mbox importer's relation timestamps.
-_RELATION_EPOCH = datetime(2020, 1, 1, tzinfo=timezone.utc)
-
-
-def _days_since_epoch() -> int:
-    return (datetime.now(timezone.utc) - _RELATION_EPOCH).days
-
 
 class AttachmentExtractor:
-    """Download Gmail attachments for ingested emails into an AttachmentStore.
+    """Plan Gmail attachment downloads for ingested emails.
 
-    For every Email fact that declares attachments, the Gmail message is
-    refetched by its stored gmail_message_id (facts predate attachment-id
-    metadata), each attachment part is downloaded, and an Attachment fact +
-    `contained_by` relation are created. Re-runs skip instances already
-    extracted, keyed on (email uuid, attachment filename) — Gmail's
-    attachment ids are per-fetch handles that change between fetches.
-
-    Account routing (RFC-012 §4.6): the refetch goes through the client of
-    the account that OWNS the email fact (its metadata.account) — fetching
-    account B's mail with account A's token 404s and would masquerade as a
-    deletion. `api_factory(account_subject)` is called lazily per account,
-    only when an uncovered email forces a refetch; None-keyed legacy facts
-    (pre-attribution) map to the caller's default account.
+    Yields runtime-normalized Attachment dicts for declared-but-uncovered
+    attachments; the runtime creates the facts (scope-stamped, RFC-011
+    §4.8) and the provider's create_relations hook links each to its email
+    via `contained_by`. Re-runs are O(new mail) via the (email uuid,
+    filename) coverage index — the binaries deduplicate in the
+    content-addressed store, so a re-download is cheap and safe.
     """
 
     def __init__(
@@ -95,7 +95,8 @@ class AttachmentExtractor:
 
         A credential-shaped failure parks the account for the rest of the
         pass (its token is dead; retrying per email would only spam) —
-        mirror of the runtime's needs_reauth behavior for the CLI pass.
+        mirror of the runtime's needs_reauth behavior, kept so one dead
+        account cannot fail a multi-account pass.
         """
         subject = account or self._default_account
         if subject in self._dead_accounts:
@@ -116,7 +117,7 @@ class AttachmentExtractor:
                 raise
         return self._clients[subject]
 
-    def _existing_index(self) -> dict[tuple[str, str], str]:
+    def _existing_index(self, account_filter: Optional[str] = None) -> dict:
         """(email uuid, attachment filename) -> Attachment fact uuid.
 
         NB: Gmail attachment IDs are NOT stable — the same message's
@@ -125,70 +126,62 @@ class AttachmentExtractor:
 
         Projected in SQL (only the three keys are read): fact-level
         materialization of the whole corpus peaked an hourly no-op run at
-        ~1.6 GB.
+        ~1.6 GB. With an account_filter, only that account's attachments
+        are indexed (per-account runs cover their own emails).
         """
-        rows = self.soil._get_connection().execute(
-            """SELECT uuid,
-                      json_extract(metadata, '$.email_uuid') AS email_uuid,
-                      json_extract(data, '$.filename') AS filename
-               FROM item
-               WHERE _type = 'Attachment'"""
-        ).fetchall()
+        if account_filter is not None:
+            rows = self.soil._get_connection().execute(
+                """SELECT uuid,
+                          json_extract(metadata, '$.email_uuid') AS email_uuid,
+                          json_extract(data, '$.filename') AS filename
+                   FROM item
+                   WHERE _type = 'Attachment'
+                     AND json_extract(metadata, '$.account') = ?""",
+                (account_filter,),
+            ).fetchall()
+        else:
+            rows = self._existing_index_all()
         return {
             (row["email_uuid"], row["filename"]): row["uuid"]
             for row in rows
             if row["email_uuid"] and row["filename"]
         }
 
-    def extract_all(self, dry_run: bool = False, account_filter: Optional[str] = None) -> dict:
+    def _existing_index_all(self) -> list:
+        return self.soil._get_connection().execute(
+            """SELECT uuid,
+                      json_extract(metadata, '$.email_uuid') AS email_uuid,
+                      json_extract(data, '$.filename') AS filename
+               FROM item
+               WHERE _type = 'Attachment'"""
+        ).fetchall()
+
+    def iter_uncovered(
+        self, account_filter: Optional[str] = None, dry_run: bool = False
+    ) -> Iterator[dict]:
+        """Yield runtime-normalized Attachment dicts for uncovered mail.
+
+        Reads Soil (coverage index + candidate scan); WRITES only the
+        binary into the content-addressed store — the fact itself is the
+        runtime's to create (providers yield, MemoGarden stores). Steady
+        state is a covered-only scan: no API client, no network, O(new).
+        """
         # Clients are built lazily per account (see _client_for): a
         # covered-only pass (the steady-state hourly case) skips both the
-        # KDF and the network entirely.
-        # Everything (index build, listing, facts) happens inside one Soil
-        # context; the API calls are slow but the connection tolerates it.
+        # KDF and the network entirely. The Soil context is held for the
+        # whole stage (reads only): the API calls are slow but the
+        # connection tolerates it — same posture as the retired CLI pass.
         with self.soil:
-            existing = self._existing_index()
-            # Candidate scan is a projected query (uuid, gmail id, owning
-            # account, declared filenames); full Facts are fetched only for
-            # uncovered emails.
-            rows = self.soil._get_connection().execute(
-                """SELECT uuid,
-                          json_extract(metadata, '$.gmail_message_id') AS gmail_id,
-                          json_extract(metadata, '$.account') AS account,
-                          json_extract(data, '$.attachment_filenames') AS filenames
-                   FROM item
-                   WHERE _type = 'Email'
-                     AND json_extract(data, '$.attachment_count') > 0
-                     AND json_extract(metadata, '$.gmail_message_id') IS NOT NULL"""
-            ).fetchall()
-            emails = []
-            for row in rows:
-                account = row["account"]
-                if account_filter is not None:
-                    # --account mode: only emails this account owns (legacy
-                    # unattributed facts ride on the default account).
-                    if (account or self._default_account) != account_filter:
-                        continue
-                emails.append(
-                    (
-                        row["uuid"],
-                        row["gmail_id"],
-                        account,
-                        json.loads(row["filenames"]) if row["filenames"] else [],
-                    )
-                )
-            self._log(f"{len(emails)} ingested emails declare attachments")
+            existing = self._existing_index(account_filter)
+            rows = self._scan_candidates(account_filter)
+            self._log(f"{len(rows)} ingested emails declare attachments")
 
-            for email_uuid, gmail_id, account, declared in emails:
+            for row in rows:
                 self.stats["emails_scanned"] += 1
-                # Coverage skip: if every filename the email fact declares is
-                # already extracted, refetching the message is pointless —
-                # its attachment set cannot have grown (mail is immutable).
-                # This keeps the pass O(new mail) instead of O(all mail with
-                # attachments) as the mailbox grows.
-                if declared and all(
-                    (email_uuid, fn) in existing for fn in declared
-                ):
+                email_uuid = row["uuid"]
+                account = row["account"]
+                declared = json.loads(row["filenames"]) if row["filenames"] else []
+                if declared and all((email_uuid, fn) in existing for fn in declared):
                     self.stats["emails_covered"] += 1
                     continue
                 email = self.soil.get_fact(email_uuid)
@@ -198,7 +191,7 @@ class AttachmentExtractor:
                     continue
                 try:
                     api = self._client_for(account)
-                    message = api.get_message(gmail_id)
+                    message = api.get_message(row["gmail_id"])
                 except GmailApiError as e:
                     if e.auth_failure:
                         # Account parked by _client_for (or a mid-run 401):
@@ -209,58 +202,92 @@ class AttachmentExtractor:
                         # message deleted at the source since ingestion — its
                         # already-extracted attachments remain valid history
                         self.stats["emails_deleted"] += 1
-                        logger.info("Email %s deleted at source; skipping attachments", email.uuid)
+                        logger.info("Email %s deleted at source; skipping attachments", email_uuid)
                         continue
                     self.stats["errors"] += 1
-                    logger.warning("Refetch failed for %s: %s", email.uuid, e)
+                    logger.warning("Refetch failed for %s: %s", email_uuid, e)
                     continue
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 — one bad email must not stop the pass
                     self.stats["errors"] += 1
-                    logger.warning("Refetch failed for %s: %s", email.uuid, e)
+                    logger.warning("Refetch failed for %s: %s", email_uuid, e)
                     continue
-                for part in GmailImporter._walk_parts(message.get("payload", {})):
-                    part_headers = GmailImporter._part_headers(part)
-                    disposition = part_headers.get("content-disposition", "")
-                    filename = part.get("filename") or ""
-                    attachment_id = part.get("body", {}).get("attachmentId")
-                    if not (filename and "attachment" in disposition.lower() and attachment_id):
-                        continue
-                    self.stats["attachments_found"] += 1
-                    if (email.uuid, filename) in existing:
-                        self.stats["skipped_existing"] += 1
-                        continue
-                    self._log(f"fetching {filename} ({attachment_id}) for {email.uuid}")
-                    if dry_run:
-                        continue
-                    try:
-                        self._extract_one(api, email, attachment_id, filename, part)
-                        existing[(email.uuid, filename)] = "new"
-                        self.stats["downloaded"] += 1
-                    except GmailApiError as e:
-                        if e.status_code == 404:
-                            self.stats["attachments_missing"] += 1
-                            logger.warning("Attachment %s/%s deleted at source", email.uuid, filename)
-                        else:
-                            self.stats["errors"] += 1
-                            logger.warning("Extraction failed for %s/%s: %s", email.uuid, filename, e)
-                    except Exception as e:
-                        self.stats["errors"] += 1
-                        logger.warning("Extraction failed for %s/%s: %s", email.uuid, filename, e)
-                # RFC-012 §4.9: commit per email, not once per pass. The whole-
-                # pass transaction held soil.db's single writer lock for the
-                # entire extraction (15-30 min with a real backlog), starving
-                # concurrent account runs into "database is locked" failures
-                # (observed live: alt lost four consecutive heartbeats). Short
-                # bursts interleave under the 5s busy_timeout; partial progress
-                # is also crash-durable now.
-                self.soil.commit()
-        return self.stats
+                for item in self._parts_for_email(api, email, message, existing, dry_run):
+                    existing[(item["metadata"]["email_uuid"], item["data"]["filename"])] = "new"
+                    self.stats["downloaded"] += 1
+                    yield item
 
-    def _extract_one(
-        self, api, email: Fact, attachment_id: str, filename: str, part: dict
-    ) -> Fact:
-        # NB: the Attachment resource puts `data` at the TOP LEVEL (not under
-        # `body`) — verified against the live API.
+    def _scan_candidates(self, account_filter: Optional[str] = None) -> list:
+        """Projected email scan: uuid, gmail id, owning account, filenames.
+
+        Account-scoped when a filter is given (per-account runs cover only
+        their own mail — strictly: NULL-account emails belong to no run,
+        and letting each run claim them would refetch cross-mailbox with
+        the wrong client; pre-RFC-012 corpora have none — verified
+        2026-11-20, zero legacy emails declare attachments).
+        """
+        sql = """SELECT uuid,
+                        json_extract(metadata, '$.gmail_message_id') AS gmail_id,
+                        json_extract(metadata, '$.account') AS account,
+                        canonical_at,
+                        json_extract(data, '$.attachment_filenames') AS filenames
+                 FROM item
+                 WHERE _type = 'Email'
+                   AND json_extract(data, '$.attachment_count') > 0
+                   AND json_extract(metadata, '$.gmail_message_id') IS NOT NULL"""
+        params: list = []
+        if account_filter is not None:
+            sql += " AND json_extract(metadata, '$.account') = ?"
+            params.append(account_filter)
+        rows = self.soil._get_connection().execute(sql, params).fetchall()
+        # Order oldest-canonical first for stable, oldest-first sweeps.
+        rows.sort(key=lambda r: r["canonical_at"] or "")
+        return rows
+
+    def _parts_for_email(
+        self, api, email, message: dict, existing: dict, dry_run: bool
+    ) -> Iterator[dict]:
+        """Walk one refetched message's attachment parts; yield dicts.
+
+        Isolation: a failed refetch already skipped the email; a failed
+        part (deleted at source, network, empty payload) skips itself —
+        one bad attachment must never fail a run (it will be retried by
+        the next coverage scan, which is idempotent).
+        """
+        for part in GmailImporter._walk_parts(message.get("payload", {})):
+            part_headers = GmailImporter._part_headers(part)
+            disposition = part_headers.get("content-disposition", "")
+            filename = part.get("filename") or ""
+            attachment_id = part.get("body", {}).get("attachmentId")
+            if not (filename and "attachment" in disposition.lower() and attachment_id):
+                continue
+            self.stats["attachments_found"] += 1
+            if (email.uuid, filename) in existing:
+                self.stats["skipped_existing"] += 1
+                continue
+            self._log(f"fetching {filename} ({attachment_id}) for {email.uuid}")
+            if dry_run:
+                continue
+            try:
+                yield self._build_one(api, email, attachment_id, filename, part)
+            except GmailApiError as e:
+                if e.status_code == 404:
+                    self.stats["attachments_missing"] += 1
+                    logger.warning("Attachment %s/%s deleted at source", email.uuid, filename)
+                else:
+                    self.stats["errors"] += 1
+                    logger.warning("Extraction failed for %s/%s: %s", email.uuid, filename, e)
+            except Exception as e:  # noqa: BLE001 — skip, retried next scan
+                self.stats["errors"] += 1
+                logger.warning("Extraction failed for %s/%s: %s", email.uuid, filename, e)
+
+    def _build_one(
+        self, api, email, attachment_id: str, filename: str, part: dict
+    ) -> dict:
+        """Download one part into the store; return the runtime dict.
+
+        NB: the Attachment resource puts `data` at the TOP LEVEL (not under
+        `body`) — verified against the live API.
+        """
         response = api.get_attachment(email.metadata["gmail_message_id"], attachment_id)
         body_data = response.get("data", "")
         data = base64.urlsafe_b64decode(body_data + "=" * (-len(body_data) % 4))
@@ -276,13 +303,10 @@ class AttachmentExtractor:
 
         rel_path, digest = self.store.write(data, filename)
         now = datetime.now(timezone.utc).isoformat()
-        fact = Fact(
-            uuid=generate_soil_uuid(),
-            _type="Attachment",
-            realized_at=now,
-            canonical_at=email.canonical_at,  # arrived with its email
-            fidelity="full",
-            data={
+        self._log(f"prepared {filename} -> {rel_path} (sha256 {digest[:12]}...)")
+        return {
+            "type": "Attachment",
+            "data": {
                 "filename": filename,
                 "mime_type": part.get("mimeType", ""),
                 "size": len(data),
@@ -290,7 +314,7 @@ class AttachmentExtractor:
                 "title": filename,  # searchable like other facts
                 "content_path": rel_path,
             },
-            metadata={
+            "metadata": {
                 "provider": "google",
                 "source": "gmail_api",
                 "email_uuid": email.uuid,
@@ -301,20 +325,15 @@ class AttachmentExtractor:
                 "storage_root": str(self.store.root),
                 "fetched_at": now,
             },
-        )
-        self.soil.create_fact(fact)
+            # Arrived with its email — the attachment is older than the run
+            "canonical_at": email.canonical_at,
+            "realized_at": now,
+        }
 
-        relation = SystemRelation(
-            uuid=generate_soil_uuid(),
-            kind="contained_by",
-            source=fact.uuid,
-            source_type="item",
-            target=email.uuid,
-            target_type="item",
-            created_at=_days_since_epoch(),
-            evidence=None,
-            metadata=None,
-        )
-        self.soil.create_relation(relation)
-        self._log(f"stored {filename} -> {rel_path} (sha256 {digest[:12]}...)")
-        return fact
+
+# Kept for callers/tests that build relation timestamps directly.
+_RELATION_EPOCH = datetime(2020, 1, 1, tzinfo=timezone.utc)
+
+
+def _days_since_epoch() -> int:
+    return (datetime.now(timezone.utc) - _RELATION_EPOCH).days

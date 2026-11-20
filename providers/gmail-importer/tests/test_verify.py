@@ -1,9 +1,11 @@
 """Tests for attachment integrity verification (mutation detection)."""
 
+import base64
+
 import pytest
 from system.soil import create_email_item
 
-from conftest import simple_message
+from conftest import simple_message, store_yielded
 from gmail_importer.attachments import AttachmentExtractor, AttachmentStore
 from gmail_importer.verify import verify_attachments
 
@@ -23,12 +25,14 @@ def extracted(importer, tmp_path):
             return simple_message()
 
         def get_attachment(self, message_id, attachment_id):
-            import base64
-
             return {"data": base64.urlsafe_b64encode(PDF_BYTES).decode().rstrip("=")}
 
     store = AttachmentStore(tmp_path / "attachments")
-    AttachmentExtractor(importer.soil, store, lambda subject: FakeApi(), verbose=False).extract_all()
+    extractor = AttachmentExtractor(
+        importer.soil, store, lambda subject: FakeApi(), verbose=False
+    )
+    items = list(extractor.iter_uncovered())
+    store_yielded(importer.soil, items)  # simulate the runtime's persistence
     return importer, store
 
 

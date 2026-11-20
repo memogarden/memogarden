@@ -280,8 +280,13 @@ class TestAttachmentRouting:
             legacy_uuid = soil.create_fact(create_email_item(**legacy))
         return soil, attributed_uuid, legacy_uuid
 
-    def test_refetch_goes_through_owning_account(self, routed_soil, tmp_path):
-        from conftest import b64url_bytes
+    def test_unfiltered_pass_yields_owning_account_attribution(
+        self, routed_soil, tmp_path
+    ):
+        """Central-pass mode (no filter): both emails' attachments are
+        prepared, each client resolved per owning account (legacy rides on
+        the default), and every yield carries the email's account."""
+        from conftest import b64url_bytes, store_yielded
 
         soil, attributed_uuid, legacy_uuid = routed_soil
         calls: list[str] = []
@@ -304,16 +309,17 @@ class TestAttachmentRouting:
             verbose=False,
             default_account="legacy@example.com",
         )
-        stats = extractor.extract_all()
-
-        assert stats["downloaded"] == 2
+        items = list(extractor.iter_uncovered())
+        assert extractor.stats["downloaded"] == 2
         assert set(calls) == {ACCOUNT, "legacy@example.com"}
 
+        by_email = {i["metadata"]["email_uuid"]: i for i in items}
+        assert by_email[attributed_uuid]["metadata"]["account"] == ACCOUNT
+        assert by_email[legacy_uuid]["metadata"]["account"] is None
+        # persistence stays the runtime's job
         with soil:
-            attachments = soil.list_items(_type="Attachment", limit=10)
-        by_email = {a.metadata["email_uuid"]: a for a in attachments}
-        assert by_email[attributed_uuid].metadata["account"] == ACCOUNT
-        assert by_email[legacy_uuid].metadata.get("account") is None
+            assert soil.list_items(_type="Attachment", limit=10) == []
+        store_yielded(soil, items)  # runtime simulation accepts the shape
 
     def test_account_filter_scopes_candidates(self, routed_soil, tmp_path):
         from conftest import b64url_bytes
@@ -339,14 +345,50 @@ class TestAttachmentRouting:
             verbose=False,
             default_account=OTHER,
         )
-        stats = extractor.extract_all(account_filter=ACCOUNT)
+        items = list(extractor.iter_uncovered(account_filter=ACCOUNT))
 
-        assert stats["emails_scanned"] == 1
-        assert stats["downloaded"] == 1
+        assert extractor.stats["emails_scanned"] == 1
+        assert extractor.stats["downloaded"] == 1
+        assert len(items) == 1
+        assert items[0]["metadata"]["account"] == ACCOUNT
+
+    def test_strict_scan_ignores_legacy_emails(self, routed_soil, tmp_path):
+        """Provider-world filter (default = filter): a NULL-account email is
+        claimed by NO run — each run refetching it cross-mailbox would 404
+        forever. Verified corpora have none (2026-11-20 pre-flight)."""
+        from conftest import b64url_bytes
+
+        soil, attributed_uuid, legacy_uuid = routed_soil
+        fetched: list[str] = []
+
+        class FakeApi:
+            def get_message(self, message_id):
+                fetched.append(message_id)
+                return simple_message()
+
+            def get_attachment(self, message_id, attachment_id):
+                return {"data": b64url_bytes(b"PDF"), "size": 3}
+
+        extractor = AttachmentExtractor(
+            soil,
+            AttachmentStore(tmp_path / "attachments"),
+            lambda subject: FakeApi(),
+            verbose=False,
+            default_account=ACCOUNT,
+        )
+        items = list(extractor.iter_uncovered(account_filter=ACCOUNT))
+
+        # only the attributed email is a candidate and only it is refetched
+        assert extractor.stats["emails_scanned"] == 1
+        assert len(items) == 1
+        assert items[0]["metadata"]["email_uuid"] == attributed_uuid
+        with soil:
+            legacy = soil.get_fact(legacy_uuid)
+        assert legacy.metadata["gmail_message_id"] not in fetched
 
     def test_auth_failure_parks_account_for_the_pass(self, routed_soil, tmp_path):
         """A dead credential skips its emails once (auth_skipped), not
-        per-email errors (RFC-012 §4.6, CLI mirror of needs_reauth)."""
+        per-email errors (RFC-012 §4.6, mirror of needs_reauth)."""
         soil, _, _ = routed_soil
 
         def factory(subject):
@@ -359,7 +401,8 @@ class TestAttachmentRouting:
             verbose=False,
             default_account=OTHER,
         )
-        stats = extractor.extract_all()
-        assert stats["downloaded"] == 0
-        assert stats["errors"] == 0
-        assert stats["auth_skipped"] == 2
+        items = list(extractor.iter_uncovered())
+        assert items == []
+        assert extractor.stats["downloaded"] == 0
+        assert extractor.stats["errors"] == 0
+        assert extractor.stats["auth_skipped"] == 2

@@ -96,15 +96,14 @@ UNIT
 
     if [ "$WITH_INGEST_TIMER" = 1 ]; then
         cat > "$UNIT_DIR/memogarden-ingest.service" <<UNIT
-# MemoGarden scheduled email ingestion, two passes:
+# MemoGarden scheduled email ingestion, single pass:
 #   heartbeat   POST /api/v1/providers/run — the server runs every due
 #               work item in-process (providers, and every active provider
-#               account per RFC-012; gmail = historyId sync of NEW mail;
-#               the retired progressive backfill "ingest next" remains the
-#               MANUAL recovery path for lost sync state or >30-day outages)
-#   attachments binary extraction for everything newly ingested (still a
-#               CLI pass until binaries join the provider contract); covers
-#               every ACTIVE registered account (RFC-012 §4.6).
+#               account per RFC-012; gmail = historyId sync of NEW mail
+#               PLUS binary attachment extraction, in the provider contract
+#               since RFC-012 §4.9 / 2026-11-20 — the standalone CLI pass
+#               and the retired progressive backfill "ingest next" remain
+#               MANUAL recovery paths only)
 [Unit]
 Description=MemoGarden scheduled email ingestion
 
@@ -114,7 +113,6 @@ WorkingDirectory=$DATA_DIR
 Environment=MEMOGARDEN_DATA_DIR=$DATA_DIR
 EnvironmentFile=$REPO_ROOT/.env
 ExecStart=/usr/bin/curl -sf -X POST -H "X-API-Key: \${MEMOGARDEN_API_KEY}" -H "Content-Type: application/json" http://127.0.0.1:8600/api/v1/providers/run
-ExecStart=$INGEST_VENV/bin/python -m gmail_importer.ingest attachments --quiet
 UNIT
 
         cat > "$UNIT_DIR/memogarden-ingest.timer" <<'UNIT'

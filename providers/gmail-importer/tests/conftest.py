@@ -78,3 +78,50 @@ def importer(tmp_path) -> GmailImporter:
             hacm_path="/tmp/x.enc",
         )
     yield imp
+
+
+def store_yielded(soil, items) -> list[str]:
+    """Simulate the runtime side of the yield contract (RFC-012 §4.9).
+
+    Since 2026-11-20 the extractor only PREPARES attachment dicts; the
+    runtime creates the facts (with scope policy applied) and the
+    provider's create_relations hook links contained_by. Extractor tests
+    call this to persist a drained pass, exactly as the runtime would
+    (minus the scope stamp, which is runtime policy territory).
+    """
+    from datetime import datetime, timezone
+
+    from system.soil.fact import Fact, generate_soil_uuid
+    from system.soil.relation import SystemRelation
+
+    now = datetime.now(timezone.utc).isoformat()
+    epoch_days = (datetime.now(timezone.utc) - datetime(2020, 1, 1, tzinfo=timezone.utc)).days
+    stored: list[str] = []
+    with soil:
+        for item in items:
+            fact = Fact(
+                uuid=generate_soil_uuid(),
+                _type=item["type"],
+                realized_at=item.get("realized_at", now),
+                canonical_at=item.get("canonical_at", now),
+                data=item["data"],
+                metadata=item.get("metadata") or {},
+                integrity_hash=None,
+                fidelity="full",
+            )
+            uuid = soil.create_fact(fact)
+            parent = (item.get("metadata") or {}).get("email_uuid")
+            if parent:
+                soil.create_relation(SystemRelation(
+                    uuid=generate_soil_uuid(),
+                    kind="contained_by",
+                    source=uuid,
+                    source_type="item",
+                    target=parent,
+                    target_type="item",
+                    created_at=epoch_days,
+                    evidence=None,
+                    metadata=None,
+                ))
+            stored.append(uuid)
+    return stored

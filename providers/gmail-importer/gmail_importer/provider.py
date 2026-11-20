@@ -31,6 +31,7 @@ _RELATION_EPOCH = datetime(2020, 1, 1, tzinfo=timezone.utc)
 _DEFAULT_HACM_PATH = "~/.local/share/memogarden/hacm/credentials.enc"
 _DEFAULT_PASSPHRASE_FILE = "~/.local/share/memogarden/hacm/passphrase"
 _DEFAULT_BATCH_LIMIT = 500
+_DEFAULT_ATTACHMENT_STORE = "~/.local/share/memogarden/attachments"
 
 
 def _defaults_for(subject: Optional[str]) -> dict:
@@ -46,6 +47,9 @@ def _defaults_for(subject: Optional[str]) -> dict:
         "hacm_path": _DEFAULT_HACM_PATH,
         "passphrase_file": _DEFAULT_PASSPHRASE_FILE,
         "batch_limit": _DEFAULT_BATCH_LIMIT,
+        # The content-addressed attachment store is a data-dir fixture, not
+        # per-account state (RFC-013 sessions share the same residence).
+        "attachment_store_root": _DEFAULT_ATTACHMENT_STORE,
     }
     if subject:
         defaults["sync_state_path"] = (
@@ -92,6 +96,7 @@ class GmailProvider:
         }
         self.batch_limit = int(merged.get("batch_limit", _DEFAULT_BATCH_LIMIT))
         expand = lambda p: str(Path(p).expanduser())
+        self.attachment_store_root = expand(merged["attachment_store_root"])
 
         # Soil: explicit path override, else the runtime's default resolution
         # (verb-based — identical to whatever environment we execute in).
@@ -313,6 +318,17 @@ class GmailProvider:
                             "Horizon tightening failed for %s (%s) — deferred",
                             walker_boundary, e,
                         )
+
+            # Stage 3 — attachments (RFC-012 §4.9: binaries joined the
+            # provider contract 2026-11-20, retiring the standalone CLI
+            # pass). Coverage skip keeps the scan O(new mail); the yielded
+            # dicts flow through the runtime's fact seam, so the operator's
+            # scope policy (RFC-011 §4.8, per-account override included)
+            # stamps them like every other fact — the reason this pass
+            # exists as yields rather than direct soil writes.
+            for item in self._attachments_stage(api):
+                yield item
+
             completed = True
         finally:
             # Advance the cursor only on full, clean consumption: by the time
@@ -365,16 +381,54 @@ class GmailProvider:
                 "realized_at": item["realized_at"],
             }
 
+    def _attachments_stage(self, api: GmailApiClient) -> Iterator[dict]:
+        """Yield this account's uncovered attachments as runtime dicts.
+
+        The extractor reuses the run's already-unlocked client (no extra
+        HACM KDF — the old CLI pass paid one per process), and its scan is
+        strictly account-scoped: a per-account run covers only emails it
+        owns. Steady state (everything covered) touches no network at all.
+        """
+        from gmail_importer.attachments import AttachmentExtractor, AttachmentStore
+
+        def factory(subject: Optional[str]):
+            if subject is not None and subject.lower() != self.account.lower():
+                raise GmailApiError(
+                    f"attachment scan matched foreign account {subject!r} "
+                    f"(this run is {self.account!r})",
+                    status_code=403,
+                )
+            return api
+
+        store = AttachmentStore(self.attachment_store_root)
+        extractor = AttachmentExtractor(
+            self._soil,
+            store,
+            factory,
+            verbose=False,
+            default_account=self.account,
+        )
+        for item in extractor.iter_uncovered(account_filter=self.account):
+            yield item
+        stats = extractor.stats
+        if any(stats[k] for k in ("downloaded", "errors", "auth_skipped", "attachments_missing")):
+            self._log(
+                "attachments: scanned={emails_scanned} covered={emails_covered} "
+                "downloaded={downloaded} missing={attachments_missing} "
+                "auth_skipped={auth_skipped} errors={errors}".format(**stats)
+            )
+
     def create_relations(self, fact) -> list:
-        """Threading: replies_to when the fact replies to a stored mail —
-        and, reverse-linked, when stored replies await this fact.
+        """Containment + threading: an Attachment fact links `contained_by`
+        its email; an Email fact gets replies_to when it replies to a
+        stored mail — and, reverse-linked, when stored replies await this
+        fact.
 
         The second direction exists because reverse-chronological ingestion
         (RFC-012 §4.10) stores a reply BEFORE its parent: when the parent
         finally lands, no one would otherwise re-link the waiting reply.
         This makes threading eventual-consistent under any ingest order.
         """
-        data = fact.data or {}
         relations: list = []
 
         from system.soil import generate_soil_uuid
@@ -382,10 +436,10 @@ class GmailProvider:
 
         days = (datetime.now(timezone.utc) - _RELATION_EPOCH).days
 
-        def _relation(source: str, target: str) -> SystemRelation:
+        def _relation(kind: str, source: str, target: str) -> SystemRelation:
             return SystemRelation(
                 uuid=generate_soil_uuid(),
-                kind="replies_to",
+                kind=kind,
                 source=source,
                 source_type="item",
                 target=target,
@@ -394,6 +448,22 @@ class GmailProvider:
                 evidence=None,
                 metadata=None,
             )
+
+        # Attachments (RFC-012 §4.9): contained_by the email that carried
+        # them — same relation the retired CLI pass used to create.
+        if (getattr(fact, "_type", "") or "") == "Attachment":
+            parent = (fact.metadata or {}).get("email_uuid")
+            if parent:
+                relations.append(_relation("contained_by", fact.uuid, parent))
+            return relations
+
+        data = fact.data or {}
+        relations: list = []
+
+        from system.soil import generate_soil_uuid
+        from system.soil.relation import SystemRelation
+
+        days = (datetime.now(timezone.utc) - _RELATION_EPOCH).days
 
         parent = data.get("in_reply_to")
         if not parent and data.get("references"):
@@ -411,7 +481,7 @@ class GmailProvider:
                     (normalized,),
                 ).fetchone()
                 if row is not None:
-                    relations.append(_relation(fact.uuid, row["uuid"]))
+                    relations.append(_relation("replies_to", fact.uuid, row["uuid"]))
 
             # 2. Stored replies await THIS fact (it is their parent):
             #    link each stored reply -> this fact.
@@ -426,7 +496,7 @@ class GmailProvider:
                     (stripped, stripped),
                 ).fetchall()
                 for row in rows:
-                    relations.append(_relation(row["uuid"], fact.uuid))
+                    relations.append(_relation("replies_to", row["uuid"], fact.uuid))
 
         return relations
 

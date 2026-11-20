@@ -30,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="gmail_importer.ingest",
         description="Ingest Gmail into Soil (attachment metadata only).",
     )
-    parser.add_argument("--account", default=None, help="Gmail address (HACM lookup key; required for oldest and auth-login; optional for attachments — default: every active registered account)")
+    parser.add_argument("--account", default=None, help="Gmail address (HACM lookup key; required for oldest and auth-login)")
     parser.add_argument(
         "--data-dir",
         type=Path,
@@ -82,7 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="auth-login --register: API key (default: $MEMOGARDEN_API_KEY)",
     )
-    parser.add_argument("--dry-run", action="store_true", help="attachments: list what would be downloaded, store nothing")
+    parser.add_argument("--dry-run", action="store_true", help="incremental: report what would be ingested, store nothing")
     parser.add_argument("--quiet", action="store_true", help="Suppress progress output")
     return parser
 
@@ -401,115 +401,6 @@ def cmd_incremental(args) -> int:
     return 0 if stats.get("errors", 0) == 0 else 1
 
 
-def _registered_accounts(data_dir: Path) -> list[str]:
-    """ACTIVE gmail subjects from the provider registry (read-only)."""
-    import sqlite3
-
-    core_db = data_dir / "core.db"
-    if not core_db.exists():
-        sys.exit(
-            f"Provider registry not found at {core_db} — pass --account explicitly"
-        )
-    conn = sqlite3.connect(f"file:{core_db}?mode=ro", uri=True)
-    try:
-        rows = conn.execute(
-            "SELECT subject FROM provider_accounts "
-            "WHERE provider_name = 'gmail' AND status = 'active' "
-            "ORDER BY subject"
-        ).fetchall()
-    except sqlite3.OperationalError as e:
-        sys.exit(
-            f"Cannot read the provider registry ({e}) — was the RFC-012 "
-            "migration applied? Pass --account explicitly."
-        )
-    finally:
-        conn.close()
-    subjects = [r[0] for r in rows]
-    if not subjects:
-        sys.exit(
-            "No active gmail accounts in the provider registry — register "
-            "one (auth-login --register) or pass --account explicitly."
-        )
-    return subjects
-
-
-def cmd_attachments(args) -> int:
-    """Download attachment binaries for ingested emails; Attachment facts + relations.
-
-    Account routing (RFC-012 §4.6): every email's refetch goes through the
-    client of the account that owns it. Without --account the pass covers
-    every ACTIVE gmail account in the provider registry; with --account it
-    is scoped to one (legacy unattributed facts ride on that account).
-    """
-    import requests
-
-    from system.soil import Soil
-
-    from gmail_importer.attachments import AttachmentExtractor, AttachmentStore
-    from gmail_importer.gmail_api import GmailApiClient, GmailApiError
-
-    logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
-
-    hacm_path = args.hacm or (args.data_dir / "hacm/credentials.enc")
-    passphrase_file = args.passphrase_file or (hacm_path.parent / "passphrase")
-    passphrase = (
-        passphrase_file.read_text().strip() if passphrase_file.exists() else None
-    )
-
-    accounts = [args.account] if args.account else _registered_accounts(args.data_dir)
-
-    soil = Soil(args.data_dir / "soil.db")
-    with soil:
-        soil.init_schema()  # idempotent; mirrors initialize_system in system.core
-
-        # One HACM unlock for the whole pass (RFC-012 INV-5): a single oauth
-        # client serves every account's token refresh, so N accounts cost
-        # one Argon2id KDF, not N.
-        gmail_oauth = _load_gmail_oauth()
-        oauth = gmail_oauth.GmailOAuthClient(str(hacm_path), passphrase=passphrase)
-
-        def api_factory(subject: str) -> GmailApiClient:
-            # Same contract as GmailImporter._build_api_client: credential-
-            # shaped failures become GmailApiError(auth_failure=True) so the
-            # extractor parks the account instead of aborting the pass.
-            try:
-                tokens = oauth.refresh_access_token(subject)
-            except ValueError as e:
-                raise GmailApiError(
-                    f"credential refresh failed for {subject}: {e}",
-                    auth_failure=True,
-                ) from None
-            except requests.HTTPError as e:
-                status = e.response.status_code if e.response is not None else None
-                raise GmailApiError(
-                    f"credential refresh failed for {subject}: {e}",
-                    status_code=status,
-                    auth_failure=status is not None and status < 500,
-                ) from None
-            return GmailApiClient(tokens["access_token"])
-
-        store = AttachmentStore(args.data_dir / "attachments")
-        extractor = AttachmentExtractor(
-            soil,
-            store,
-            api_factory,
-            verbose=not args.quiet,
-            default_account=args.account,
-        )
-        stats = extractor.extract_all(dry_run=args.dry_run, account_filter=args.account)
-
-    verb = "would download" if args.dry_run else "downloaded"
-    scope = args.account or f"{len(accounts)} registered accounts"
-    print(
-        f"Attachments [{scope}]: {stats['emails_scanned']} emails scanned, "
-        f"{stats.get('emails_covered', 0)} already covered, "
-        f"{stats['attachments_found']} found, {stats['downloaded']} {verb}, "
-        f"{stats['skipped_existing']} already present, "
-        f"{stats.get('auth_skipped', 0)} auth-skipped, {stats['errors']} errors"
-    )
-    return 0 if stats.get("errors", 0) == 0 else 1
-
-
 def cmd_verify(args) -> int:
     """Re-hash attachment files against their facts; report missing/mutated/orphaned.
 
@@ -536,14 +427,15 @@ def main(argv: list[str] | None = None) -> int:
         "command",
         nargs="?",
         default="oldest",
-        choices=["oldest", "next", "incremental", "attachments", "verify", "auth-setup", "auth-login"],
+        choices=["oldest", "next", "incremental", "verify", "auth-setup", "auth-login"],
         help=(
             "What to do (default: oldest). oldest = fixed oldest-N window; "
             "next = progressive (ingest the next N oldest not yet in Soil); "
             "incremental = historyId sync of NEW mail since the stored "
-            "historyId; attachments = download binaries for ingested emails "
-            "into <data-dir>/attachments/; verify = re-hash those files "
-            "against the facts (mutation detection)"
+            "historyId; verify = re-hash stored attachment files against "
+            "the facts (mutation detection). NB: attachment binaries are "
+            "extracted by the provider's sync (RFC-012 §4.9, 2026-11-20) — "
+            "the standalone attachments pass was retired"
         ),
     )
     args = parser.parse_args(argv)
@@ -556,7 +448,6 @@ def main(argv: list[str] | None = None) -> int:
         "oldest": cmd_oldest,
         "next": cmd_next,
         "incremental": cmd_incremental,
-        "attachments": cmd_attachments,
         "verify": cmd_verify,
     }[args.command](args)
 
