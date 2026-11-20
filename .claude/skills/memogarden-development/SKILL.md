@@ -371,6 +371,42 @@ Always update:
 3. Write tests before implementing
 4. Update schema if modifying database
 
+## Production Server Ops (js-xiaomi, user units)
+
+The production server is `memogarden.service` (systemd **user** unit, gunicorn
+127.0.0.1:8600, single sync worker), fed by `memogarden-ingest.timer` hourly.
+Learned 2026-11-20 (gmail-ingest-worker-massacre, sysinfo incidents/):
+
+- **Server venv = `memogarden-api/.venv`; everything is a pip editable**
+  (providers gmail/mbox/tada/rss/gcal/sessions, hacm, system, utils, api).
+  Worktree == production: deploy = `git pull` + `systemctl --user restart
+  memogarden`. **Never `pip install` a provider from a file:// path or PyPI
+  into this venv** — snapshot installs go stale silently (the 2026-11-20
+  massacre: fix committed 11-14, production still ran the buggy 0.1.0 base
+  because the snapshot was never reinstalled). `pip check` must stay clean;
+  a broken pip check means someone snapshot-installed.
+- **Probe the installed path, not a hand-copied query**: run
+  `python -c "import pkg; print(pkg.__file__)"` in the SERVER venv before
+  trusting what code production runs. (With editables they match the
+  worktree — but verify, don't assume; the venv is Python 3.14.)
+- **"interrupted by server restart" in provider run rows is the
+  `cleanup_orphaned_runs` sweep signature, NOT proof a restart happened.**
+  Check journal Start/Stop lines for real restarts.
+- **Stagger manual provider runs** — the heartbeat staggers accounts;
+  batch-firing all accounts at once stacks RSS spikes (HACM unlock ≈ 1.17 GB
+  transient per decrypt, serialized process-wide) and can breach
+  MemoryHigh=2.5G / MemoryMax=3G / MemorySwapMax=512M → gunicorn 30s
+  WORKER-TIMEOUT SIGKILL.
+- **WORKER-TIMEOUT kills fire no SIGABRT** — the `worker_abort` faulthandler
+  tripwire does NOT capture them; gunicorn just SIGKILLs. In-worker
+  `faulthandler.dump_traceback_later` is armed for future freeze capture.
+- **gunicorn stderr/stdout live in `~/.local/state/memogarden/logs/
+  {error,access}.log`** — `journalctl --user -u memogarden` carries only
+  systemd's own lines.
+- Never batch-fire probes that write to `get_db_path()` without
+  `MEMOGARDEN_DATA_DIR` set — it resolves near-cwd and will silently create
+  a stray `soil.db`.
+
 ## Getting Help
 
 If stuck:

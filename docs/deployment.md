@@ -310,6 +310,25 @@ export MEMOGARDEN_BIND_PORT=9000
 
 ## Running the Service
 
+### Current production reality (js-xiaomi, user units)
+
+The deployed service runs as systemd **user** units on the primary machine —
+not the RPi/container flows below:
+
+- `memogarden.service` — gunicorn 127.0.0.1:8600, single sync worker
+  (console + REST + Semantic API + SSE + in-server provider runtime).
+- `memogarden-ingest.{service,timer}` — hourly heartbeat → `POST
+  /api/v1/providers/run` (per-account, staggered).
+- Deploy path of record: `git pull` in the relevant repos + `systemctl
+  --user restart memogarden`. No container, no RPi (the RPi CD webhook never
+  worked — memogarden-api#44; the workflow is workflow_dispatch-only).
+- **Server venv (`memogarden-api/.venv`) install convention (2026-11-21):
+  every provider package, hacm, system, utils, and api is a pip editable.**
+  This is load-bearing: snapshot installs (`file://` or PyPI) silently go
+  stale — the 2026-11-20 ingestion outage was a fix committed 2026-11-14
+  that production never received because reinstalling isn't in any deploy
+  path. Keep `pip check` clean; it's the tripwire.
+
 ### Using systemd (Production)
 
 ```bash
