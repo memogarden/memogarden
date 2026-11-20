@@ -318,6 +318,26 @@ Whether this pass eventually merges into the provider contract is an existing
 open question (tracked alongside the heartbeat unit rename); this RFC only
 requires it not break under N accounts.
 
+**RESOLVED 2026-11-20 — merged into the provider contract** (root
+`a452fba`, gate default-ON `5f076bc`, slim-scan prerequisite `f9520c6`):
+`AttachmentExtractor.iter_uncovered()` now PREPARES runtime dicts
+(binaries → AttachmentStore; parent `email_uuid` + `account` in metadata)
+and gmail's `sync()` yields them as stage 3 — facts are created by the
+runtime's fact seam, so scope policy (RFC-011 §4.8, per-account
+override) stamps attachments like every other fact. The CLI
+attachments pass and the unit's second `ExecStart` are retired
+(`verify` stays as a read-only integrity tool). Coverage scan is
+strictly per-account; pre-flight verified zero legacy unattributed
+emails declare attachments. Discovery along the way: the CLI pass had
+produced ~21k UNSTAMPED attachment facts (bypassed the scope seam) —
+swept to their account scopes (nyjc→NYJC, personal/alt→Triage) same day
+via the audited amend loop; the 24 unattributed stragglers with
+unresolvable parents stay unlabeled (=public, as they always were).
+Also fixed same day while bisecting the massacre: the dedup-index
+construction spike (~2 GB transient per gmail run past MemoryHigh=1G →
+gunicorn worker-timeout massacre, every gmail run orphaned 16:28–17:13)
+— slim combined scan `f9520c6` defused it (64 MB / 1.6 s).
+
 ### 4.10 Ingestion Order Policy (v1.2, 2026-11-14)
 
 **Official policy: history is ingested reverse-chronologically.** A newly
@@ -590,10 +610,10 @@ Also adopted: the **tokens-never-transit-the-API** invariant (INV-2) and
 
 ## Open Questions
 
-1. Should the standalone attachment CLI pass merge into the provider contract
-   (retiring the heartbeat unit's second `ExecStart`)? Tracked alongside the
-   `memogarden-heartbeat` rename (provider-runtime issue #1); this RFC only
-   requires account-awareness if it stays.
+1. ~~Should the standalone attachment CLI pass merge into the provider contract
+   (retiring the heartbeat unit's second `ExecStart`)?~~ **RESOLVED YES
+   2026-11-20** — see the §4.9 addendum (stage 3 of gmail's sync; CLI pass +
+   second ExecStart retired; unstamped-backlog sweep done same day).
 2. Legacy OOB paste-code flows in `gmail-oauth` (`cli.py`, `oauth-exchange.py`)
    predate the loopback server — delete during M3 or leave dormant?
 

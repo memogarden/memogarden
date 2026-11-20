@@ -180,6 +180,8 @@ operator action. Tokens live only in HACM
 on the host — the API stores the credential *reference* (`{platform}:{subject}`)
 and never sees OAuth material. Facts carry `metadata.account` (the verified
 subject), which the provider scope policy can match for per-account labeling.
+Attachment facts flow through the same runtime seam (RFC-012 §4.9, 2026-11-20)
+and are scope-stamped identically to their account's effective policy.
 An account may also carry its own **scope policy override**
 (`provider_accounts.scope_policy`, `{rules, default}` in the RFC-011 §4.8
 shape): when set it REPLACES the provider-level policy entirely for that

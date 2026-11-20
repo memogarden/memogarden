@@ -51,19 +51,19 @@ no-op (the same messages deduplicate); grow the window with `--limit N`.
 
 ## Attachments on disk
 
-```bash
-poetry run python -m gmail_importer.ingest --account you@gmail.com attachments [--dry-run]
-```
-
-Downloads binaries for every ingested email that declares attachments into
+**In the provider contract since 2026-11-20 (RFC-012 §4.9 resolved):**
+attachment binaries are extracted by the provider's own `sync()` (stage 3) —
+the standalone `ingest attachments` subcommand was retired. Binaries land in
 `<data-dir>/attachments/<h2>/<h2>/<sha256><ext>` — content-addressed, so
 identical files deduplicate and integrity is checkable against the fact's
-`sha256`. Each instance is an immutable `Attachment` fact (original
-filename, mime, size, hash, relative path) linked to its email with a
-`contained_by` relation; search targets the metadata, never the files.
-Email facts are not modified. NB: Gmail attachment ids are per-fetch
-handles and change between fetches — idempotency is keyed on
-`(email, filename)`, so re-runs skip what is already extracted.
+`sha256`. Each instance is an immutable `Attachment` fact (original filename,
+mime, size, hash, relative path) created by the MemoGarden runtime — and
+therefore scope-stamped by the operator's scope policy like every other fact —
+linked to its email with a `contained_by` relation; search targets the
+metadata, never the files. Email facts are not modified. NB: Gmail attachment
+ids are per-fetch handles and change between fetches — idempotency is keyed on
+`(email, filename)`, so re-runs skip what is already extracted; the coverage
+scan is strictly per-account (each account's run covers only its own mail).
 
 ## Integrity verification
 
@@ -83,4 +83,5 @@ suitable as a cron gate.
 - [x] Oldest-N fetch + translation
 - [ ] Incremental sync (historyId-based; needed for scheduled ingestion)
 - [x] Attachment binaries on disk (content-addressed `attachments/` dir,
-      `Attachment` facts + `contained_by` relations, `attachments` subcommand)
+      `Attachment` facts + `contained_by` relations — via the provider
+      contract since RFC-012 §4.9; `verify` subcommand remains)
