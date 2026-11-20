@@ -12,20 +12,43 @@ When beginning work on any MemoGarden task:
 1. **Read the context**
    ```bash
    cat plan/memogarden_prd_v0_11_0.md  # Understand platform architecture
-   cat plan/budget_prd.md                # Understand budget app (when needed)
-   cat plan/memogarden-implementation-plan.md  # RETIRED (historical only)
+   cat plan/budget_prd.md              # Budget app (paused since Jan 2026)
    ```
+   The core implementation plan (`plan/memogarden-implementation-plan.md`) is
+   **RETIRED (2026-10-08)** — historical record only. For current state, read
+   each repo's git history and its own per-project plan (`mg-project-studio`,
+   `mars`, `mush`).
 
-2. **Navigate to working directory**
-   ```bash
-   cd memogarden-system          # or memogarden-api
-   ```
+2. **Navigate to the repo you are changing** — MemoGarden is a multi-repo
+   workspace; every sibling has its own git history. Check `pwd` before any
+   git command.
 
-3. **Check current state**
+3. **Check current state + for other agents**
    ```bash
    git status
    git log --oneline -10
+   awt list --repo <repo>   # any other agent's worktree claims here?
    ```
+
+## Agent Worktrees (mandatory protocol)
+
+Default to a registered awt worktree for multi-step code work — create it
+BEFORE writing code. **The main checkouts are production**: the server venv
+(`memogarden-api/.venv`) is all pip-editables pointing at the main working
+trees, so edits there ship to production on the next service restart. Do
+multi-step work in a worktree, merge to main only after tests pass, and never
+restart `memogarden.service` as a side effect of development.
+
+```bash
+git worktree add ../<repo>-wt-<slug> -b <branch-per-repo-convention>
+awt register --path . --task "<task>" --agent zcode
+awt heartbeat --path .        # at milestones for long work
+# when done: awt deregister --path . --unlock; remove your own worktree
+```
+
+Branch names follow each repo's own conventions (`feat/…`, `fix/…`, `ci/…`,
+`chore/…`). Never delete a worktree you did not create — `awt sweep` →
+`awt ui` → user-approved `awt remove`.
 
 ## Setting Up the Development Environment
 
@@ -33,76 +56,15 @@ When beginning work on any MemoGarden task:
 
 ```bash
 pip install poetry
-```
-
-### Install poetry shell plugin
-
-```bash
 poetry self add poetry-plugin-shell
 ```
 
-### Navigate to project and install dependencies
+### Install dependencies
 
 ```bash
-cd memogarden-system      # or memogarden-api
+cd memogarden-system      # or memogarden-api / memogarden-client / mush
 poetry install
 ```
-
-### Activate poetry shell (optional)
-
-```bash
-poetry shell
-```
-
-This activates a virtual shell with all dependencies available. You can skip this step by using `poetry run` prefix for all commands.
-
-## Package Management with Poetry
-
-**CRITICAL**: This project uses Poetry for dependency management. **NEVER use `pip install`**.
-
-### Installing Dependencies
-
-```bash
-# From project root or package directory
-poetry install
-```
-
-### Running Commands with Poetry
-
-```bash
-# Run Python commands
-poetry run python -m module.name
-
-# Run tests
-./run_tests.sh  # from package directory, uses Poetry internally
-
-# Run the Flask server
-poetry run flask --app api.main run --debug
-```
-
-### Adding New Dependencies
-
-```bash
-# Add a runtime dependency
-poetry add package-name
-
-# Add a development dependency
-poetry add --group dev package-name
-
-# Add a dependency from a specific package
-poetry add --optional package-name
-```
-
-### During Project Restructure (Temporary)
-
-While migrating to the new package structure (Phases 1-4 of restructure plan), some system packages may not be installed yet. Use PYTHONPATH as a temporary workaround:
-
-```bash
-# Add memogarden-system to Python path for testing
-PYTHONPATH=$PWD/memogarden-system:$PYTHONPATH ./run_tests.sh
-```
-
-**This is temporary** - after Phase 6 (Provider Refactoring), all packages will be properly installed via Poetry.
 
 ### 🚫 NEVER Use These Commands
 
@@ -111,34 +73,47 @@ PYTHONPATH=$PWD/memogarden-system:$PYTHONPATH ./run_tests.sh
 pip install package-name
 python -m pip install package-name
 pip3 install package-name
-
-# ❌ DON'T - Installs to system Python, breaks project isolation
 sudo pip install package-name
 ```
 
-**Why**: Using `pip` directly bypasses Poetry's dependency lock file, can cause version conflicts, and breaks the reproducible development environment.
+**Why**: Using `pip` directly bypasses Poetry's dependency lock file, can
+cause version conflicts, and breaks the reproducible development environment.
+
+**Exception — the server venv (`memogarden-api/.venv`) is all-editables by
+design** (see Production Server Ops below): providers, hacm, system, utils,
+api are `pip install -e` into it. Never snapshot-install anything into that
+venv from a file:// path or PyPI — snapshot installs go stale silently (the
+2026-11-20 gmail-ingest-worker massacre). Keep `pip check` clean in that
+venv; a broken `pip check` means someone snapshot-installed.
+
+### Known gotcha: ModuleNotFoundError at conftest
+
+If `run_tests.sh` fails with ModuleNotFoundError at conftest imports (path
+deps missing), the repo's poetry venv is stale or was created outside the
+repo dir. Fix: run `poetry install` from the repo's own directory (not a
+worktree without its own `.venv`) and rerun.
 
 ### Checking Installed Packages
 
 ```bash
-# Show all installed packages
 poetry show
-
-# Show package tree (dependencies)
 poetry show --tree
-
-# Check for outdated packages
 poetry show --outdated
 ```
 
 ### Working Directory Reminder
 
 **Always verify your current directory before running commands:**
-- **memogarden-system work**: `memogarden-system/` (for `./run_tests.sh`, etc.)
-- **memogarden-api work**: `memogarden-api/` (for `./run_tests.sh`, etc.)
-- **Convenience scripts**: `/` (for `./scripts/run.sh`, `./scripts/test.sh`)
+- **memogarden-system work**: `memogarden-system/` (for `./run_tests.sh`)
+- **memogarden-api work**: `memogarden-api/`
+- **memogarden-client work**: `memogarden-client/`
+- **mush work**: `mush/` (own pyproject: ruff + pyright + pytest)
 
-Most Poetry commands should be run from the relevant package directory. Scripts are in the root directory.
+Most Poetry commands should be run from the relevant package directory.
+Root-level scripts live in `scripts/` (`install-user-service.sh`,
+`install-cli.sh`, `deploy-memogarden.sh`, `lint.sh`, `migrate.sh`,
+`init-db.sh`) — there is no root test runner; each repo ships its own
+`run_tests.sh`.
 
 ## Running the API Server Locally
 
@@ -157,22 +132,21 @@ poetry run flask --app api.main run --debug
 
 The server runs at http://localhost:5000
 
-**Note**: MemoGarden Core uses Flask (not FastAPI). There are no auto-generated API docs.
+**Note**: MemoGarden Core uses Flask (not FastAPI). There are no
+auto-generated API docs.
 
-### Running in background
-
-To run the server in the background:
-```bash
-./scripts/run.sh &
-```
-
-Or use the Bash tool with `run_in_background=True` parameter (when available).
+**Caution**: the machine you develop on IS the production host. A dev server
+on :5000 is fine, but never point probes that write to `get_db_path()` at the
+real data dir without `MEMOGARDEN_DATA_DIR` set — it resolves near-cwd and
+will silently create a stray `soil.db`.
 
 ## Running Tests
 
-### ⚠️ STANDARD WAY (Updated for current structure)
+### ⚠️ STANDARD WAY
 
-**IMPORTANT:** Always use the standardized `run_tests.sh` script for test execution. This ensures consistent behavior and provides grep-able output for automation.
+**IMPORTANT:** Always use the standardized `run_tests.sh` script for test
+execution in the api/system/client repos. It ensures the correct Poetry
+environment, works from any directory, and provides grep-able output.
 
 ```bash
 # MemoGarden API Tests
@@ -193,64 +167,48 @@ Or use the Bash tool with `run_in_background=True` parameter (when available).
 ./memogarden-api/run_tests.sh --tb=no -q 2>&1 | tail -n 7
 ```
 
-**Why use run_tests.sh:**
-- Ensures correct Poetry environment is used (doesn't rely on venv activation)
-- Works from any directory (changes to project dir automatically)
-- Provides grep-able output with test run ID and summary
-- Last 7 lines always contain summary (use `tail -n 7`)
-- Consistent behavior across all MemoGarden projects
-- Centralized implementation via `scripts/test_entrypoint.sh` (easy to update globally)
+**Format options for agents:** `--format=markdown` (or `--format=md`) is
+easier to parse; `--format=plaintext` is plain.
 
-**Legacy method (deprecated):**
-The old `scripts/test.sh` script still exists but is deprecated. Use `run_tests.sh` instead.
+### mush (not covered by run_tests.sh)
 
-**Agent note:** If you need functionality not supported by `run_tests.sh`, alert a human to improve `scripts/test_entrypoint.sh` centrally rather than using ad-hoc bash commands.
+mush has its own gates, run all four before pushing:
+
+```bash
+cd mush
+poetry run ruff check . && poetry run ruff format --check .
+poetry run pyright
+poetry run pytest tests/ -q
+```
 
 ### Specific test commands
 
 **API Tests:**
 ```bash
-# Run specific test file
 ./memogarden-api/run_tests.sh tests/test_semantic_api.py
-
-# Run specific test
 ./memogarden-api/run_tests.sh tests/test_context.py::test_enter_scope_adds_to_active_set -xvs
-
-# Run with coverage
-./memogarden-api/run_tests.sh --cov=api --cov-report=html
 ```
 
 **System Tests:**
 ```bash
-# Run specific test file
 ./memogarden-system/run_tests.sh tests/test_core.py
-
-# Run specific test
 ./memogarden-system/run_tests.sh tests/test_core.py::test_entity_create -xvs
-
-# Run with coverage
-./memogarden-system/run_tests.sh --cov=system --cov-report=html
 ```
 
-For complete testing documentation:
-- API Tests: [`memogarden-api/tests/README.md`](../../../memogarden-api/tests/README.md)
-- System Tests: [`memogarden-system/tests/README.md`](../../../memogarden-system/tests/README.md)
-
-For detailed testing philosophy and patterns, use the **memogarden-testing** skill.
+For testing philosophy and debugging failures, use the **memogarden-testing**
+skill.
 
 ## Running E2E Tests (Project Studio)
 
-Project Studio has browser-based E2E tests that verify the frontend works correctly with the API.
+Project Studio has browser-based E2E tests that verify the frontend works
+correctly with the API.
 
 ```bash
-# From the root directory, run E2E tests
 cd mg-project-studio
 ./run_e2e.sh
 
-# Run specific test file
+# Specific test file / headed mode
 ./run_e2e.sh e2e.spec.ts
-
-# Run in headed mode (watch browser)
 ./run_e2e.sh --headed
 ```
 
@@ -259,129 +217,46 @@ cd mg-project-studio
 - Vite dev server running on http://localhost:5173 (`cd mg-project-studio && npm run dev`)
 
 **Common E2E Issues:**
-- If tests fail with "Playwright Test did not expect test.describe()", you're running from the wrong directory
+- "Playwright Test did not expect test.describe()" → wrong directory
 - Use `./run_e2e.sh` which automatically changes to the correct directory
 - Never run `npx playwright test` from the root directory
 
-## Working with the Implementation Plan
+## Working With Plans
 
-> **NOTE (2026-10-08):** `plan/memogarden-implementation-plan.md` is **retired** —
-> historical record of platform-core Sessions 1–14 only. It no longer tracks current
-> work. For current state, check each repo's git history and per-project plans.
+- `plan/memogarden-implementation-plan.md` — RETIRED 2026-10-08 (historical)
+- Punch lists that ARE current live per-topic: `plan/rfc_011_implementation.md`
+  (scope/grants — §"status" markers per item), per-project plans in
+  `mg-project-studio/`, `mars/`, `mush/`.
+- RFCs: `plan/rfc_*.md` are the design record; when an RFC item ships, update
+  the punch list AND the GitHub issue in the same session.
 
-### Understanding Progress
+### Close the loop on issues (lesson from the 2026-11-21 sweep)
 
-The implementation plan (`plan/memogarden-implementation-plan.md`) had this structure while active:
-
-```
-Step 1: Core Backend Foundation ⚡ CURRENT STEP
-  1.1 Project Setup & Structure
-    1.1.1 Clone and Initialize Repository
-    ...
-  1.2 SQLite Database Schema
-    ...
-
-Step 2: Authentication & Multi-User Support (brief)
-Step 3: Advanced Core Features (brief)
-...
-```
-
-- **Current step** is marked with ⚡
-- Current step has detailed substeps
-- Future steps have brief outlines only
-- Only expand detail when ready to implement
-
-### Updating Progress
-
-When completing work:
-
-1. ✅ Mark completed substeps in implementation.md
-2. Update "Next Actions" section
-3. Note any deviations or lessons learned
-4. Don't expand future steps until current step is done
-
-### Before Starting Work
-
-Always check:
-1. What's the current step? (look for ⚡ marker)
-2. What are the detailed substeps?
-3. Are there any blockers or dependencies?
-4. What's the context for this work?
-
-### After Completing Work
-
-Always update:
-1. Mark checkboxes as completed: `- [ ]` → `- [x]`
-2. Move current step marker (⚡) if advancing
-3. Update "Next Actions" with what's next
-4. Note any decisions or deviations
-
-## Project Structure Quick Reference
-
-```
-/                              # Project root
-├── plan/
-│   ├── budget_prd.md                   # Budget App Requirements (financial focus)
-│   ├── memogarden_prd_v0_11_0.md       # Complete Platform PRD (Soil + Core + apps)
-│   └── memogarden-implementation-plan.md # Retired 2026-10-08 (historical)
-├── memogarden-system/                 # System package
-│   ├── system/                        # Core library
-│   │   ├── core/                     # Core database operations
-│   │   ├── soil/                     # Soil database operations
-│   │   └── utils/                    # Utility functions
-│   └── tests/                         # Test suite
-├── memogarden-api/                    # API package
-│   ├── api/                           # Flask application
-│   │   ├── v1/                       # REST API endpoints
-│   │   └── semantic.py               # Semantic API
-│   └── tests/                         # Test suite
-├── scripts/
-│   ├── run.sh                          # Start development server
-│   ├── test.sh                         # Run tests
-│   └── test-coverage.sh                # Run tests with coverage
-├── docs/                            # User and developer documentation
-│   ├── repositories.md                 # Repository structure
-│   ├── quickstart.md                   # Getting started
-│   ├── deployment.md                   # Deployment guide
-│   └── configuration.md               # Configuration reference
-├── .claude/
-│   └── skills/                         # Agent Skills
-└── AGENTS.md                           # This guide
-```
-
-## Common Workflows
-
-### Starting a new feature
-1. Check implementation.md for current step
-2. Read relevant PRD sections
-3. Review architecture.md for patterns
-4. Write tests first (use memogarden-testing skill)
-5. Implement feature
-6. Update implementation.md
-
-### Debugging an issue
-1. Use memogarden-debugging skill
-2. Check logs and error messages
-3. Verify assumptions against architecture.md
-4. Add tests to prevent regression
-
-### Adding a new API endpoint
-1. Use memogarden-api-endpoint skill
-2. Follow the workflow there
-3. Write tests before implementing
-4. Update schema if modifying database
+Auto-close keywords in commit messages are unreliable — a direct-to-main
+commit saying "closes #N" closed 1 of 3 referenced issues on GitHub; a
+squash-merge branch left its issue open; and several fixes landed on main
+with their issues never updated (found: api#46/52/61/64, mush#5/6 all
+fixed-in-main-but-open). After every push that resolves an issue:
+1. `gh issue view <N>` and confirm it actually closed — comment with the
+   commit hash if not, then close it yourself.
+2. When filing sweep findings, check "is this already fixed on main?" before
+   writing fixes: `git log --oneline -i --grep "<topic>"` first.
 
 ## Production Server Ops (js-xiaomi, user units)
 
-The production server is `memogarden.service` (systemd **user** unit, gunicorn
-127.0.0.1:8600, single sync worker), fed by `memogarden-ingest.timer` hourly.
+The production server is `memogarden.service` (systemd **user** unit,
+gunicorn 127.0.0.1:8600, single sync worker), fed by
+`memogarden-ingest.timer` hourly. **This dev machine IS that host**: the
+server venv is `memogarden-api/.venv` with everything as pip editables
+(providers gmail/mbox/tada/rss/gcal/sessions, hacm, system, utils, api).
+Worktree == production: **deploy = merge to main + `systemctl --user
+restart memogarden`** — never restart as a side effect of development; leave
+the restart to the operator unless the task is the deploy itself.
+
 Learned 2026-11-20 (gmail-ingest-worker-massacre, sysinfo incidents/):
 
-- **Server venv = `memogarden-api/.venv`; everything is a pip editable**
-  (providers gmail/mbox/tada/rss/gcal/sessions, hacm, system, utils, api).
-  Worktree == production: deploy = `git pull` + `systemctl --user restart
-  memogarden`. **Never `pip install` a provider from a file:// path or PyPI
-  into this venv** — snapshot installs go stale silently (the 2026-11-20
+- **Never `pip install` a provider from a file:// path or PyPI into the
+  server venv** — snapshot installs go stale silently (the 2026-11-20
   massacre: fix committed 11-14, production still ran the buggy 0.1.0 base
   because the snapshot was never reinstalled). `pip check` must stay clean;
   a broken pip check means someone snapshot-installed.
@@ -403,45 +278,14 @@ Learned 2026-11-20 (gmail-ingest-worker-massacre, sysinfo incidents/):
 - **gunicorn stderr/stdout live in `~/.local/state/memogarden/logs/
   {error,access}.log`** — `journalctl --user -u memogarden` carries only
   systemd's own lines.
+- **Async daemons that install SIGTERM handlers can hang past `kill`** when
+  their graceful-shutdown path is incomplete (mush DaemonServer pre-M2:
+  stop() hung while a client was connected). When a process ignores
+  `timeout`/SIGTERM, get a stack (`faulthandler.dump_traceback_later`) before
+  reaching for kill -9.
 - Never batch-fire probes that write to `get_db_path()` without
   `MEMOGARDEN_DATA_DIR` set — it resolves near-cwd and will silently create
   a stray `soil.db`.
-
-## Getting Help
-
-If stuck:
-1. Re-read PRD for context
-2. Check implementation.md for current scope
-3. Consult **dev-guide.md** for code patterns and conventions
-4. Consult architecture.md for technical patterns
-5. Look at existing code patterns
-6. Use appropriate skill (testing, debugging, etc.)
-
-### Key References
-
-- **[docs/repositories.md](../../../docs/repositories.md)** - Repository structure and module breakdowns
-- **[docs/quickstart.md](../../../docs/quickstart.md)** - Getting started guide
-- **[docs/deployment.md](../../../docs/deployment.md)** - Deployment guide
-- **[docs/configuration.md](../../../docs/configuration.md)** - Configuration reference
-- **[memogarden_prd_v0_11_0.md](../../../plan/memogarden_prd_v0_11_0.md)** - Complete platform architecture
-- **[budget_prd.md](../../../plan/budget_prd.md)** - Budget app requirements (when needed)
-- **[memogarden-implementation-plan.md](../../../plan/memogarden-implementation-plan.md)** - RETIRED — historical record of platform-core sessions
-
-## Future Design Reference
-
-The `/plan/future/` directory contains design documents for features not yet implemented but architecturally significant:
-
-- **schema-extension-design.md** - Schema extension system for multi-user compatibility
-- **migration-mechanism.md** - Complete migration framework with validation and rollback
-- **soil-design.md** - Immutable storage architecture for document archival (DEFERRED for Budget MVP)
-
-**Important:** Soil implementation is DEFERRED until agent workflows are added. For Budget MVP:
-- No Soil Items (emails, PDFs, statements)
-- No schema snapshots (manual migration only)
-- No delta archival
-- Focus on Entity-based features only
-
-When implementing related features or making architectural decisions, consult these documents to ensure alignment with the long-term design vision.
 
 ## Critical Architectural Constraints
 
@@ -449,7 +293,8 @@ When implementing related features or making architectural decisions, consult th
 
 1. **DO NOT use SQLAlchemy or any ORM**
    - Use raw SQL queries with parameterized statements
-   - SQLite schema (`schema/schema.sql`) is the source of truth
+   - SQLite schema (`schemas/sql/schema.sql` in the root repo) is the source
+     of truth
    - Pydantic is ONLY for API request/response validation
 
 2. **DO NOT add heavy dependencies**
@@ -465,52 +310,50 @@ When implementing related features or making architectural decisions, consult th
    - This is a personal system with low traffic
    - Synchronous code is simpler, more deterministic, easier to debug
    - Use Flask (not FastAPI) and built-in sqlite3 (not aiosqlite)
+   - (mush is the deliberate exception — a PTY daemon is inherently async)
 
 5. **DO NOT skip testing**
    - Write tests alongside features
-   - Target >80% coverage for core functionality
-   - Use pytest with pytest-flask
+   - Use pytest with pytest-flask; in-memory/per-test temp SQLite in tests
 
 6. **DO NOT over-engineer**
-   - Build what's needed for current step
-   - Defer complex features (see implementation.md)
+   - Build what's needed for the current step
    - Simple > clever
 
 ### ✅ What TO Do
 
-1. **Use centralized utilities (no loose datetime/uuid imports)**
-   - **Date/time**: `from memogarden_core.utils import isodatetime`
+1. **Use centralized utilities from memogarden-utils (no loose datetime/uuid
+   imports)** — the `memogarden-utils` repo is the SOLE source of truth for
+   shared utilities; the root repo no longer tracks copies:
+   - **Date/time**: `from utils import isodatetime`
      - `isodatetime.now()` - Current UTC as ISO string
-     - `isodatetime.now_unix()` - Current UTC as Unix timestamp (for JWT)
-     - `isodatetime.to_timestamp(dt)` - Convert datetime to ISO string
-     - `isodatetime.to_datetime(ts)` - Convert ISO string to datetime
-   - **UUIDs**: `from memogarden_core.utils import uid`
-     - `uid.generate_uuid()` - Generate UUID v4 (ONLY place that imports uuid4)
-     - **UUID prefixes**: `entity_` for Core Entities, `item_` for Soil Items (future)
-     - **Note**: Database stores plain UUID v4, prefixes added at API layer
-   - **Recurrence**: `from memogarden_core.utils import recurrence`
-     - `recurrence.validate_rrule()` - Validate iCal RRULE strings
-     - `recurrence.generate_occurrences()` - Generate occurrences from RRULE
-     - `recurrence.get_next_occurrence()` - Get next occurrence after datetime
-     - **All python-dateutil imports confined to this module**
-   - **Domain types**: `from memogarden_core.schema.types import Timestamp, Date`
-     - Use for type safety in API schemas and domain logic
-   - See: `memogarden-core/docs/dev-guide.md` for complete patterns
+     - `isodatetime.now_unix()` - Unix timestamp (for JWT)
+     - `isodatetime.to_timestamp(dt)` / `isodatetime.to_datetime(ts)`
+   - **UUIDs**: `from utils import uid`
+     - `uid.generate_uuid()` - UUID v4 (ONLY place that imports uuid4)
+     - Prefixes: `entity_` for Core Entities, `item_` for Soil Items;
+       the DB stores plain UUIDs, prefixes are added at the API layer
+   - **Recurrence**: `from utils import recurrence`
+     - `recurrence.validate_rrule()` / `generate_occurrences()` /
+       `get_next_occurrence()`
+     - All python-dateutil imports confined to this module
+   - Also in utils: `hash_chain`, `attachments` (AttachmentStore), `config`
+   - **Note**: there is no `schema.types` domain-types module — schemas live
+     as YAML/SQL in the root `schemas/` dir; Pydantic models live in
+     `api/schemas/`
 
 2. **Use UTC timestamps everywhere**
    - Store as ISO 8601 text in SQLite: `2025-12-22T10:30:00Z`
    - Transaction dates are DATE only: `2025-12-22`
    - Never use local timezones in storage
-   - All datetime operations go through `isodatetime` utility
+   - All datetime operations go through `isodatetime`
 
 3. **Write raw SQL queries**
    - Parameterized queries to prevent SQL injection
-   - Use query builders in `db/query.py` for common patterns
 
 4. **Confine external dependencies to single modules**
    - Create abstraction layers for complex third-party libraries
    - Only one module imports the external package directly
-   - Rest of codebase uses the abstraction
    - Example: JWT tokens (only `auth/token.py` imports PyJWT)
 
 5. **Follow the relevant project's plan**
@@ -519,12 +362,16 @@ When implementing related features or making architectural decisions, consult th
 
 6. **Test everything**
    - Write tests before or alongside code
-   - Use in-memory SQLite for tests
    - Use `isodatetime` for current time assertions in tests
 
 7. **Document as you go**
    - Add docstrings to all functions
-   - Update implementation.md progress
+   - Keep RFC punch lists + GitHub issues current (see Close the loop)
+
+8. **Trust boundaries are operator-governed (RFC-010 D1 / RFC-015)**
+   - Registering provider code, issuing identities/API keys, scope_policy
+     writes = operator JWT-gated endpoints
+   - API keys never mint credentials or reconfigure trust
 
 ## Shell Command Best Practices
 
@@ -543,58 +390,71 @@ Bash(
 )
 ```
 
-**Why:** `2>&1` redirects stderr which can hide destructive operations, triggering approval workflows. `run_in_background=True` is the proper pattern and doesn't require approvals for non-destructive commands.
-
 ### Command Chaining
 
-**Use `&&` for dependent commands:**
-```python
-# Commands run sequentially, stops on first failure
-Bash(command="cd memogarden-core && poetry install && ./run_tests.sh")
+**Use `&&` for dependent commands; `;` for independent ones:**
+
+```bash
+cd memogarden-api && poetry install && ./run_tests.sh
+mkdir -p data ; ./run_tests.sh
 ```
-
-**Use `;` for independent commands:**
-```python
-# Commands run regardless of failures
-Bash(command="mkdir -p data ; ./run_tests.sh")
-```
-
-### Approved Commands (No Approval Needed)
-
-The following commands are pre-approved in `.claude/settings.local.json` and won't trigger workflows:
-- `ln`, `ls`, `cat`, `tree` - File operations
-- `poetry --version`, `poetry self`, `poetry install`, `poetry run` - Poetry operations
-- `python`, `poetry run python`, `./run_tests.sh` - Python execution
-- `git add`, `git commit`, `git config`, `git status`, `git log` - Git operations
-- `sqlite3`, `find`, `mkdir`, `touch` - Development utilities
-- `curl` - HTTP testing (read-only)
-- `./scripts/run.sh`, `./scripts/test.sh`, `./scripts/test-coverage.sh` - Project scripts
 
 ## Anti-Patterns to Avoid
 
-❌ **Don't** use `pip install` - Use Poetry instead (`poetry add package-name`)
-❌ **Don't** create ORM models when schema exists
-❌ **Don't** add dependencies without discussion
-❌ **Don't** skip tests "for now"
-❌ **Don't** use local time zones
-❌ **Don't** over-engineer for future needs
-❌ **Don't** ignore the project's plan/roadmap
-❌ **Don't** batch multiple unrelated changes
-❌ **Don't** use `2>&1` in shell commands (triggers approval workflow unnecessarily)
-❌ **Don't** import `datetime` directly in business logic (use `isodatetime`)
-❌ **Don't** import `uuid4` directly (use `uid.generate_uuid()`)
-❌ **Don't** scatter external library imports across modules (confine to one place)
+❌ Don't use `pip install` (except the documented all-editables server venv
+   convention) — use Poetry (`poetry add`)
+❌ Don't create ORM models when schema exists
+❌ Don't add dependencies without discussion
+❌ Don't skip tests "for now"
+❌ Don't use local time zones
+❌ Don't over-engineer for future needs
+❌ Don't ignore the project's plan/roadmap
+❌ Don't batch multiple unrelated changes
+❌ Don't use `2>&1` in shell commands (triggers approval workflow
+   unnecessarily)
+❌ Don't import `datetime` directly in business logic (use `isodatetime`)
+❌ Don't import `uuid4` directly (use `uid.generate_uuid()`)
+❌ Don't scatter external library imports across modules (confine to one
+   place)
+❌ Don't commit on main checkouts directly for multi-step work — use an awt
+   worktree; main is production
+❌ Don't trust auto-close keywords — verify the GitHub issue actually closed
 
-✅ **Do** use Poetry for package management (`poetry add`, not `pip install`)
-✅ **Do** write raw SQL queries
-✅ **Do** keep dependencies minimal
-✅ **Do** write tests alongside code
-✅ **Do** use UTC everywhere
-✅ **Do** build for current needs
-✅ **Do** follow the plan
-✅ **Do** make focused, atomic commits
-✅ **Do** use `run_in_background=True` for long-running server processes
-✅ **Do** use centralized utilities (`isodatetime`, `uid`, domain types)
-✅ **Do** confine external dependencies to single modules
+✅ Do use Poetry for package management
+✅ Do write raw SQL queries
+✅ Do keep dependencies minimal
+✅ Do write tests alongside code
+✅ Do use UTC everywhere
+✅ Do build for current needs
+✅ Do follow the plan
+✅ Do make focused, atomic commits
+✅ Do use `run_in_background=True` for long-running server processes
+✅ Do use centralized utilities (`isodatetime`, `uid`, `recurrence`)
+✅ Do confine external dependencies to single modules
+✅ Do run the full gate (ruff + format + pyright + pytest) before merging
 
+## Getting Help
 
+If stuck:
+1. Re-read the PRD (`plan/memogarden_prd_v0_11_0.md`) for context
+2. Check the workspace README + the relevant project's own plan/docs
+3. Look at existing code patterns
+4. Use appropriate skill (memogarden-testing, memogarden-debugging,
+   memogarden-api-endpoint, memogarden-schema)
+5. Ask the user with specific questions
+
+### Key References
+
+- **[docs/repositories.md](../../../docs/repositories.md)** - Repository
+  structure and module breakdowns
+- **[docs/deployment.md](../../../docs/deployment.md)** - Deployment guide
+- **[docs/configuration.md](../../../docs/configuration.md)** - Configuration
+  reference
+- **[plan/memogarden_prd_v0_11_0.md](../../../plan/memogarden_prd_v0_11_0.md)**
+  - Complete platform architecture
+- **`plan/future/`** - schema-extension-design, migration-mechanism,
+  soil-design (deferred features; consult before related work)
+
+**Important:** Soil implementation is DEFERRED until agent workflows are
+added. For Budget MVP: no Soil Items, no schema snapshots, no delta
+archival, Entity-based features only.
