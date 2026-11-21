@@ -82,7 +82,7 @@ The operator rejected an Overview/dashboard as premature: without a felt sense o
 
 | Route | Screen | Backed by |
 |---|---|---|
-| `/console/triage` (also `/console` redirect target) | Triage review — queue, tap-row item detail modal, per-item and bulk relabel into destination scopes, recent relabels | `GET /api/v1/triage` + `/mg amend` + `/mg query` type=Action (op=amend) |
+| `/console/triage` (also `/console` redirect target) | Triage review — queue, tap-row item detail modal, family grouping (in-window; undecided parents pulled in from older pages; decided parents' attachments as one sibling card with "→ with parent"), per-item and bulk relabel into destination scopes, recent relabels | `GET /api/v1/triage` + `/mg amend` + `/mg query` type=Action (op=amend) |
 | `/console/scopes` | Scopes & grants — scope list + mint/delete, grants table + issue/revoke, provider scope policies, enforcement state | `GET /api/v1/scopes/overview` + `POST /mg create` + `/mg forget` + `POST/DELETE /grants` + `PUT /providers/<name>/scope-policy` |
 | `/console/identity` | Keys & agents — links/extends the existing `/api-keys`, `/api-keys/new`, `/agents/` pages (which keep working) with grants and unbound-key warnings | existing endpoints |
 | `/console/providers` | Providers — registry, accounts (status/config overrides/run buttons/re-auth instructions), run history | `GET /api/v1/providers*` + `GET /api/v1/providers/<name>/runs` + account PATCH/verify/run |

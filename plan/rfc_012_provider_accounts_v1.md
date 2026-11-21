@@ -338,6 +338,19 @@ construction spike (~2 GB transient per gmail run past MemoryHigh=1G →
 gunicorn worker-timeout massacre, every gmail run orphaned 16:28–17:13)
 — slim combined scan `f9520c6` defused it (64 MB / 1.6 s).
 
+**ADDENDUM 2026-11-21 — extraction-time scope inheritance (operator
+decision; api `dae07c4`):** a yielded fact carrying `metadata.email_uuid`
+(gmail attachments) inherits the parent email's CURRENT scopes at
+extraction when the parent has any, so a late-extracted attachment of an
+already-filed email lands filed instead of stranding in triage as an
+orphan row. Precedence: provider-set labels win, then parent
+inheritance, then the scope policy — undecided (triage-labeled) and
+unscoped parents fall through to the policy unchanged, so fail-closed
+defaults are never weakened and an in-triage family still sorts together
+where the console's cascading decision covers it. Superseded/missing
+parent rows are a no-op (the hourly coverage scan is keyed on message
+ids, not this stamp).
+
 ### 4.10 Ingestion Order Policy (v1.2, 2026-11-14)
 
 **Official policy: history is ingested reverse-chronologically.** A newly
