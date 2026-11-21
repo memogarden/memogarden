@@ -1,9 +1,19 @@
 # RFC-003: Context Mechanism v5
 
 **Status:** Draft  
-**Version:** 5.0  
-**Date:** 2026-11-09  
+**Version:** 5.1  
+**Date:** 2026-11-21 (status line; design 2026-11-09)  
 **Supersedes:** RFC-003 v4
+
+> **Implementation status (2026-11-21).** The v5 invariants are the
+> operative spec — migrations and handlers cite them by number. Shipped:
+> ContextFrame with singular `active_scope` (INV-11a atomic switch),
+> grant-gated `enter` (INV-11b, enforcement-gated per RFC-011 §8
+> rollout), `leave`, `focus` as the retired no-op alias. **Roadmap,
+> gated on the multi-agent runtime** (RFC-009 verdict): `rejoin`
+> (INV-7, subagent view-stream merge), View persistence (INV-14 — the
+> view timeline is currently in-memory only), delta context capture
+> (INV-3/4), context break and coalescence (INV-16/22).
 
 ---
 
@@ -48,7 +58,7 @@ MemoGarden serves as persistent substrate for human-AI collaboration. Current ch
 ### 1.2 Design Goals
 
 **G1. Capture working context:** Record what objects operator/agent is focusing on during work  
-**G2. Enable context handover:** Support contributor transitions (operator â†’ agent, agent â†’ subagent)  
+**G2. Enable context handover:** Support contributor transitions (operator → agent, agent → subagent)  
 **G3. Support retrospective analysis:** Allow querying "what was I working on during this time period?"  
 **G4. Maintain scope continuity:** Preserve scope view-stream across multiple contributors  
 **G5. Minimize operator overhead:** Context tracking automatic, explicit control where needed  
@@ -97,8 +107,8 @@ MemoGarden serves as persistent substrate for human-AI collaboration. Current ch
 **Definition:** Automatic snapshot of ContextFrame's container list into delta metadata at time of mutation.
 
 **Primary Context:** The contextually-relevant ContextFrame for a given operation:
-- If mutated object in scope â†’ scope's ContextFrame
-- Otherwise â†’ user's ContextFrame
+- If mutated object in scope → scope's ContextFrame
+- Otherwise → user's ContextFrame
 
 **Delta metadata includes:**
 ```json
@@ -138,8 +148,8 @@ When user visits an object while inside a scope:
 
 **INV-3: Primary Context Capture**  
 Delta's `context` field captures the PRIMARY context at time of mutation:
-- If mutated object belongs to scope â†’ scope's ContextFrame containers
-- Otherwise â†’ user's ContextFrame containers
+- If mutated object belongs to scope → scope's ContextFrame containers
+- Otherwise → user's ContextFrame containers
 - Captured context MUST NOT exceed N facts (LRU limit)
 
 **INV-4: Automatic Capture**  
@@ -183,7 +193,7 @@ When user leaves scope (via `leave` verb):
 **INV-9: Linked List Structure**  
 Views form temporal linked list via `prev` pointer:
 ```
-View_1 â†’ View_2 â†’ View_3 â†’ ViewMerge â†’ View_4
+View_1 → View_2 → View_3 → ViewMerge → View_4
         (prev)   (prev)    (prev)      (prev)
 ```
 
@@ -237,8 +247,8 @@ N=7 is initial value, subject to empirical adjustment based on usage patterns.
 
 **INV-14: Cross-Session Persistence**  
 ContextFrames persist indefinitely across sessions:
-- User logs out â†’ context preserved
-- User logs in â†’ context restored
+- User logs out → context preserved
+- User logs in → context restored
 - No automatic timeout or decay
 
 **INV-15: Persistent Users Only**  
@@ -265,9 +275,9 @@ Not all object accesses update context:
 
 **INV-18: Type-Based Classification**  
 Classification is type-based, not operation-based:
-- Accessing artifact content â†’ substantive (updates context)
-- Accessing artifact metadata only â†’ still substantive type, but no visit recorded
-- Accessing schema definition â†’ primitive (never updates context)
+- Accessing artifact content → substantive (updates context)
+- Accessing artifact metadata only → still substantive type, but no visit recorded
+- Accessing schema definition → primitive (never updates context)
 
 **INV-19: Hardcoded Initial Classification**  
 For MVP, substantive/primitive classification is hardcoded. Future versions may allow per-type configuration.
@@ -318,7 +328,7 @@ Delta `context` field is preserved during fossilization:
 
 **INV-26: No Shared ContextFrame**  
 Two contributors cannot share a ContextFrame:
-- Same scope, different users â†’ each has own ContextFrame
+- Same scope, different users → each has own ContextFrame
 - Scope's ContextFrame reflects aggregate (both Views appended)
 - User A's context is A's alone, B's context is B's alone
 
@@ -598,6 +608,7 @@ Dashboard showing:
 | 3.0 | 2026-02-03 | **Invariant-focused revision:** 26 behavioral invariants, scope continuity, fork/merge semantics, dual-append clarification, context break specification, fossilization compression, deferred implementation details |
 | 4.0 | 2026-02-06 | **Verb alignment with RFC-005 v6:** Added `focus` verb for explicit primary scope switching. Clarified enter/leave/focus separation (INV-11a, INV-11b). Updated API section with complete verb definitions. Context verbs bundled with Core. Added terminology for primary scope vs active scopes. |
 | 5.0 | 2026-11-09 | **RFC-011 alignment:** Scopes are access boundaries. INV-11 rewritten: activation via `enter`/`leave` only; INV-11a exclusive activation (atomic `scope_switch`, no co-activation); INV-11b grant-gated entry with audited denials; INV-11c implied initial activation; `focus` verb retired (deprecated alias). INV-2 dual-append → user + the active scope. §4 verb definitions and internal methods updated to singular `active_scope`. Terminology updated. |
+| 5.1 | 2026-11-21 | Coherence review: implementation-status note added — INV-11a/11b/11c + `leave`/`focus`-alias shipped; `rejoin` (INV-7), View persistence (INV-14), delta context capture (INV-3/4), break/coalescence (INV-16/22) framed as roadmap gated on the multi-agent runtime. |
 
 ---
 

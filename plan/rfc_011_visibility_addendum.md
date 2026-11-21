@@ -1,15 +1,20 @@
 # RFC-011 Visibility Addendum: `visibility: public | private`
 
 **Version:** 1.0
-**Status:** Decisions ratified 2026-11-19; implementation pending
+**Status:** Decisions ratified 2026-11-19. Read-path predicate, schema
+attribute, and console UI shipped 2026-11-19 with RFC-011 item 5;
+remaining open: §6 items 1–2.
 **Amends:** RFC-011 v1.3 (Scopes, Grants, and Attention-Gated Access)
 **Related:** `rfc_011_implementation.md` (progress tracker), RFC-010 v1.2 (Agent Identity), RFC-001 v5 §4.4 (multi-operator, orthogonal)
 
 ## 1. Purpose
 
 RFC-011 §10 deferred scope visibility ("no public/secret levels"). This
-addendum ratifies the design for that axis. It is a decision record, not an
-implementation report: nothing in it is deployed yet.
+addendum ratifies the design for that axis. Written as a decision record;
+the read-path predicate (public short-circuit), the `scope.schema.json`
+attribute, builtin-seed stamping, and the console badge + flip control
+shipped 2026-11-19 alongside RFC-011 item 5 (dated status lives in the
+`rfc_011_implementation.md` tracker). §6 items 1–2 remain open.
 
 What this is: **a `visibility` attribute on Scope entities** — existing and
 new scopes alike. There is **no "Public scope"**; any scope can carry
@@ -96,11 +101,11 @@ policies) to the new UUID, stamps the attribute, supersedes the old entity;
 alias maps break clean (no legacy `private` alias). See
 `system/core/__init__.py::migrate_private_scope_rename`.
 
-## 5. Implementation surface (when this lands)
+## 5. Implementation surface — shipped 2026-11-19 with RFC-011 item 5
 
-- **Prerequisite — RFC-011 item 5 (entity read-path enforcement).**
-  Entities are currently decorated, not protected; visibility for entities
-  is fiction until get/query/explore enforce. Hard prerequisite.
+- **Prerequisite — RFC-011 item 5 (entity read-path enforcement) — DONE
+  2026-11-19.** get/query/explore enforce §4.5; visibility rides the same
+  predicate (`scope_access.item_visible` public short-circuit).
 - Predicate: `scope_access.item_visible` / `filter_visible` gain the public
   short-circuit (scope visibility resolved per request; cache per run like
   the policy resolver). Consumers: fact get/query/search, SSE.
@@ -135,7 +140,9 @@ alias maps break clean (no legacy `private` alias). See
 
 ---
 
-**Status:** decisions ratified; implementation sequenced behind RFC-011
-item 5. Rename companion shipped 2026-11-19.
+**Status:** decisions ratified; predicate + schema + UI shipped
+2026-11-19 with RFC-011 item 5. §6 items 1–2 (superseded-original
+visibility, SSE transition events) remain open. Rename companion shipped
+2026-11-19.
 
 **END OF ADDENDUM**

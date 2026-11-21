@@ -356,12 +356,12 @@ System relations encode structural facts. Stored in Soil, never modified, no tim
 
 | Kind | Meaning | Example |
 |------|---------|---------|
-| `triggers` | Causal chain | Message ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ EntityDelta |
-| `cites` | Reference/quotation | Artifact A ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ Artifact B |
-| `replies_to` | Email threading | Email A ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ Email B (from In-Reply-To) |
-| `derives_from` | Synthesis provenance | Summary ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ source documents |
-| `contains` | Structural containment | Project ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ Artifact |
-| `continues` | Branch continuation | ConversationLog ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ parent |
+| `triggers` | Causal chain | Message → EntityDelta |
+| `cites` | Reference/quotation | Artifact A → Artifact B |
+| `replies_to` | Email threading | Email A → Email B (from In-Reply-To) |
+| `derives_from` | Synthesis provenance | Summary → source documents |
+| `contains` | Structural containment | Project → Artifact |
+| `continues` | Branch continuation | ConversationLog → parent |
 | `supersedes` | Replacement/update | Fact B  Fact A |
 
 **Properties:**
@@ -380,7 +380,7 @@ User relations encode engagement and attention. Active relations stored in Core,
 **Time-horizon mechanism:** Each relation has a `time_horizon` (days since epoch) representing estimated relevance endpoint. Relations decay based on Anderson & Schooler's power law of forgetting. See RFC-002 for lifecycle management.
 
 **Properties:**
-- UUID prefix: `core_` (active) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ `soil_` (fossilized)
+- UUID prefix: `core_` (active) → `soil_` (fossilized)
 - Last access updates time-horizon
 - Fossilization transfers to Soil when expired
 - Operators can extend time-horizons explicitly
@@ -494,7 +494,7 @@ class Provider(Protocol):
     def sync(self, since: datetime = None) -> Iterator[Fact]:
         """Fetch facts from source, yield MemoGarden Facts.
         
-        Provider translates source_schema ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ standard_schema ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ Fact.
+        Provider translates source_schema → standard_schema → Fact.
         MemoGarden validates and inserts.
         """
         
@@ -529,7 +529,7 @@ MemoGarden implements background compression of old Facts to manage storage on r
 
 Facts transition through fidelity states:
 ```
-full ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ summary ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ stub ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ tombstone
+full → summary → stub → tombstone
 ```
 
 ### Triggers

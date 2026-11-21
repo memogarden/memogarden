@@ -1,6 +1,6 @@
 # RFC-008: Transaction Semantics & Consistency Model
 
-**Version:** 1.2  
+**Version:** 1.3  
 **Status:** Draft  
 **Author:** JS  
 **Date:** 2026-02-08
@@ -326,141 +326,9 @@ PRAGMA foreign_keys=ON;            # Enforce constraints
 
 ### Isolation Level
 
-**SERIALIZABLE** via explicit `BEGIN EXCLUSIVE` on both databases.
-
-```python
-class MemoGarden:
-    def begin_transaction(self):
-        """Enter transaction mode. Raises if already in transaction."""
-        if self._in_transaction:
-            raise AlreadyInTransactionError()
-        
-        # Lock both databases exclusively
-        self._soil_conn.execute("BEGIN EXCLUSIVE")
-        try:
-            self._core_conn.execute("BEGIN EXCLUSIVE")
-        except Exception as e:
-            # If Core lock fails, rollback Soil
-            self._soil_conn.rollback()
-            raise
-        
-        self._in_transaction = True
-```
-
-**Properties:**
-- One transaction per handle
-- No nesting (no SAVEPOINTs)
-- Other handles block on `busy_timeout`
-- Prevents concurrent cross-DB operations
-
-### Commit Protocol
-
-```python
-def commit_transaction(self):
-    """Commit both databases. Best-effort atomicity."""
-    if not self._in_transaction:
-        raise NotInTransactionError("commit")
-    
-    soil_ok = False
-    core_ok = False
-    
-    try:
-        # Commit Soil first (source of truth)
-        self._soil_conn.commit()
-        soil_ok = True
-        
-        # Then commit Core
-        self._core_conn.commit()
-        core_ok = True
-        
-    except Exception as e:
-        # Log failure details
-        self._log_commit_failure(soil_ok, core_ok, e)
-        
-        # Attempt rollback of both (even if one committed)
-        self._rollback_both()
-        
-        # Mark system state
-        if soil_ok and not core_ok:
-            self.status = SystemStatus.INCONSISTENT
-        
-        raise TransactionCommitError(
-            soil_ok=soil_ok, 
-            core_ok=core_ok,
-            reason=str(e)
-        )
-    finally:
-        self._in_transaction = False
-```
-
-**Commit ordering rationale:**
-- Soil first: It's the source of truth, can rebuild Core from it
-- Core second: If Core fails, Soil has extra data (orphaned deltas)
-
-**Failure scenarios:**
-
-| Scenario | Soil | Core | System State | Recovery |
-|----------|------|------|--------------|----------|
-| Both succeed | ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ | ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ | NORMAL | None needed |
-| Both fail | ÃƒÂ¢Ã…â€œÃ¢â‚¬â€ | ÃƒÂ¢Ã…â€œÃ¢â‚¬â€ | NORMAL | Transaction rolled back |
-| Soil commits, Core fails | ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ | ÃƒÂ¢Ã…â€œÃ¢â‚¬â€ | INCONSISTENT | `memogarden repair` |
-| Process killed between commits | ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ | ÃƒÂ¢Ã…â€œÃ¢â‚¬â€ | INCONSISTENT | Detected on next startup |
-
-**Frequency estimate:** Soil-commits-Core-fails occurs ~0.01% per year (36 seconds of vulnerability per year for personal system with 100 transactions/day).
-
-### Rollback Protocol
-
-```python
-def rollback_transaction(self):
-    """Rollback both databases."""
-    if not self._in_transaction:
-        raise NotInTransactionError("rollback")
-    
-    try:
-        self._soil_conn.rollback()
-    except Exception as e:
-        logger.error(f"Soil rollback failed: {e}")
-    
-    try:
-        self._core_conn.rollback()
-    except Exception as e:
-        logger.error(f"Core rollback failed: {e}")
-    
-    self._in_transaction = False
-```
-
-**Best-effort rollback:** If commit succeeded on one DB, rollback is no-op on that DB. System marked INCONSISTENT.
-
-### Context Manager
-
-```python
-@contextmanager
-def transaction(self):
-    """
-    Context manager for transactions.
-    Auto-commits on success, auto-rolls-back on exception.
-    
-    Locks both Soil and Core databases with EXCLUSIVE locks.
-    
-    Note: Cross-database atomicity is best-effort. Rare failures
-    (~0.01%/year) require operator intervention via `memogarden repair`.
-    """
-    self.begin_transaction()
-    try:
-        yield self
-        self.commit_transaction()
-    except Exception:
-        self.rollback_transaction()
-        raise
-```
-
-**Usage:**
-```python
-with mg.transaction():
-    entity = mg.get_entity('core_abc')
-    mg.update_entity('core_abc', {'content': '...'}, based_on_hash=entity.hash)
-    # Auto-commits both DBs on exit
-```
+**SERIALIZABLE** via explicit `BEGIN EXCLUSIVE` on both databases
+(INV-TX-004); the begin/rollback/context-manager lifecycle lives in
+§5.1–§5.3.
 
 ## Operation-Specific Semantics
 
@@ -494,6 +362,12 @@ def add_item(self, type: str, content: dict, /, *, metadata: dict = None) -> Ite
 - Outside transaction: Auto-commits immediately
 
 ### Cross-Database Operations
+
+**Design of record (2026-11-21 decision):** this transactional
+`update_entity` + EntityDelta flow is the direction of travel. The
+implementation currently bridges with in-place `update_hash`/`update_data`
+edits (per-row sealed per Addendum v1.3) and is to converge to this
+section's flow; the build is tracked in the memogarden-system repo.
 
 **update_entity():**
 ```python
@@ -570,7 +444,7 @@ def fossilize_relation(self, relation_uuid: str) -> None:
     """, (relation_uuid,)).fetchone()
     
     # 2. Insert into Soil (change UUID prefix)
-    soil_uuid = f"soil_{relation_uuid[5:]}"  # core_ ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ soil_
+    soil_uuid = f"soil_{relation_uuid[5:]}"  # core_ → soil_
     self._soil_conn.execute("""
         INSERT INTO system_relation 
         (uuid, kind, source, target, created_at, metadata)
@@ -651,7 +525,7 @@ mg.update_entity('core_abc', {...}, based_on_hash=H1)
 entity = mg.get_entity('core_abc')  # hash = H1
 mg.update_entity('core_abc', {...}, based_on_hash=H1)
 
-# One succeeds (hash ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ H2)
+# One succeeds (hash → H2)
 # Other fails: OptimisticLockError (expected H1, got H2)
 ```
 
@@ -802,15 +676,15 @@ class SystemStatus(Enum):
 **Mode transitions:**
 ```
 Startup:
-- No issues ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ NORMAL
-- Orphaned deltas detected ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ INCONSISTENT
-- Database corruption ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ SAFE_MODE
-- Operator flag ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ READ_ONLY
+- No issues → NORMAL
+- Orphaned deltas detected → INCONSISTENT
+- Database corruption → SAFE_MODE
+- Operator flag → READ_ONLY
 
 Runtime:
-- NORMAL ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ INCONSISTENT: Commit failure (Soil ok, Core fail)
-- Any ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ READ_ONLY: Operator sets mode
-- INCONSISTENT ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ NORMAL: After successful repair
+- NORMAL → INCONSISTENT: Commit failure (Soil ok, Core fail)
+- Any → READ_ONLY: Operator sets mode
+- INCONSISTENT → NORMAL: After successful repair
 ```
 
 ### Recovery Tools
@@ -847,12 +721,12 @@ Recommended Actions:
 $ memogarden repair rebuild-core
 
 Rebuilding Core from Soil...
-ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Scanned 15,234 EntityDeltas in Soil
-ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Identified 3 out-of-sync entities
-ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Replayed deltas for core_abc123 (H1 ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ H2)
-ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Replayed deltas for core_def456 (H4 ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ H5)
-ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Replayed deltas for core_ghi789 (H7 ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ H8)
-ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Verified hash chains
+✓ Scanned 15,234 EntityDeltas in Soil
+✓ Identified 3 out-of-sync entities
+✓ Replayed deltas for core_abc123 (H1 → H2)
+✓ Replayed deltas for core_def456 (H4 → H5)
+✓ Replayed deltas for core_ghi789 (H7 → H8)
+✓ Verified hash chains
 
 Repair complete. System status: NORMAL
 ```
@@ -982,14 +856,42 @@ def test_power_loss_during_commit():
 
 ## References
 
-- RFC-001 v4: Security & Operations Architecture
+- RFC-001 v5: Security & Operations Architecture
 - RFC-002 v5: Relation Time Horizon & Fossilization
-- RFC-005 v3: API Design
+- RFC-005 v8: API Design
 - RFC-006 v1: Error Handling & Diagnostics
-- RFC-007 v1: Runtime Operations
+- RFC-007 v2: Runtime Operations
 - PRD v0.10.0: MemoGarden Personal Information System
 - SQLite WAL mode: https://sqlite.org/wal.html
 - SQLite transaction documentation: https://sqlite.org/lang_transaction.html
+
+## Invariant Index (INV-TX)
+
+Implementation code and `docs/cross-database-transactions.md` cite these
+invariants by number; this table is their home:
+
+| ID | Invariant | Section |
+|---|---|---|
+| INV-TX-001 | Single-DB operations use standard SQLite ACID | §3.1 |
+| INV-TX-002 | Cross-DB operations use best-effort atomicity with app-level coordination | §2 |
+| INV-TX-003 | Split operations commit independently; relation creation retries | §3.3 |
+| INV-TX-004 | SERIALIZABLE via `BEGIN EXCLUSIVE` on both databases | §5.1 |
+| INV-TX-005 | One transaction per handle (no nesting, no SAVEPOINTs) | §5.1 |
+| INV-TX-006 | Other handles block on `busy_timeout` (5s default) | §5.1 |
+| INV-TX-007 | Commit ordering: Soil first, then Core | §4.1 |
+| INV-TX-008 | Soil commits but Core fails → INCONSISTENT | §4.2 |
+| INV-TX-009 | Process killed between commits → INCONSISTENT (startup detection) | §4.2 |
+| INV-TX-010 | Best-effort rollback (committed DB's rollback is a no-op) | §5.2 |
+| INV-TX-011 | Entity hash is a per-row integrity seal | §Entity Hash Chains; Addendum v1.3 |
+| INV-TX-012 | Update requires `based_on_hash` to match current hash | §Conflict Detection |
+| INV-TX-013 | Hash mismatch → `OptimisticLockError` | §Conflict Detection |
+| INV-TX-014 | Operating modes: NORMAL, INCONSISTENT, READ_ONLY, SAFE_MODE | §Operating Modes |
+| INV-TX-015 | No issues → NORMAL | §Operating Modes |
+| INV-TX-016 | Orphaned deltas → INCONSISTENT | §Operating Modes |
+| INV-TX-017 | Database corruption → SAFE_MODE | §Operating Modes |
+| INV-TX-018 | Startup checks for orphaned EntityDeltas | §Startup Consistency Check |
+| INV-TX-019 | Startup checks hash integrity — per-row recompute per Addendum v1.3 (the pre-v1.3 cross-row chain check is retired) | §Startup Consistency Check |
+| INV-TX-020 | System starts regardless of state (always-available startup) | §Startup Consistency Check |
 
 ## Revision History
 
@@ -997,6 +899,8 @@ def test_power_loss_during_commit():
 |---------|------|---------|
 | 1.0 | 2026-02-02 | Initial specification |
 | 1.1 | 2026-02-06 | Resolved Open Question #3: Metrics storage location (in-memory + journald, not Soil) |
+| 1.3 | 2026-11-20 | Addendum — hash integrity semantics re-ratified as a per-row integrity seal (`previous_hash` = chained value, not a cross-row link); `entity_update_timestamp` trigger guarded; migration 20261120→20261121 re-signs entities; seed stamp 20261121 (memogarden-system#6). Header version aligned to the addendum. |
+| 1.4 | 2026-11-21 | Coherence review: §4/§5 duplicates inside "Transaction Implementation" merged (SQLite pragmas + isolation pointer kept); INV-TX-001..020 invariant index added (the numbering the implementation cites); §Cross-Database Operations reaffirmed as design of record — decision 2026-11-21: the transactional `update_entity` + EntityDelta flow is the direction of travel, current in-place edits are the bridge to converge (build tracked in memogarden-system). |
 
 ---
 

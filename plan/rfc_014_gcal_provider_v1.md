@@ -1,6 +1,6 @@
 # RFC-014: Google Calendar Provider (gcal) — v1 DRAFT
 
-**Status**: Phase A MERGED to main (system `096dd48`, api `6a0a884`, root `a5eced3`). Phase B (mark-occurred, §6) IMPLEMENTED on `feat/gcal-mark-occurred` — pending review/merge. All decisions settled (AUQ 2026-11-16, §14).
+**Status**: Phase A MERGED to main (system `096dd48`, api `6a0a884`, root `a5eced3`). Phase B (mark-occurred, §6) MERGED to main — live at `POST /api/v1/events/<uuid>/mark-occurred`. All decisions settled (AUQ 2026-11-16, §14); §6's fact shape is amended by the addendum below (EventOccurrence retired).
 **Related**: RFC-004 §12.2 (provider runtime), RFC-010 (agent identity), RFC-011 (scopes/grants), RFC-012 (provider accounts; §10 reserved exactly this capability widening), PRD v0.11 §Provider Plugin Interface.
 
 ---
@@ -9,7 +9,7 @@
 
 A Google Calendar read-only ingestion provider (`gcal`) that mirrors each concrete calendar event into a **Core Event entity** (mutable belief — the schedule as the user believes it), and creates Soil facts only when a review action marks an event as occurred. The provider extends the runtime contract so providers can yield **entity upserts** — gcal is the first Core-writing provider, and the contract extension is designed so future Core-writing providers inherit it.
 
-Blocker decisions (AUQ-settled 2026-11-16): **contract extension** for Core writes (not direct writes); **operators + agents** may mark occurred; **full-history backfill**; **entity-stamp-only** removals. Minor decisions (§14): fact kind `EventOccurrence`; owner-role calendars by default; **hourly** cadence; **triage** scope default.
+Blocker decisions (AUQ-settled 2026-11-16): **contract extension** for Core writes (not direct writes); **operators + agents** may mark occurred; **full-history backfill**; **entity-stamp-only** removals. Minor decisions (§14): fact kind `EventOccurrence` (retired before first use by the 2026-11-19 ontology convergence — see addendum); owner-role calendars by default; **hourly** cadence; **triage** scope default.
 
 ## 2. Model: Event is a Core entity
 
@@ -222,9 +222,28 @@ Blockers: contract extension for Core writes; operators + agents may mark occurr
 Minor decisions:
 1. Fact kind named **`EventOccurrence`** (entity stays `Event`).
 2. Calendar default: **owner-role only**; `calendar_ids` allowlist opts extras in.
-3. Cadence: **hourly** (`interval: 3600`) — freshness chosen over KDF thrift; 24 Argon2id unlocks/day accepted. (Mitigation if it ever matters: the offered-but-unapplied systemd memory caps.)
+3. Cadence: **hourly** (`interval: 3600`) — freshness chosen over KDF thrift; 24 Argon2id unlocks/day accepted. (Mitigation: systemd memory caps — applied 2026-11-20: MemoryHigh=2.5G, MemoryMax=3G, MemorySwapMax=512M.)
 4. Scope posture: **triage default** (no policy at registration; fail-closed catch-all). Per-calendar rules via `metadata.calendar_id` available later.
 
 Defaults adopted without objection: provider registry name `gcal`; participants cap 50 + `metadata.attendee_count`; `self_response` kept in metadata; `status` keeps `tentative`; audit pass = full listing (no `timeMin`) monthly + after reseed; mark-occurred body defaults `occurred_at` to now.
 
 Note: with triage default + full-history backfill, the review backlog carries *two* gates — scope triage and occurrence marking. Both are batchable; both argue for the future review UI / agent reconciliation loop (§7).
+
+---
+
+## Addendum (2026-11-21): Phase B merge & EventOccurrence retirement
+
+Two implementation events post-date the §14 decision log; recorded here
+without rewriting the original sections:
+
+- **Phase B is merged.** `POST /api/v1/events/<uuid>/mark-occurred` is
+  live on api main; §6 behavior otherwise as designed (belief-revision
+  only — never automatic, never on date passage).
+- **§6.3 fact kind superseded — `EventOccurrence` retired (#31).** The
+  2026-11-19 Task/Event ontology convergence retired the
+  `EventOccurrence` fact kind before any instance existed. Marking now
+  lands the universal **Event fact** — the same kind the tada lane
+  lands — carrying `metadata.status = "occurred"` and the event linkage;
+  idempotency probes the Event fact
+  (`memogarden-api/api/v1/events.py::_existing_occurrence`). §6.3's kind
+  name and §14 minor-decision 1 are historical.

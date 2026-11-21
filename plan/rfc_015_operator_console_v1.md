@@ -59,14 +59,14 @@ Read-only, non-governed operational visibility: matches provider GET's principal
 |---|---|
 | `GET /api/v1/triage?limit=&offset=&source=` | facts currently labeled into the Triage scope (uuid resolved from the builtin `Triage / Untrusted` entity), newest first, + total count |
 | `GET /api/v1/scopes/overview` | scopes (entity table) + per-scope labeled-item counts (facts `metadata.scopes` via `json_each` + entities `data.scopes`) + grants (api_keys.grants) + provider scope policies |
-| `GET /api/v1/events/pending-review?window_days=&limit=` | Events with a past `ends_at` (or past date-only start), `occurred_at` null, no EventOccurrence fact — the review queue |
+| `GET /api/v1/events/pending-review?window_days=&limit=` | Events with a past `ends_at` (or past date-only start), `occurred_at` null, no occurrence fact — the review queue (probes the universal Event fact since the 2026-11-19 ontology convergence, #31) |
 
 All three are reads for the sovereign operator; enforcement-flag state does not change their results (operator sees everything either way).
 
 ### 3.4 Non-goals (explicit)
 
 - SSE `?token=` query-param auth (studio observe mode stays broken; backlog — needs a short-lived ticket design).
-- RFC-013 E3 capability flags on api_keys (decided; separate change).
+- RFC-013 E3 capability flags on api_keys (decided here as a non-goal; landed separately 2026-11-19 — `api_keys.capabilities`, middleware-enforced).
 - A dedicated server-side `relabel` verb — amend with `metadata.scopes` remains the mechanism (docs/api.md already flags it); the CLI `relabel fact` verb is client-side sugar over amend, so D2 gating applies unchanged.
 - Schema registration (`register schema` — designed in RFC-005, server "not yet implemented").
 - Backup/export verbs (raw `tar` per docs/deployment.md remains fine for a single-box deployment).
@@ -124,7 +124,7 @@ Verb-first `memogarden <verb> <noun>` per the accepted grammar. `register` stays
 
 ### 5.5 Tier 4 — planned, not built here
 
-`register schema` / `list schemas` (RFC-005-designed; server unimplemented); `register key --capabilities runs` (lands with RFC-013 E3).
+`register schema` / `list schemas` (RFC-005-designed; server unimplemented); `register key --capabilities runs` — the E3 capability model landed server-side 2026-11-19 (RFC-013 register slice 2); the CLI flag remains open.
 
 ## 6. Decisions of record
 

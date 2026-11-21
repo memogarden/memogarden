@@ -1,4 +1,4 @@
-# Joint Cognitive Environment (JCE) â€” Design Whitepaper
+# Joint Cognitive Environment (JCE) — Design Whitepaper
 
 **Version:** 1.0  
 **Status:** Draft  
@@ -22,7 +22,7 @@ The internal name guides implementation decisions; the public name communicates 
 
 The environment, not the participants, is the locus of intelligence. Participants contribute different capabilities; the environment enables their synthesis.
 
-A JCE is a workspace where two participants (the **dyad**) share tools, observe each other's work, and coordinate through a common data substrate. The environment amplifies cognition regardless of participant typeâ€”human-human, human-agent, agent-agent.
+A JCE is a workspace where two participants (the **dyad**) share tools, observe each other's work, and coordinate through a common data substrate. The environment amplifies cognition regardless of participant type—human-human, human-agent, agent-agent.
 
 ### 1.3 Relationship to MemoGarden
 
@@ -91,19 +91,19 @@ Asymmetry exists in **capability** (agents can't see images, humans can't search
 ## 3. Architectural Stack
 
 ```
-â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-â”‚  Studios                                                        â”‚
-â”‚  Complex coordinated toolsets for specific workflows            â”‚
-â”‚  (Project, Data, Research, Triage, ...)                         â”‚
-â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
-â”‚  Utilities                                                      â”‚
-â”‚  Core interaction primitives, multi-user by default             â”‚
-â”‚  (Shell, Artifact Editor, Conversations, Timeline Browser, ...) â”‚
-â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
-â”‚  MemoGarden Substrate                                           â”‚
-â”‚  Data layer: Soil, Core, Relations, Fossilization               â”‚
-â”‚  (PRD v0.6.0, RFC-001, RFC-002, RFC-003)                        â”‚
-â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+┌─────────────────────────────────────────────────────────────────┐
+│  Studios                                                        │
+│  Complex coordinated toolsets for specific workflows            │
+│  (Project, Data, Research, Triage, ...)                         │
+├─────────────────────────────────────────────────────────────────┤
+│  Utilities                                                      │
+│  Core interaction primitives, multi-user by default             │
+│  (Shell, Artifact Editor, Conversations, Timeline Browser, ...) │
+├─────────────────────────────────────────────────────────────────┤
+│  MemoGarden Substrate                                           │
+│  Data layer: Soil, Core, Relations, Fossilization               │
+│  (PRD v0.6.0, RFC-001, RFC-002, RFC-003)                        │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 **Layering principle:** Each layer only talks to the layer below. Studios compose utilities; utilities operate on substrate.
@@ -125,7 +125,7 @@ Asymmetry exists in **capability** (agents can't see images, humans can't search
 
 ## 4. Utilities
 
-Utilities are primitive tools that operate directly on the substrate. They are **multi-user by default**â€”both participants can use them simultaneously, and each can observe the other's usage.
+Utilities are primitive tools that operate directly on the substrate. They are **multi-user by default**—both participants can use them simultaneously, and each can observe the other's usage.
 
 ### 4.1 Shell
 
@@ -244,9 +244,9 @@ Artifact-centric collaboration on structured work products.
 - File import/export (external format interop)
 
 **Workflow patterns:**
-- Draft â†’ Review â†’ Commit
-- Branch for exploration â†’ Collapse with summary
-- Agent proposes changes â†’ Operator accepts/rejects
+- Draft → Review → Commit
+- Branch for exploration → Collapse with summary
+- Agent proposes changes → Operator accepts/rejects
 - Parallel editing with merge
 
 **Output:** Artifacts exportable to standard formats (Markdown, PDF, code files, DOCX).
@@ -285,14 +285,14 @@ Long-form investigation with source management.
 - Any work requiring source synthesis
 
 **Composed from:**
-- Source ingestion (PDF, web pages â†’ Items/Artifacts)
+- Source ingestion (PDF, web pages → Items/Artifacts)
 - Citation tracking (system relations: cites, derives_from)
 - Artifact Editor (synthesis workspace with citation autocomplete)
 - Timeline Browser (source navigation)
 
 **Workflow patterns:**
-- Collect sources â†’ Extract claims â†’ Synthesize argument
-- Agent identifies relevant passages â†’ Operator evaluates
+- Collect sources → Extract claims → Synthesize argument
+- Agent identifies relevant passages → Operator evaluates
 - Time horizon on sources reflects ongoing relevance
 - Bibliography generation from relation graph
 
@@ -316,7 +316,7 @@ Processing incoming streams (email, messages, feeds).
 - Conversation Group (for items needing discussion)
 
 **Workflow patterns:**
-- Agent pre-classifies â†’ Operator confirms
+- Agent pre-classifies → Operator confirms
 - Defer = low initial time horizon; surface later based on triggers
 - Escalate = create user relation to high-significance entity
 - Batch processing with undo
@@ -344,11 +344,11 @@ One participant transfers active work to another.
 
 ```
 Operator working on artifact A
-  â†’ Handover("finish the error handling section")
-  â†’ Agent's ContextFrame inherits Operator's current state
-  â†’ Agent works; Operator can observe or switch to other work
-  â†’ Agent signals completion
-  â†’ Operator reviews delta, accepts or continues
+  → Handover("finish the error handling section")
+  → Agent's ContextFrame inherits Operator's current state
+  → Agent works; Operator can observe or switch to other work
+  → Agent signals completion
+  → Operator reviews delta, accepts or continues
 ```
 
 **Properties:**
@@ -363,11 +363,11 @@ Both participants explore in parallel.
 
 ```
 Discussion reaches decision point with options A and B
-  â†’ Fork: Agent explores Option A in branch_1
+  → Fork: Agent explores Option A in branch_1
           Operator explores Option B in branch_2
-  â†’ Each works in separate ConversationLog branch
-  â†’ Reconvene: Compare findings
-  â†’ Collapse one, merge both, or continue exploring
+  → Each works in separate ConversationLog branch
+  → Reconvene: Compare findings
+  → Collapse one, merge both, or continue exploring
 ```
 
 **Properties:**
@@ -382,10 +382,10 @@ One participant watches the other work.
 
 ```
 Agent performing complex multi-step retrieval
-  â†’ Operator enables Follow mode
-  â†’ Operator's view tracks Agent's current attention in real-time
-  â†’ Operator can: interrupt, redirect, annotate, or let continue
-  â†’ Follow mode ends on explicit exit or Operator action
+  → Operator enables Follow mode
+  → Operator's view tracks Agent's current attention in real-time
+  → Operator can: interrupt, redirect, annotate, or let continue
+  → Follow mode ends on explicit exit or Operator action
 ```
 
 **Properties:**
@@ -400,10 +400,10 @@ Pull partner's attention to current focus.
 
 ```
 Operator finds relevant passage while Agent is working elsewhere
-  â†’ Summon("look at this")
-  â†’ Agent's ContextFrame updated to include Operator's current focus
-  â†’ Agent acknowledges and responds to implicit context
-  â†’ Agent decides whether to context-switch or defer
+  → Summon("look at this")
+  → Agent's ContextFrame updated to include Operator's current focus
+  → Agent acknowledges and responds to implicit context
+  → Agent decides whether to context-switch or defer
 ```
 
 **Properties:**
@@ -418,9 +418,9 @@ Return control to partner or to idle.
 
 ```
 Agent completes current task
-  â†’ Yield(completion_summary)
-  â†’ Control returns to Operator (if Handover) or to idle (if self-initiated)
-  â†’ Summary added to shared context
+  → Yield(completion_summary)
+  → Control returns to Operator (if Handover) or to idle (if self-initiated)
+  → Summary added to shared context
 ```
 
 **Properties:**
@@ -500,11 +500,11 @@ Operator-configurable constraints on environment behavior. Policies are stored a
 
 ```
 System defaults (MemoGarden ships with these)
-  â†“ overridden by
+  ↓ overridden by
 Deployment profile (Device/System/Personal from RFC-001)
-  â†“ overridden by
+  ↓ overridden by
 Operator preferences (stored in Core)
-  â†“ overridden by
+  ↓ overridden by
 Session overrides (temporary, not persisted)
 ```
 
@@ -568,10 +568,10 @@ JCE inherits security architecture from RFC-001.
 
 ### 10.1 Key Principles
 
-- **All agent actions go through tools** â€” no direct database/file access
-- **All tool calls logged to Soil** â€” complete audit trail
-- **API key scoping** â€” agents operate within granted scopes
-- **Operator sovereignty** â€” operator can revoke, inspect, constrain
+- **All agent actions go through tools** — no direct database/file access
+- **All tool calls logged to Soil** — complete audit trail
+- **API key scoping** — agents operate within granted scopes
+- **Operator sovereignty** — operator can revoke, inspect, constrain
 
 ### 10.2 Dyadic Trust
 
@@ -669,7 +669,7 @@ Agents can:
 
 10. **Shell command schema:** What's the canonical command set?
 11. **Tool-utility mapping:** Which tools belong to which utilities?
-12. **Memory block binding:** How does agent registration specify MemoGarden â†’ Letta projection?
+12. **Memory block binding:** How does agent registration specify MemoGarden → Letta projection?
 
 ---
 
@@ -723,11 +723,11 @@ This document does not specify:
 ## 17. Next Steps
 
 1. **Validate utility set** against concrete user workflows
-2. **Define shell command schema** â€” canonical command set and syntax
+2. **Define shell command schema** — canonical command set and syntax
 3. **Specify coordination protocols** in sufficient detail for implementation
 4. **Prototype Project Studio** as first studio implementation
-5. **Specify memory block binding** â€” how agent registration works
-6. **Determine policy artifact schema** â€” format for stored policies
+5. **Specify memory block binding** — how agent registration works
+6. **Determine policy artifact schema** — format for stored policies
 
 ---
 

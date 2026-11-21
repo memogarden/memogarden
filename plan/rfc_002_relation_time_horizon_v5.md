@@ -1,10 +1,24 @@
 # RFC-002: Relation Time Horizon & Fossilization
 
-**Version:** 5.0  
+**Version:** 5.2  
 **Status:** Draft  
 **Author:** MemoGarden Project  
 **Created:** 2025-01-14  
-**Last Updated:** 2025-01-20
+**Last Updated:** 2026-11-21
+
+> **Implementation status (2026-11-21).** The horizon schema and access
+> algorithm are **shipped** — `time_horizon`/`last_access_at` on user
+> relations (epoch-2020 day integers), SAFETY_COEFFICIENT bump on access,
+> 8 immutable system relation kinds, `explicit_link`-only user relations.
+> Two design halves remain **roadmap**: (1) `record_access` wiring — the
+> bump routine exists but no runtime path calls it yet (horizons carry
+> migration stamps only); a small tracked follow-up, deferred until real
+> read traffic exists to bump on (the agents/apps era); (2) the
+> fossilization lifecycle — daily sweep, fidelity compression
+> (full/summary/stub/tombstone), storage-pressure eviction, SweepMetrics —
+> which earns its purpose when storage pressure is real (the RPi/SD-card
+> device install) or the review era starts traversing relations at
+> volume. §7's identified gaps remain open and honest.
 
 ## Abstract
 
@@ -20,7 +34,7 @@ Anderson & Schooler (1991, 1997) demonstrated that human memory is optimized to 
 - **Frequency effect (linear):** More encounters predict proportionally higher probability of future need
 - **Spacing interaction:** Long gaps between accesses predict durable, long-term importance
 
-The practical implication: facts accessed with *expanding* gaps (1 day ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ 1 week ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ 1 month) exhibit the strongest signal for long-term preservation.
+The practical implication: facts accessed with *expanding* gaps (1 day → 1 week → 1 month) exhibit the strongest signal for long-term preservation.
 
 ### Access Pattern Signatures
 
@@ -119,9 +133,9 @@ soil_<uuid4>    # e.g., soil_a1b2c3d4-e5f6-7890-abcd-ef1234567890
 core_<uuid4>    # e.g., core_fedcba98-7654-3210-fedc-ba9876543210
 ```
 
-System relations live in Soil ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ use `soil_` prefix.
-Active user relations live in Core ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ use `core_` prefix.
-Fossilized user relations move to Soil ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ receive `soil_` prefix on fossilization.
+System relations live in Soil → use `soil_` prefix.
+Active user relations live in Core → use `core_` prefix.
+Fossilized user relations move to Soil → receive `soil_` prefix on fossilization.
 
 ---
 
@@ -231,7 +245,7 @@ Same number of accesses, different spacing, different outcomes:
 | Weekly for 7 weeks | 7 | 7+7+7+7+7+7+7 | ~59 days |
 | Monthly for 7 months | 7 | 30+30+30+30+30+30+30 | ~252 days |
 
-Long gaps signal durable importance ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ more runway. Burst activity (many accesses, tiny gaps) accumulates minimal runway.
+Long gaps signal durable importance → more runway. Burst activity (many accesses, tiny gaps) accumulates minimal runway.
 
 ### Keep/Fossilize Decision
 
@@ -247,7 +261,7 @@ No explicit decay computation required. Time simply passes the horizon by.
 
 ### Safety Coefficient
 
-SAFETY_COEFFICIENT (1.1ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“1.5) provides margin for irregular access patterns:
+SAFETY_COEFFICIENT (1.1–1.5) provides margin for irregular access patterns:
 
 | Scenario | Gap | Coefficient | Runway |
 |----------|-----|-------------|--------|
@@ -730,6 +744,7 @@ Parameters adjust based on:
 | 4.0 | 2025-01-16 | Full rewrite: consolidated design decisions; complete schemas; detailed fossilization lifecycle |
 | 5.0 | 2025-01-20 | **Design review integration:** UUID prefixes (soil_/core_); Grace period eliminated; `context_link` kind eliminated (co-access via ArtifactDelta.context); Fidelity states added; Deletion under storage pressure policy; Updated gaps and eliminated concepts |
 | 5.1 | 2026-02-07 | Added "result_of" to SYSTEM_RELATION_KINDS for linking Action and ActionResult audit facts |
+| 5.2 | 2026-11-21 | Coherence review: implementation-status note added — horizon schema + access algorithm shipped; `record_access` wiring tracked as a follow-up (deferred until real read traffic); fossilization lifecycle (sweep/fidelity/eviction/SweepMetrics) framed as roadmap, motivated by device-install storage and the review era. Header date corrected (was "2025-01-20"). |
 
 ---
 

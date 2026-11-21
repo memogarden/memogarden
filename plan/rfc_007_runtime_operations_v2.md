@@ -102,7 +102,7 @@ Resource profiles control operational parameters. Profiles are **operator-declar
 
 #### standard Profile (default)
 
-**Target:** Laptops, desktops, servers, containers (ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¥2GB RAM)
+**Target:** Laptops, desktops, servers, containers (≥2GB RAM)
 
 **Runtime parameters:**
 - `max_view_entries`: 1000
@@ -237,7 +237,7 @@ def signal_ready(context: RuntimeContext):
     
     elif context.signal_method == "stdout":
         # User process: print to terminal
-        print(f"ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ MemoGarden ready at http://{config.bind_address}:{config.bind_port}")
+        print(f"✓ MemoGarden ready at http://{config.bind_address}:{config.bind_port}")
         print(f"  Data: {context.data_dir}")
         print(f"  Logs: {context.log_dir}")
         sys.stdout.flush()
@@ -315,7 +315,7 @@ def shutdown_gracefully(server, soil_db, core_db):
 
 **Shutdown timeouts per context:**
 
-| Context | SIGTERM ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ SIGKILL | Reason |
+| Context | SIGTERM → SIGKILL | Reason |
 |---------|-------------------|--------|
 | serve (systemd) | 90 seconds | Default systemd TimeoutStopSec |
 | run (user) | 5 seconds | Laptop sleep, user expectation |
@@ -393,7 +393,7 @@ Detected existing config: /etc/memogarden/config.toml
 
 Select resource profile:
   1) embedded  - Conservative resource usage (<2GB RAM)
-  2) standard  - Normal resource usage (ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°Ãƒâ€šÃ‚Â¥2GB RAM)
+  2) standard  - Normal resource usage (≥2GB RAM)
   3) auto      - Detect based on system capabilities
 
 Choice [3]: 3
@@ -406,15 +406,15 @@ Recommended profile: embedded
 Accept recommendation? [Y/n]: y
 
 Installing MemoGarden (system, embedded profile)...
-  ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Created directories
+  ✓ Created directories
     /var/lib/memogarden/
     /var/log/memogarden/
     /etc/memogarden/
-  ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Created service user: memogarden
-  ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Installed binary: /opt/memogarden/bin/memogarden
-  ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Created config: /etc/memogarden/config.toml (resource_profile="embedded")
-  ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Created systemd unit: /etc/systemd/system/memogarden.service
-  ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Reloaded systemd daemon
+  ✓ Created service user: memogarden
+  ✓ Installed binary: /opt/memogarden/bin/memogarden
+  ✓ Created config: /etc/memogarden/config.toml (resource_profile="embedded")
+  ✓ Created systemd unit: /etc/systemd/system/memogarden.service
+  ✓ Reloaded systemd daemon
 
 Installation complete!
 
@@ -442,13 +442,13 @@ Select resource profile:
 Choice [3]: 2
 
 Installing MemoGarden (user, standard profile)...
-  ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Created directories
+  ✓ Created directories
     ~/.local/share/memogarden/
     ~/.local/state/memogarden/logs/
     ~/.config/memogarden/
-  ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Installed binary: ~/.local/bin/memogarden
-  ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Created config: ~/.config/memogarden/config.toml (resource_profile="standard")
-  ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Created systemd user unit: ~/.config/systemd/user/memogarden.service
+  ✓ Installed binary: ~/.local/bin/memogarden
+  ✓ Created config: ~/.config/memogarden/config.toml (resource_profile="standard")
+  ✓ Created systemd user unit: ~/.config/systemd/user/memogarden.service
 
 Installation complete!
 
@@ -467,16 +467,16 @@ Silent mode auto-detects and accepts defaults:
 # System installation
 $ sudo memogarden install --yes
 Detecting system capabilities...
-8GB RAM, 8 cores detected ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ resource_profile="standard"
+8GB RAM, 8 cores detected → resource_profile="standard"
 Installing to /opt/memogarden/
-ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Installation complete
+✓ Installation complete
 
 # User installation
 $ memogarden install --user --yes
 Detecting system capabilities...
-16GB RAM, 16 cores detected ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ resource_profile="standard"
+16GB RAM, 16 cores detected → resource_profile="standard"
 Installing to ~/.local/
-ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Installation complete
+✓ Installation complete
 ```
 
 **Exit codes:**
@@ -621,20 +621,26 @@ WantedBy=multi-user.target
 **Restart policy:**
 - `Restart=on-failure`: Restart only on non-zero exit
 - `RestartSec=5s`: Wait 5 seconds between restart attempts
-- systemd default: 5 restarts in 10 seconds ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ failure state
+- systemd default: 5 restarts in 10 seconds → failure state
 
-**Resource limits (optional, embedded profile):**
+**Resource limits (required for the embedded profile; recommended always):**
 
-Can be added to unit file if needed:
+Configured per resource profile (RFC-004 §5.2) as systemd cgroup controls —
+unit-level settings or drop-ins:
 
 ```ini
 [Service]
-MemoryMax=512M
-CPUQuota=50%
-TasksMax=50
+MemoryHigh=1G
+MemoryMax=1.5G
 ```
 
-**But recommended approach:** Let MemoGarden self-limit based on `resource_profile` in config, not systemd cgroups. More portable across different systemd versions.
+**Amended 2026-11 (was: prefer in-process self-limiting over cgroups for
+portability).** The first production memory incident (2026-11-12) settled
+the question: the operating system, not the process, must own
+survivability. An over-limit process is throttled, killed, and retried
+cleanly by systemd; self-limiting code that fails to anticipate a spike
+drags the whole machine into swap. The portability concern is moot —
+cgroup memory controls exist on every systemd this system targets.
 
 **serve verb (user daemon):**
 
@@ -1146,14 +1152,14 @@ MemoGarden operates in one of three modes that reflect system health and capabil
 **Automatic transitions (system-initiated):**
 
 Startup sequence determines initial mode:
-- No issues detected Ã¢â€ â€™ NORMAL
-- Orphaned deltas detected Ã¢â€ â€™ SAFE MODE
-- Hash chain broken Ã¢â€ â€™ SAFE MODE
-- Database corruption Ã¢â€ â€™ SAFE MODE
+- No issues detected → NORMAL
+- Orphaned deltas detected → SAFE MODE
+- Hash chain broken → SAFE MODE
+- Database corruption → SAFE MODE
 
 Runtime transitions:
-- NORMAL Ã¢â€ â€™ SAFE MODE: Transaction commit failure (Soil commits, Core fails)
-- SAFE MODE Ã¢â€ â€™ NORMAL: After successful `memogarden repair`
+- NORMAL → SAFE MODE: Transaction commit failure (Soil commits, Core fails)
+- SAFE MODE → NORMAL: After successful `memogarden repair`
 
 **Manual transitions (operator-initiated):**
 
@@ -1489,6 +1495,7 @@ Check for updates and prompt user:
 | 1.0 | 2026-02-02 | Initial draft |
 | 2.0 | 2026-02-02 | Added Section 7: System Operating Modes (NORMAL/READ-ONLY/SAFE MODE) |
 | 2.1 | 2026-02-06 | Rewrote Section 8: Monitoring & Observability with three-layer model, system agent architecture, SPC metrics implementation, and recovery protocols |
+| 2.2 | 2026-11-21 | §3.1 resource-limit recommendation amended: systemd cgroup controls are the enforcement mechanism (per profile, RFC-004 §5.2); in-process self-limiting demoted — falsified by the 2026-11-12 OOM incident. |
 
 ---
 

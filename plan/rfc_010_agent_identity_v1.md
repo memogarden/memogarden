@@ -185,7 +185,7 @@ credentials and performs operations.**
   (`uid.add_core_prefix(secret.generate_uuid())`)
 - **Registry:** the existing `entity` table; hash-chained, versioned,
   delta-edited — identical treatment to every other entity
-- **Schema:** `memogarden-system/system/schemas/types/entities/agent.schema.json`
+- **Schema:** `memogarden-system/system/schemas/memogarden/schemas/types/entities/agent.schema.json`
   (new; entity data validated per the existing type-schema convention)
 
 ### 4.2 Entity Data

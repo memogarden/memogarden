@@ -1,9 +1,21 @@
 # RFC 005: MemoGarden API Design
 
-**Version:** 8.0  
+**Version:** 9.0  
 **Status:** Draft  
 **Author:** JS  
-**Date:** 2026-11-09
+**Date:** 2026-11-21
+
+> **v9 coherence alignment.** The three-interface schematic stands as
+> **roadmap**. Interface 3 (Semantic API) is **shipped and canonical** —
+> `POST /mg`, the verb grammar, envelope, audit facts, and grants are the
+> live core. Interfaces 1 and 2 (internal handle class, `/apps` REST
+> compatibility) and the `/capabilities` discovery surface are **roadmap,
+> not yet built**: they serve the RFC-009 application model, which awaits
+> the agent runtime that will host app-capable agents (the MARS experiment
+> was set down as the wrong vehicle; its successor is undesigned).
+> Framework names in this document are advisory illustrations, not
+> prescriptions. A surface map of today's API families — most of which
+> post-date v8 — closes this RFC.
 
 ## Summary
 
@@ -42,39 +54,39 @@ Three different use cases require three different interfaces:
 ## Architecture Overview
 
 ```
-Ã¢â€Å’Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â
-Ã¢â€â€š   MemoGarden Apps                           Ã¢â€â€š
-Ã¢â€â€š   (supervised, SDK-based)                   Ã¢â€â€š
-Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â¤
-Ã¢â€â€š   SDKs (Python, TS, Dart, Java)             Ã¢â€â€š
-Ã¢â€â€š   Ã¢â€ â€™ Semantic API only                       Ã¢â€â€š
-Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Ëœ
-                    Ã¢â€â€š
-Ã¢â€Å’Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â¬Ã¢â€â‚¬Ã¢â€Â´Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â
-Ã¢â€â€š   External      Ã¢â€â€š                            Ã¢â€â€š
-Ã¢â€â€š   Integrations  Ã¢â€â€š                            Ã¢â€â€š
-Ã¢â€â€š   (curl, Zapier)Ã¢â€â€š                            Ã¢â€â€š
-Ã¢â€â€š   Ã¢â€ â€™ REST API    Ã¢â€â€š                            Ã¢â€â€š
-Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Ëœ                            Ã¢â€â€š
-         Ã¢â€â€š HTTP                                Ã¢â€â€š
-         Ã¢â€“Â¼                                     Ã¢â€“Â¼
-Ã¢â€Å’Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â
-Ã¢â€â€š   memogarden-api (HTTP Server)              Ã¢â€â€š
-Ã¢â€â€š                                             Ã¢â€â€š
-Ã¢â€â€š   REST API:      /apps/{id}/...             Ã¢â€â€š
-Ã¢â€â€š   Semantic API:  /mg                        Ã¢â€â€š
-Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Ëœ
-                    Ã¢â€â€š Python imports
-                    Ã¢â€“Â¼
-Ã¢â€Å’Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â
-Ã¢â€â€š   Internal Python API                       Ã¢â€â€š
-Ã¢â€â€š   (MemoGarden class)                        Ã¢â€â€š
-Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Ëœ
-                    Ã¢â€â€š SQLite
-                    Ã¢â€“Â¼
-Ã¢â€Å’Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â
-Ã¢â€â€š   Soil + Core databases                     Ã¢â€â€š
-Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Ëœ
+┌─────────────────────────────────────────────┐
+│   MemoGarden Apps                           │
+│   (supervised, SDK-based)                   │
+├─────────────────────────────────────────────┤
+│   SDKs (Python, TS, Dart, Java)             │
+│   → Semantic API only                       │
+└───────────────────┬─────────────────────────┘
+                    │
+┌─────────────────┬─┴──────────────────────────┐
+│   External      │                            │
+│   Integrations  │                            │
+│   (curl, Zapier)│                            │
+│   → REST API    │                            │
+└────────┬────────┘                            │
+         │ HTTP                                │
+         ▼                                     ▼
+┌─────────────────────────────────────────────┐
+│   memogarden-api (HTTP Server)              │
+│                                             │
+│   REST API:      /apps/{id}/...             │
+│   Semantic API:  /mg                        │
+└───────────────────┬─────────────────────────┘
+                    │ Python imports
+                    ▼
+┌─────────────────────────────────────────────┐
+│   Internal Python API                       │
+│   (MemoGarden class)                        │
+└───────────────────┬─────────────────────────┘
+                    │ SQLite
+                    ▼
+┌─────────────────────────────────────────────┐
+│   Soil + Core databases                     │
+└─────────────────────────────────────────────┘
 ```
 
 ## Semantic Verbs
@@ -106,13 +118,13 @@ MemoGarden's semantic API uses carefully chosen verbs that accurately reflect th
 - **explore**: to investigate by traveling. Graph expansion from anchor point
 
 **Schemas** - Type definitions
-- **register**: to record officially. Add new schema definition to MemoGarden
+- **register**: to record officially. Add new schema definition to MemoGarden *(roadmap — no server handler yet)*
 
 **Context** - Attention and scope management (bundled with Core)
 - **enter**: to go into. Add scope to active set
 - **leave**: to depart from. Remove scope from active set
-- **focus**: to concentrate attention. Switch primary scope among active scopes
-- **rejoin**: to come back together. Subagent merges its view-stream into primary context
+- **focus**: to concentrate attention. Switch primary scope among active scopes *(retired v8 — deprecated no-op alias, kept for compatibility)*
+- **rejoin**: to come back together. Subagent merges its view-stream into primary context *(roadmap — awaits the multi-agent runtime; no server handler yet)*
 
 **Semantic** - Meaning-based operations
 - **search**: to look for, to explore in order to find. Discover entities/facts by meaning and similarity
@@ -138,18 +150,18 @@ The Semantic API is partitioned into capability bundles that group related opera
 ### Bundle Dependencies
 
 ```
-              Ã¢â€Å’Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â
-              Ã¢â€â€š SEMANTIC  Ã¢â€â€š
-              Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Ëœ
-                    Ã¢â€â€š
+              ┌───────────┐
+              │ SEMANTIC  │
+              └─────┬─────┘
+                    │
              requires all
-         Ã¢â€Å’Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â¼Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â
-         Ã¢â€“Â¼          Ã¢â€“Â¼          Ã¢â€“Â¼
-   Ã¢â€Å’Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â Ã¢â€Å’Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â Ã¢â€Å’Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Â
-   Ã¢â€â€š   SOIL   Ã¢â€â€š Ã¢â€â€š CORE Ã¢â€â€š Ã¢â€â€š RELATIONS Ã¢â€â€š
-   Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Ëœ Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Ëœ Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Ëœ
-        Ã¢â€â€š          Ã¢â€“Â²           Ã¢â€â€š
-   independent     Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€Ëœ
+         ┌──────────┼──────────┐
+         ▼          ▼          ▼
+   ┌──────────┐ ┌──────┐ ┌───────────┐
+   │   SOIL   │ │ CORE │ │ RELATIONS │
+   └──────────┘ └──────┘ └───────────┘
+        │          ▲           │
+   independent     └───────────┘
                 Relations requires Core
 ```
 
@@ -177,9 +189,9 @@ Declaring a profile commits the app to:
 1. **Supporting all verbs** in that profile's bundles
 2. **Exposing capabilities as toolcalls** for agent interaction
 3. **Surfacing relevant UI elements**:
-   - Soil Ã¢â€ â€™ history/audit trail views
-   - Relations Ã¢â€ â€™ graph visualization
-   - Semantic Ã¢â€ â€™ search/suggest interfaces
+   - Soil → history/audit trail views
+   - Relations → graph visualization
+   - Semantic → search/suggest interfaces
 
 See RFC-009 for full application model specification.
 
@@ -414,17 +426,17 @@ No required arguments. Schema left open for future needs.
 | `start_index`, `count` | no | Pagination |
 
 **Filter operators:**
-- Bare value Ã¢â€ â€™ equality
-- `{"any": [...]}` Ã¢â€ â€™ union (OR)
-- `{"all": [...]}` Ã¢â€ â€™ intersection (AND, for multi-value fields)
-- `{"not": value}` Ã¢â€ â€™ negation
-- `{"not": {"any": [...]}}` Ã¢â€ â€™ none of these
+- Bare value → equality
+- `{"any": [...]}` → union (OR)
+- `{"all": [...]}` → intersection (AND, for multi-value fields)
+- `{"not": value}` → negation
+- `{"not": {"any": [...]}}` → none of these
 
 **Linked filter:**
-- `{"to": "ent_xxx"}` Ã¢â€ â€™ has outgoing edge to X
-- `{"from": "ent_xxx"}` Ã¢â€ â€™ has incoming edge from X
-- `{"with": "ent_xxx"}` Ã¢â€ â€™ either direction
-- `{"via": "relation_type"}` Ã¢â€ â€™ filter by relation type
+- `{"to": "ent_xxx"}` → has outgoing edge to X
+- `{"from": "ent_xxx"}` → has incoming edge from X
+- `{"with": "ent_xxx"}` → either direction
+- `{"via": "relation_type"}` → filter by relation type
 
 **Response:** `{results: [...], total, start_index, count}`
 
@@ -505,14 +517,14 @@ Tree format handles "diamond ancestry" naturally.
 | `scope` | no | Restrict to a scope UUID — convenience filter ONLY; access enforcement is automatic and independent (RFC-011) |
 
 **Coverage levels:**
-- `names` Ã¢â‚¬â€ title/name fields only (fast)
-- `content` Ã¢â‚¬â€ names + body text
-- `full` Ã¢â‚¬â€ all indexed fields including metadata
+- `names` — title/name fields only (fast)
+- `content` — names + body text
+- `full` — all indexed fields including metadata
 
 **Strategy:**
-- `semantic` Ã¢â‚¬â€ embedding similarity
-- `fuzzy` Ã¢â‚¬â€ text matching, tolerates typos/partial
-- `auto` Ã¢â‚¬â€ system chooses based on query characteristics
+- `semantic` — embedding similarity
+- `fuzzy` — text matching, tolerates typos/partial
+- `auto` — system chooses based on query characteristics
 
 **Response:**
 
@@ -800,6 +812,8 @@ def with_audit(operation: str):
 
 ## Capability Discovery
 
+*(Roadmap — not yet built; serves the RFC-009 app model.)*
+
 Apps and clients can query available capabilities:
 
 ```python
@@ -818,6 +832,10 @@ GET /capabilities
 ```
 
 ## Part 1: Internal Python API
+
+*(Roadmap as a handle-class API. The shipped internal surface is the
+module-level `system.soil` / `system.core` layers; the handle class is
+the FFI-facing shape and awaits that era.)*
 
 ### Design Principles
 
@@ -859,13 +877,13 @@ with MemoGarden() as mg:
 **One handle per thread.** Handles are NOT thread-safe:
 
 ```python
-# Ã¢Å“â€œ Good: One handle per thread
+# ✓ Good: One handle per thread
 def worker():
     mg = MemoGarden()
     mg.add_fact('Note', {...})
     mg.close()
 
-# Ã¢Å“â€” Bad: Shared handle across threads
+# ✗ Bad: Shared handle across threads
 mg = MemoGarden()
 def worker():
     mg.add_fact('Note', {...})  # Race conditions!
@@ -879,41 +897,35 @@ The `memogarden-api` package provides an HTTP server with two interfaces:
 
 ### Server Architecture
 
-Single FastAPI server, two route groups:
+One server process hosts all route groups. Framework choice is
+implementation detail, not invariant (as built: Flask + gunicorn; the
+FastAPI sketch was the original illustration).
 
 ```python
-# memogarden-api/api/main.py
-from memogarden import MemoGarden
-from fastapi import FastAPI
-
-app = FastAPI()
+# memogarden-api/api/main.py — schematic
+app = create_server()                    # any framework
 
 # Singleton internal handle
-_mg = MemoGarden(profile='auto')
+_mg = _internal_handle()                 # Interface 1 (roadmap)
 
-# REST API routes
+# REST API routes (Interface 2, roadmap)
 @app.post("/apps/{app_id}/facts")
-async def create_fact(app_id: str, request: FactRequest):
-    fact = _mg.add_fact(request.type, request.content,
-                        metadata={'app_id': app_id})
-    return FactResponse.from_fact(fact)
+def create_fact(app_id, request): ...
 
-# Semantic API dispatcher
+# Semantic API dispatcher (Interface 3 — shipped)
 @app.post("/mg")
-async def semantic_api(message: dict):
-    op = message.get("op")
-    handler = HANDLERS.get(op)
-    return await handler(_mg, message)
+def semantic_api(message):
+    return HANDLERS[message["op"]](_mg, message)
 
-# Capability discovery
+# Capability discovery (roadmap)
 @app.get("/capabilities")
-async def get_capabilities():
-    return _mg.get_capabilities()
+def get_capabilities(): return _mg.get_capabilities()
 ```
 
 ### REST API
 
-**Purpose:** Compatibility layer for external integrations (curl, Zapier, legacy scripts)
+**Purpose:** Compatibility layer for external integrations (curl, Zapier,
+legacy scripts) — *(roadmap, not yet built; serves the RFC-009 app model)*
 
 **Pattern:** Resource-oriented paths with HTTP verbs
 
@@ -1109,21 +1121,42 @@ char* mg_get_capabilities(mg_handle* mg);
 
 ## References
 
-- RFC-001 v4: Security & Operations Architecture
+- RFC-001 v5: Security & Operations Architecture
 - RFC-002 v5: Relation Time Horizon & Fossilization
-- RFC-003 v4: Context Capture Mechanism
-- RFC-004 v2: Package Structure & Deployment
+- RFC-003 v5: Context Capture Mechanism
+- RFC-004 v2.3: Package Structure & Deployment
 - RFC-006 v1: Error Handling & Diagnostics
-- RFC-008 v1: Transaction Semantics
+- RFC-008 v1.3: Transaction Semantics
 - RFC-009 v1: MemoGarden Application Model
 - RFC-010 v1.2: Agent Identity & Attribution
-- RFC-011 v1.1: Scopes, Grants, and Attention-Gated Access
-- PRD v0.10.0: MemoGarden Personal Information System
+- RFC-011 v1.3: Scopes, Grants, and Attention-Gated Access
+- RFC-012 v1.3: Provider Accounts
+- RFC-013: Browser Session Host + Ingestion Decision Register
+- RFC-014 v1: Google Calendar Provider
+- RFC-015 v1: Operator Console
+- PRD v0.11.0: MemoGarden Personal Information System
 - SQLite C API: https://www.sqlite.org/c3ref/intro.html
 - Python DB-API 2.0: https://peps.python.org/pep-0249/
 - JSON-RPC 2.0: https://www.jsonrpc.org/
 
 ---
+
+## Addendum (2026-11-21): API surface map
+
+The families below exist in the running server (memogarden-api) and
+post-date v8; each is designed in its owning RFC. This map is an index,
+not a specification:
+
+| Surface | Route families | Design of record |
+|---|---|---|
+| Semantic API | `POST /mg`, `GET /mg/events` (SSE observe) | this RFC; SSE observe in RFC-011 §4.9 / RFC-015 |
+| Auth & identity | `/auth/*`, `/admin/register`, `/api-keys/*`, `/agents` | RFC-010; RFC-001 §4 |
+| Grants & scopes | `/grants`, scope fields on verbs | RFC-011 (+ visibility addendum) |
+| Providers | `/api/v1/providers/*` (registry, runs, scope-policy, accounts) | RFC-004 §12.2; RFC-012 (accounts) |
+| Transactions | `/api/v1/transactions`, `/api/v1/recurrences` | RFC-008 domain; PRD v0.11 |
+| Event review | `/api/v1/events/*` (pending-review, mark-occurred) | RFC-014 §6 |
+| Operator console | `/console/*` pages, `/api/v1/operator`, `/api/v1/runs` | RFC-015 |
+| E3 capabilities | `api_keys.capabilities`, middleware enforcement | RFC-013 register (E3) |
 
 ## Revision History
 
@@ -1133,24 +1166,25 @@ char* mg_get_capabilities(mg_handle* mg);
 | 2.0 | 2026-02-02 | Complete Python API specification with cross-language portability |
 | 3.0 | 2026-02-02 | Internal vs External API distinction, /mg endpoint, single server architecture |
 | 3.1 | 2026-02-02 | Transaction API clarification: cross-DB atomicity note, reference to RFC-008 |
-| 4.0 | 2026-02-04 | Capability bundles, app profiles, capability discovery, Semantic API as primary for apps, ItemÃ¢â€ â€™Fact terminology, reference to RFC-009 |
+| 4.0 | 2026-02-04 | Capability bundles, app profiles, capability discovery, Semantic API as primary for apps, Item→Fact terminology, reference to RFC-009 |
 | 5.0 | 2026-02-04 | Semantic verb definitions: 12 core verbs with explicit meanings. Added Context bundle. Removed validate from semantic API. Deferred parameter design. |
 | 6.0 | 2026-02-06 | **Complete verb options schemas**: All 17 verbs with request/response formats. Added `focus` (context), `explore` (relations). Response envelope with `actor`. Edit uses `set`/`unset` semantics. Query filter DSL with operators. Search split into `search` (content-based) and `explore` (graph-based). Track returns tree format. Null semantics clarified as "Unknown". Context verbs moved to Core bundle. Resolved open questions 1-4. |
-| 7.0 | 2026-02-07 | **Audit facts specification**: Added Action and ActionResult fact schemas for complete API operation audit trail. System relation "result_of" links Actionâ†’ActionResult. Enables crash recovery, hung operation detection, agent behavior tracing, and performance analysis. |
+| 7.0 | 2026-02-07 | **Audit facts specification**: Added Action and ActionResult fact schemas for complete API operation audit trail. System relation "result_of" links Action→ActionResult. Enables crash recovery, hung operation detection, agent behavior tracing, and performance analysis. |
 | 8.0 | 2026-11-09 | **RFC-011 alignment (authorization):** Context verbs rewritten — exclusive activation, grant-gated `enter` (atomic switch; `previous_scope` in response), `leave` returns `active_scope: null`, `focus` retired as deprecated alias. Search: scope enforcement pre-match + optional convenience `scope` field. Added Grants Management endpoints (`POST/DELETE/GET /grants`, operator JWT-gated) and `/auth/me` extension (grants, agent envelope, active scope). Open question 8 resolved. |
+| 9.0 | 2026-11-21 | Coherence alignment: three-interface schematic reaffirmed as roadmap — Semantic API (interface 3) shipped and canonical; internal handle class, `/apps` REST compatibility, `/capabilities`, and `register`/`rejoin` verbs recorded as roadmap pending the agent runtime (MARS set down as the wrong vehicle; successor undesigned). Framework references made advisory (Flask + gunicorn as built). API surface-map addendum added; reference versions updated. |
 
 ---
 
-**Status:** Draft  
-**Next Steps:**
+**Status:** Draft (v9 alignment 2026-11-21)  
+**Where things stand:**
 1. ~~Review capability bundle definitions~~ Done
 2. ~~Finalize verb options schemas~~ Done
-3. Implement capability discovery endpoint
-4. Implement Internal API (MemoGarden class)
-5. Implement HTTP server with REST and Semantic APIs
-6. Implement External Client (MemoGardenClient class)
-7. Write comprehensive tests for all three interfaces
-8. Update RFC-003 verb alignment
+3. ~~Implement HTTP server with Semantic API~~ Done — shipped and live
+4. ~~External client~~ Shipped as `mg_client` (memogarden-client)
+5. Capability discovery endpoint — roadmap (RFC-009 app model)
+6. Internal handle-class API — roadmap (FFI era)
+7. `/apps` REST compatibility surface — roadmap (RFC-009 app model)
+8. `register` / `rejoin` verbs — roadmap (schema registry / multi-agent runtime)
 
 ---
 

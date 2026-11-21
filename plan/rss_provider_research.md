@@ -1,7 +1,10 @@
 # RSS Provider — Research & Proposed Design
 
-**Status**: research only; nothing implemented. Feeds a future RFC/implementation.
-**Date**: 2026-11-16.
+**Status**: implemented + live — `providers/rss-importer` shipped
+2026-11-16/18 (decisions §8 and sequence §9 executed; `memogarden-readly`
+is the first consumer app, live at readly.ngjunsiang.me). This document
+remains the design of record for the provider.
+**Date**: 2026-11-16 (implemented 2026-11-16/18; status line corrected 2026-11-21).
 **Companion sources**: rachelbythebay feed-reader behavior posts (site offline; all
 links are verified Wayback captures), RFC 9110/9111/6585, RSS Advisory Board
 specification + Best Practices Profile, feedparser docs, Miniflux/NewsBlur/

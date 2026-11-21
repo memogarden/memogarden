@@ -1,8 +1,11 @@
 # RFC-011 Implementation Progress
 
-**Tracks:** implementation state and remaining work for RFC-011 v1.1
-(Scopes, Grants, and Attention-Gated Access) and its dependent amendments
-(RFC-003 v5, RFC-005 v8, RFC-001 v5, RFC-010 v1.2, RFC-009 v1.1).
+**Tracks:** implementation state and remaining work for RFC-011
+(Scopes, Grants, and Attention-Gated Access; current v1.3 + visibility
+addendum) and its dependent amendments (RFC-003 v5, RFC-005 v8,
+RFC-001 v5, RFC-010 v1.2, RFC-009 v1.1). This file is the single status
+tracker for RFC-011 work: dated status blocks live here so the RFC body
+itself can stay timeless.
 
 **Status 2026-11-10:** core mechanism **live** (merged to main in
 memogarden-system `f651649` + memogarden-api `7faf180`; service deployed;
@@ -18,6 +21,18 @@ schemas-v2 tagged on the root repo (2026-11-19) and the system repo's
 `system/schemas/memogarden` submodule pin bumped to it (system `1f35192`) —
 the served copy carries the attribute (no runtime consumer; no restart
 needed).
+
+**Status 2026-11-20:** per-account `scope_policy` override (P1 item 4)
+landed + deployed — system `e33c51d` + `7cdc661`, api `d034278`, client
+`4844742`; first live use: gmail/nyjc → public **NYJC** scope, ~21k items
+triage-stamped and backfilled. **Enforcement still OFF**
+(`MEMOGARDEN_SCOPE_ENFORCEMENT` unset).
+
+**Status 2026-11-21:** tracker review. `88a3c97` confirmed **merged to api
+main** (2026-11-12) — stale "unmerged"/"ungoverned" notes corrected below
+(P0 item 1, P3 item 8). P2 item 7 decision closed: the ratified SSE
+**suppress** stands; build queued (see item 7). Enforcement remains the
+headline open operator step (§Operational rollout).
 
 ## Done
 
@@ -41,8 +56,8 @@ material**.
 
 ### P0 — before any financial labeling happens
 
-1. **Relabel governance** (§4.5, §4.7, SG-8) — **DONE** (api `feat/rfc011-p0`
-   `88a3c97`, 336 passed, unmerged): amend diffs old/new `metadata.scopes`
+1. **Relabel governance** (§4.5, §4.7, SG-8) — **DONE, MERGED to main** (api
+   `feat/rfc011-p0` `88a3c97` 2026-11-12, 336 passed): amend diffs old/new `metadata.scopes`
    and requires a grant on every label added OR removed (D2 symmetric
    rule); denials carry the attempted change in Action-fact details and
    the before-state persists in the superseded fact (SG-8).
@@ -128,18 +143,23 @@ material**.
    deliberately sequenced: hard precondition for document extraction
    (the anti-side-channel default — extracted text must not bypass the
    source's scope). First commit of the extraction work.
-7. **SSE payload routing by `metadata.scopes`** (§4.9(5)) — OPEN.
-   Fact events currently route by conversation `scope_uuid` or as
-   global; a scoped fact's payload can reach subscribers outside the
-   scope. Subscription gating is done; item-payload routing is not.
-   Decide the RFC open question here: reference-without-payload (RFC
-   default) vs suppress — the payload leak argues for suppress.
+7. **SSE payload routing by `metadata.scopes`** (§4.9(5)) — decision
+   CLOSED 2026-11-21: implement the ratified **suppress** (non-members
+   receive nothing for scoped-item events). Routing is not built:
+   fact events currently route by conversation `scope_uuid` or as
+   global, so a scoped fact's payload can reach subscribers outside
+   the scope. Build queued (memogarden-api issue): emit-time payload
+   routing by `metadata.scopes`, enforcement-gated like the read
+   paths (flag off = no behavior change), including the relabel
+   both-labels check (visibility addendum §6 item 2). Until it
+   lands, the stream stays operator-sovereign-only in practice.
 
 ### P3 — hygiene
 
-8. **Scope-minting gating** (implements D1) — any key can currently
-   mint Scope entities via `create`. Noise, not escalation, but
-   ungoverned.
+8. **Scope-minting gating** (implements D1) — **DONE** (api `88a3c97`,
+   merged 2026-11-12): Semantic `create` rejects Scope entities from API
+   keys; operator JWT mints via the same verb (RFC-010 invariant applied
+   to the boundary).
 9. **mg_client docstrings + skill master copies** — pre-RFC-011
    vocabulary (`mg_client` context-verb models, project-studio spec
    §11.3's stale `project:read` capability-scope language).
@@ -169,7 +189,7 @@ material**.
 
 ## References
 
-- RFC-011 v1.1 + amendment riders; RFC-003 v5 §3.7 (INV-11a/11b/11c)
+- RFC-011 v1.3 + visibility addendum; RFC-003 v5 §3.7 (INV-11a/11b/11c)
 - Deploy record: system `f651649`, api `7faf180`, live since 2026-11-10
 - Audit that produced this list: gmail-importer gap review 2026-11-10
   (relabel, provider hook, entity/relation enforcement, search

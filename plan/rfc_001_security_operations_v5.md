@@ -1,10 +1,10 @@
 # RFC-001: MemoGarden Security & Operations Architecture
 
-**Version:** 5.0  
-**Status:** Draft  
-**Author:** MemoGarden Project  
-**Created:** 2025-01-09  
-**Last Updated:** 2026-11-09
+**Version:** 5.1
+**Status:** Draft
+**Author:** MemoGarden Project
+**Created:** 2025-01-09
+**Last Updated:** 2026-11-21
 
 ## Abstract
 
@@ -41,9 +41,9 @@ A single software edition supports all profiles through configuration, not separ
 
 Profile is set via configuration, with auto-detection as fallback:
 
-- Running as system service with dedicated user + watchdog enabled Ã¢â€ â€™ Device
-- Running as system service, cgroup-constrained or multi-user Ã¢â€ â€™ System  
-- Running as user service or foreground process Ã¢â€ â€™ Personal
+- Running as system service with dedicated user + watchdog enabled → Device
+- Running as system service, cgroup-constrained or multi-user → System  
+- Running as user service or foreground process → Personal
 - Explicit `profile = "device|system|personal"` overrides detection
 
 ### 1.3 System Profile (Default)
@@ -222,11 +222,17 @@ Container internal paths are abstract; host mounts from anywhere.
 
 MemoGarden uses opaque API keys with database-backed validation.
 
-**Key structure:** `mg_key_<random_256_bit_hex>`
+**Key structure (as shipped, amended 2026-11-21):**
+`mg_sk_agent_<random_256_bit_hex>` — the class prefix names the key's
+kind (agent-bound keys today; future key classes earn their own prefix).
 
 **Key record fields:**
-- `key_hash`: SHA256 of key (key never stored)
-- `participant_id`: Agent or service identifier (anchored to Agent entities per RFC-010)
+- `key_hash`: **bcrypt** of key (key never stored; cost factor in deployment
+  config) — amended from the v5 SHA256 sketch: a fast digest defends only
+  against online guessing, but the database is the custody boundary that
+  has actually failed in practice, and bcrypt holds when it does
+- `agent_entity_id`: Agent or service identifier (anchored to Agent entities
+  per RFC-010; v5 named it `participant_id`)
 - `operator_id`: Which operator's data (system profile with multi-operator)
 - `grants`: Scopes the key may enter — `[{scope_uuid, granted_at, expires_at|null}]` (RFC-011 §4.3). Operator-issued via JWT-gated endpoints; never minted at auth time. Supersedes the v4 `baseline_scopes`/`allowable_scopes` fields.
 - `expires_at`: Auto-rotation (30 days default)
@@ -241,6 +247,12 @@ MemoGarden uses opaque API keys with database-backed validation.
 - `!tool:system:*` - Deny system tools
 
 **Deny takes precedence** over allow.
+
+**First inhabitant (2026-11):** RFC-013's E3 restricted-key class shipped
+this headroom's first real capabilities as flat flags on
+`api_keys.capabilities` (e.g. `runs`) — not the structured grammar. At one
+capability the flat form is correct; the grammar formalizes when the set
+grows (MCP-adapter era) and should then absorb what E3 shipped.
 
 **v5 note:** The operative authorization model is RFC-011's grants — scope-entry
 permission per principal, attention-gated access. This grammar is RETAINED AS
@@ -269,6 +281,30 @@ Separate admin account for system operations:
 - Requires elevation (like sudo) for destructive actions
 - Transferable via credential sharing
 
+### 4.6 Credential Custody (recommendations, not requirements)
+
+MemoGarden is deliberately not prescriptive about credential storage or
+security: it holds personal information, not enterprise secrets. It
+recommends a posture per deployment and otherwise neither requires nor
+enforces one — security measures exist primarily for **reliable
+authentication** plus reasonable hardening, and authorization exists
+primarily to keep operators and agents from stepping on rakes, not to
+build walls.
+
+What implementation has used so far, as candidates rather than doctrine:
+
+- **Upstream provider credentials** — HACM, `{platform}:{subject}`
+  entries, one KDF unlock per provider run (RFC-012 §4.3; HACM is a
+  built candidate, not a requirement)
+- **Local agent/daemon keys** — Tier-1 env files, `0600`
+  (sessions-daemon pattern, RFC-013 register D-2); a desktop keyring is
+  the natural user-install alternative
+- **MemoGarden API keys** — raw key shown once at mint, bcrypt hash only
+  in `api_keys` (§4.1)
+
+Each profile (and each operator) may choose differently; custody choices
+are recorded per deployment, not standardized here.
+
 ---
 
 ## 5. Tool Execution Model
@@ -288,6 +324,13 @@ Artifact writes use hash-based idempotency:
 - Client sends `prev_hash` of expected current state
 - Server rejects if actual hash differs (conflict)
 - Identical content = no-op (safe retry)
+
+**Alignment note (2026-11-21):** entity hashes are *per-row integrity
+seals*, not resolvable cross-row chains — `previous_hash` stores the
+chained value inside the current row's own hash (RFC-008 Addendum v1.3,
+which retired the cross-row chain check after it false-positived on every
+edited row). Idempotency and optimistic locking compare against the
+single row's current hash only.
 
 ### 5.3 Tool Registry
 
@@ -323,7 +366,7 @@ Synchronous tool calls are self-throttling (agent waits for response). Asynchron
 **Availability over confidentiality.** MemoGarden prioritizes data accessibility:
 - Default: No encryption (rely on device-level full-disk encryption)
 - Optional: SQLCipher with operator-managed key
-- No automatic recovery mechanismÃ¢â‚¬â€operator is responsible for key management
+- No automatic recovery mechanism—operator is responsible for key management
 
 **Rationale:** Personal systems fail permanently when encryption keys are lost. Device-level FDE (FileVault, LUKS, BitLocker) provides primary protection. SQLCipher adds defense-in-depth for those who want it.
 
@@ -373,6 +416,11 @@ If encryption enabled:
 ---
 
 ## 7. Network Security
+
+*Observed posture (2026-11): public surfaces ship as localhost binds
+behind a Cloudflare tunnel + Access (readly, operator console) — the
+tunnel+Access pattern is the publication posture alongside the
+profile-specific options below.*
 
 ### 7.1 Device Profile: Tailscale Recommended
 
@@ -754,6 +802,7 @@ The following concepts from earlier designs have been removed:
 | 4.0 | 2025-01-20 | **Design review integration:** System profile as default target; Device adds watchdog layer; Encryption default = disabled (availability priority); Progressive decryption eliminated; Profile names changed (Device/System/Personal); Single-operator optimization; Agent budget as operator policy |
 | 4.1 | 2026-02-06 | Added Section 11.5: Audit Trail specification with Action facts and three-layer observability model |
 | 5.0 | 2026-11-09 | **RFC-011 alignment:** §4.1 key fields — `baseline_scopes`/`allowable_scopes` replaced by `grants` (RFC-011 §4.3); `participant_id` anchored to RFC-010 Agent entities. §4.2 capability grammar retained as reserved headroom (operative model = RFC-011 grants + attention-gated access); §4.3 points to RFC-011 as specification of record. |
+| 5.1 | 2026-11-21 | Coherence review — auth specifics adopted from implementation: §4.1 key structure `mg_sk_agent_` + bcrypt `key_hash` (was `mg_key_` + SHA256 sketch), `participant_id` renamed `agent_entity_id`; §4.2 notes E3 flat capabilities as the first inhabitant of the reserved grammar; §4.6 credential-custody recommendations added (HACM / Tier-1 env / hash-only as candidates — explicitly non-prescriptive per the RFC's posture philosophy: reliable authentication, reasonable measures, authorization as footgun-avoidance); §5.2 aligned to RFC-008 v1.3 per-row seal semantics; §7 notes the tunnel+Access publication posture. Deployment profiles, watchdog, encryption options, /metrics remain designed roadmap. |
 
 ---
 

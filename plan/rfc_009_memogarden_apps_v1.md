@@ -1,9 +1,21 @@
 # RFC 009: MemoGarden Application Model
 
 **Version:** 1.1  
-**Status:** Draft  
+**Status:** Draft — **roadmap**  
 **Author:** JS  
-**Date:** 2026-11-09
+**Date:** 2026-11-21 (status line; design 2026-11-09)
+
+> **Implementation status (2026-11-21).** This RFC is roadmap: the
+> supervised-app model (IPC child processes, manifests, SDK, profiles,
+> registration) is not yet built, and is gated on the agent runtime that
+> will host app-capable agents — the prerequisite the ecosystem does not
+> yet have (the MARS experiment was set down as the wrong approach; its
+> successor is undesigned). What ships today: `mg-project-studio` and
+> `memogarden-readly`, web applications over the Semantic API + SSE
+> observe — the current-generation consumer pattern, not this RFC's
+> target architecture. The RFC stands as the direction of travel; the
+> `/apps` REST compatibility surface and `/capabilities` discovery it
+> implies are tracked in RFC-005 (v9).
 
 ## Summary
 
@@ -33,25 +45,25 @@ This RFC answers these questions with a design that balances simplicity (minimal
 ## Architecture Overview
 
 ```
-â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-â”‚              MemoGarden App                 â”‚
-â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
-â”‚                                             â”‚
-â”‚  GUI â”€â”€â”€â”€â”                                  â”‚
-â”‚          â”‚                                  â”‚
-â”‚  TUI â”€â”€â”€â”€â”¼â”€â”€â†’ App Core Logic                â”‚
-â”‚          â”‚          â”‚                       â”‚
-â”‚  AUI â”€â”€â”€â”€â”˜          â”‚                       â”‚
-â”‚  (toolcalls)        â–¼                       â”‚
-â”‚              â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”               â”‚
-â”‚              â”‚ Command Port â”‚               â”‚
-â”‚              â””â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”˜               â”‚
-â”‚                     â”‚                       â”‚
-â”‚              â”Œâ”€â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”€â”€â”               â”‚
-â”‚              â”‚ Storage Port â”‚               â”‚
-â”‚              â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜               â”‚
-â”‚                                             â”‚
-â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+┌─────────────────────────────────────────────┐
+│              MemoGarden App                 │
+├─────────────────────────────────────────────┤
+│                                             │
+│  GUI ────┐                                  │
+│          │                                  │
+│  TUI ────┼──→ App Core Logic                │
+│          │          │                       │
+│  AUI ────┘          │                       │
+│  (toolcalls)        ▼                       │
+│              ┌──────────────┐               │
+│              │ Command Port │               │
+│              └──────┬───────┘               │
+│                     │                       │
+│              ┌──────┴───────┐               │
+│              │ Storage Port │               │
+│              └──────────────┘               │
+│                                             │
+└─────────────────────────────────────────────┘
 ```
 
 ## MemoGarden as Hub
@@ -61,7 +73,7 @@ All app commands flow through MemoGarden. This is a deliberate architectural cho
 **Benefits:**
 - Centralized audit trail (command history is queryable data)
 - Single authentication point
-- No NÃ—N inter-app communication complexity
+- No N×N inter-app communication complexity
 - Unified resource management
 
 **Constraint:**
@@ -84,7 +96,7 @@ MemoGarden launches apps as child processes and communicates via stdin/stdout us
 
 Messages are newline-delimited JSON objects.
 
-**MemoGarden â†’ App (stdin):**
+**MemoGarden → App (stdin):**
 
 ```json
 {"id":"abc123","type":"request","method":"create_event","params":{"title":"Meeting","time":"2026-02-04T09:00:00Z"}}
@@ -93,7 +105,7 @@ Messages are newline-delimited JSON objects.
 {"type":"shutdown","grace_period_ms":5000}
 ```
 
-**App â†’ MemoGarden (stdout):**
+**App → MemoGarden (stdout):**
 
 ```json
 {"id":"abc123","type":"response","result":{"uuid":"...","title":"Meeting"}}
@@ -106,12 +118,12 @@ Messages are newline-delimited JSON objects.
 
 | Type | Direction | Purpose |
 |------|-----------|---------|
-| `request` | MG â†’ App | Command invocation (has `id`, expects response) |
-| `response` | App â†’ MG | Command result (echoes `id`) |
-| `notification` | MG â†’ App | Push event (no `id`, no response expected) |
-| `subscribe` | App â†’ MG | Declare which notifications app wants |
-| `shutdown` | MG â†’ App | Request graceful termination |
-| `log` | App â†’ MG | Diagnostic output (forwarded to MG logs) |
+| `request` | MG → App | Command invocation (has `id`, expects response) |
+| `response` | App → MG | Command result (echoes `id`) |
+| `notification` | MG → App | Push event (no `id`, no response expected) |
+| `subscribe` | App → MG | Declare which notifications app wants |
+| `shutdown` | MG → App | Request graceful termination |
+| `log` | App → MG | Diagnostic output (forwarded to MG logs) |
 
 ### Notification Events
 
@@ -135,23 +147,23 @@ the scope (grant required).
 GUI apps run their own event loop. The stdin reader runs in a background thread and posts messages to the GUI's event queue:
 
 ```
-â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-â”‚                  GUI App                     â”‚
-â”‚                                              â”‚
-â”‚  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”      â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”  â”‚
-â”‚  â”‚ stdin       â”‚      â”‚                  â”‚  â”‚
-â”‚  â”‚ reader      â”‚â”€â”€â”€â”€â”€â†’â”‚  Event Queue     â”‚  â”‚
-â”‚  â”‚ (thread)    â”‚      â”‚                  â”‚  â”‚
-â”‚  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜      â”‚  â€¢ GUI events    â”‚  â”‚
-â”‚                       â”‚  â€¢ MG requests   â”‚  â”‚
-â”‚                       â”‚  â€¢ MG notifs     â”‚  â”‚
-â”‚                       â””â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜  â”‚
-â”‚                                â”‚             â”‚
-â”‚                       â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â–¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”  â”‚
-â”‚                       â”‚   Event Loop     â”‚  â”‚
-â”‚                       â”‚   (dispatch)     â”‚  â”‚
-â”‚                       â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜  â”‚
-â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+┌──────────────────────────────────────────────┐
+│                  GUI App                     │
+│                                              │
+│  ┌─────────────┐      ┌──────────────────┐  │
+│  │ stdin       │      │                  │  │
+│  │ reader      │─────→│  Event Queue     │  │
+│  │ (thread)    │      │                  │  │
+│  └─────────────┘      │  • GUI events    │  │
+│                       │  • MG requests   │  │
+│                       │  • MG notifs     │  │
+│                       └────────┬─────────┘  │
+│                                │             │
+│                       ┌────────▼─────────┐  │
+│                       │   Event Loop     │  │
+│                       │   (dispatch)     │  │
+│                       └──────────────────┘  │
+└──────────────────────────────────────────────┘
 ```
 
 ## Standalone Mode
@@ -250,18 +262,18 @@ Apps declare a single profile in their manifest. Each profile implies capability
 ### Bundle Dependencies
 
 ```
-              â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-              â”‚ SEMANTIC â”‚
-              â””â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”˜
-                   â”‚
+              ┌──────────┐
+              │ SEMANTIC │
+              └────┬─────┘
+                   │
             requires all three
-         â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-         â–¼         â–¼         â–¼
-   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â” â”Œâ”€â”€â”€â”€â”€â”€â” â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-   â”‚   SOIL   â”‚ â”‚ CORE â”‚ â”‚ RELATIONS â”‚
-   â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜ â””â”€â”€â”€â”€â”€â”€â”˜ â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
-        â”‚          â–²           â”‚
-   independent     â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+         ┌─────────┼─────────┐
+         ▼         ▼         ▼
+   ┌──────────┐ ┌──────┐ ┌───────────┐
+   │   SOIL   │ │ CORE │ │ RELATIONS │
+   └──────────┘ └──────┘ └───────────┘
+        │          ▲           │
+   independent     └───────────┘
                 Relations requires Core
 ```
 
@@ -272,9 +284,9 @@ Declaring a profile commits the app to:
 1. **Supporting all verbs** in that profile's bundles
 2. **Exposing capabilities as toolcalls** for agent interaction
 3. **Surfacing relevant UI elements:**
-   - Soil â†’ history/audit trail views
-   - Relations â†’ graph visualization
-   - Semantic â†’ search/suggest interfaces
+   - Soil → history/audit trail views
+   - Relations → graph visualization
+   - Semantic → search/suggest interfaces
 
 ## App Manifest
 
@@ -352,7 +364,7 @@ Agents discover and use apps through MemoGarden:
 
 When an agent invokes a tool, MemoGarden:
 
-1. Looks up tool â†’ app mapping
+1. Looks up tool → app mapping
 2. Ensures app process is running (launches if needed)
 3. Sends request message to app's stdin
 4. Waits for response on app's stdout
@@ -366,7 +378,7 @@ The same operation should be accessible via all interfaces:
 |-----------|-----|-----|----------------|
 | Create event | Click "New Event" button | `calendar add "Meeting" 2026-02-04 09:00` | `create_event({title: "Meeting", time: "..."})` |
 | Search notes | Type in search box | `notes search "TODO"` | `search_notes({query: "TODO"})` |
-| Delete item | Select â†’ click delete â†’ confirm | `notes delete <id> --confirm` | `delete_note({uuid: "...", confirm: true})` |
+| Delete item | Select → click delete → confirm | `notes delete <id> --confirm` | `delete_note({uuid: "...", confirm: true})` |
 
 ## SDK Structure
 
@@ -484,11 +496,13 @@ Studios define *patterns of collaboration*; apps provide *tools for execution*.
 |---------|------|---------|
 | 1.0 | 2026-02-04 | Initial specification |
 | 1.1 | 2026-11-09 | RFC-011 alignment: scope-filtering note on notification events and observe streams — scoped content reaches only principals inside the scope. |
+| 1.2 | 2026-11-21 | Status: declared roadmap — the supervised-app model is unbuilt, gated on the agent runtime for app-capable agents (MARS set down; successor undesigned). Shipped web apps (studio, readly) noted as current-generation HTTP+SSE consumers, not this model. |
 
 ---
 
-**Status:** Draft  
-**Next Steps:**
+**Status:** Draft — roadmap (2026-11-21)  
+**Sequencing:** gated on the agent runtime for app-capable agents
+(successor to MARS, undesigned). When it lands, in order:
 1. Review IPC protocol details
 2. Finalize manifest schema
 3. Implement SDK core (abstract API, adapters)

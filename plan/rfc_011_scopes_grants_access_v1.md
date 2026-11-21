@@ -412,13 +412,14 @@ same verb under sovereignty. Builtin scopes are seeded at startup (§4.1).
    migration to singular `active_scope` (fold `primary_scope`/`active_scopes`
    during the window; see §11). Provision `triage` and `personal` builtin scopes
    idempotently.
-2. **Enforcement flag:** config `scope_enforcement = off | on`, default `off`.
+2. **Enforcement flag:** an operator-set deployment switch, default `off`
+   (shipped as the `MEMOGARDEN_SCOPE_ENFORCEMENT` environment variable).
    With the flag off, enter/leave behave as today (advisory), labels may be
    written and grants provisioned, nothing is filtered.
 3. **Provisioning:** operator grants scopes to existing keys (Studio keys, agent
    keys, importer-era keys) via §6 endpoints; agents' `allowed_scopes` envelopes
    documented.
-4. **Activation:** operator flips `scope_enforcement = on` for the deployment.
+4. **Activation:** operator flips enforcement on for the deployment.
    From this moment SG-1..SG-11 hold. Existing unscoped workflows — the entire
    current corpus, tada, mbox, default-gmail — are unaffected (all unscoped).
 5. **Provider policies:** applied per provider when operators are ready

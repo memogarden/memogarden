@@ -1,7 +1,10 @@
 # RFC-013 — Browser Session Host (memogarden-sessions)
 
 **Status:** Accepted — design converged 2026-11-15; invariants locked; mechanism validated by spike, verdict accepted 2026-11-15 (§12)
-**Repos:** `memogarden-sessions/` (new sibling app repo, created 2026-11-15, unscaffolded)
+**Repos:** `memogarden-sessions/` (sibling app repo, created 2026-11-15;
+scaffolded — daemon, CLI, tests, spike archive, HANDOVER.md — with its
+ingestion half LIVE via `providers/sessions-importer`, see the RFC-013
+decision register)
 **Related:** MUSH (shared-session precedent), RFC-005 (API design), RFC-010 (agent identity), RFC-011 (scopes/grants), RFC-012 (provider accounts), statement-ingestion assessment
 
 ---

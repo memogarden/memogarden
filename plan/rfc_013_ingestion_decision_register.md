@@ -1,7 +1,8 @@
 # RFC-013 addendum: sessions → Core ingestion — decision register
 
-**Status:** DECIDED 2026-11-18 (two batch passes); SLICES 1–2 IMPLEMENTED + LIVE
-2026-11-18/19. Residual work is sequenced at the bottom.
+**Status:** DECIDED 2026-11-18 (two batch passes); SLICES 1–4 IMPLEMENTED + LIVE
+2026-11-18/19. Residual work is sequenced at the bottom (§Implementation
+status → Remaining; reviewed 2026-11-21).
 
 ## Implementation status (2026-11-19)
 
@@ -54,11 +55,14 @@
   current volume (93 lines); revisit if visit-history volume makes files
   large (options: keep a probe-anchor watermark file, or compact with a
   tombstone marker).
-- **Remaining:** RFC-010 actor entity mapping for SessionEvent facts (needs
-  daemon client identity — API-extraction/MCP slice), MCP adapter, operator
-  UI surface (scopes/triage on drained facts, send/grant/commandeer), statement
-  pipeline (separate decision register first). Registration capabilities
-  update path filed as memogarden-api#62.
+- **Remaining (reviewed 2026-11-21):** RFC-010 actor entity mapping for
+  SessionEvent facts (needs daemon client identity — API-extraction/MCP
+  slice), MCP adapter, operator UI surface (partially satisfied by the
+  RFC-015 console — triage/scopes/occurrences screens live; daemon
+  send/grant/commandeer controls still open), statement pipeline
+  (separate decision register first; tracked as root#14). Registration
+  capabilities update path (memogarden-api#62) RESOLVED —
+  `update_provider` route live on api main.
 
 Context: RFC-013 (§8 flows, §12 findings) · `schemas/sessions.yaml` · RFC-012
 (provider accounts, §4.9) · RFC-011 (scope policy at creation).

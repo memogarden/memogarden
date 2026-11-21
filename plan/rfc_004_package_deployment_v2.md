@@ -21,7 +21,7 @@ RFC-001 defines security architecture but does not specify:
 
 This RFC fills those gaps, enabling consistent development and deployment practices.
 
-**Related:** RFC-006 specifies runtime operations and the installation process. This document focuses on static structure.
+**Related:** RFC-007 covers runtime operations; RFC-006 specifies error handling and diagnostics. This document focuses on static structure.
 
 ---
 
@@ -30,18 +30,36 @@ This RFC fills those gaps, enabling consistent development and deployment practi
 ### 1.1 Core Principles
 
 1. **Unified System Package**: Soil and Core are layers within one system, not separate products
-2. **Minimal Dependencies**: Core system depends only on Python stdlib
+2. **Minimal Dependencies**: the core runs on a small, deliberately chosen set of Python packages — stdlib-first, every dependency audited
 3. **Verb-Based Deployment**: Command verb determines config location and defaults
 4. **Schema Bundling**: Schemas distributed as package resources, not separate files
 5. **Clear Boundaries**: Each package has well-defined responsibility and dependencies
+
+> **Implementation experience (2026-11 review).** The goal and the profile
+> schematic stand as written: user install and device (system) install,
+> sized by resource profiles — `embedded` targets the Raspberry Pi. What
+> the first production deployments taught:
+>
+> - **User install is proven.** The live deployment is §6.2 realized by a
+>   setup script; the verb layer is pending (§2.1 note), not the design.
+> - **Resource caps are mandatory, not optional.** Process limits belong
+>   to systemd cgroup controls configured per profile (§5.2); the
+>   2026-11-12 OOM incident falsified in-process self-limiting
+>   (RFC-007 §3.1 amended accordingly).
+> - **The deployment is a unit pair** — the server plus a scheduled ingest
+>   companion (§6.3); §12.2's heartbeat realized at unit level.
+> - **One data root, one resolver.** The data directory resolves from a
+>   single authoritative source (env/config), never from CWD fallback: a
+>   CWD-vs-WorkingDirectory split-brain occurred 2026-11-05 and was fixed
+>   by explicit pinning.
 
 ### 1.2 Package Hierarchy
 
 ```
 memogarden-system     (core functionality)
-    â†“ depends on
+    ↓ depends on
 memogarden-api        (HTTP interface)
-    â†“ used by
+    ↓ used by
 applications          (budget app, etc.)
 ```
 
@@ -57,49 +75,49 @@ MemoGarden uses a multi-repo structure with several separate Git repositories
 **memogarden (Root Repository)** - Planning, scripts, meta-configuration
 ```
 /memogarden/                          # Git root: https://github.com/memogarden/memogarden
-â”‚
-â”œâ”€â”€ plan/                              # RFC documents, PRDs, implementation plans
-â”œâ”€â”€ scripts/                           # Development automation
-â”œâ”€â”€ docs/                              # Technical documentation
-â””â”€â”€ .claude/                           # AI agent configuration
+│
+├── plan/                              # RFC documents, PRDs, implementation plans
+├── scripts/                           # Development automation
+├── docs/                              # Technical documentation
+└── .claude/                           # AI agent configuration
 ```
 
 **memogarden-system (Core Package)** - System functionality
 ```
 /memogarden-system/                   # Git root: https://github.com/memogarden/memogarden-system
-â”œâ”€â”€ pyproject.toml                    # Package configuration
-â”œâ”€â”€ system/                            # Import as "system"
-â”‚   â”œâ”€â”€ __init__.py
-â”‚   â”œâ”€â”€ soil/                          # Immutable record layer
-â”‚   â”‚   â”œâ”€â”€ __init__.py
-â”‚   â”‚   â”œâ”€â”€ items.py                   # Item CRUD operations
-â”‚   â”‚   â”œâ”€â”€ relations.py               # SystemRelation operations
-â”‚   â”‚   â””â”€â”€ database.py                # Soil DB connection
-â”‚   â”œâ”€â”€ core/                          # Mutable belief layer
-â”‚   â”‚   â”œâ”€â”€ __init__.py
-â”‚   â”‚   â”œâ”€â”€ entities.py                # Entity CRUD operations
-â”‚   â”‚   â”œâ”€â”€ relations.py               # UserRelation operations
-â”‚   â”‚   â”œâ”€â”€ context.py                 # ContextFrame operations
-â”‚   â”‚   â””â”€â”€ database.py                # Core DB connection
-â”‚   â”œâ”€â”€ host/                          # OS interface abstraction
-â”‚   â”‚   â”œâ”€â”€ __init__.py
-â”‚   â”‚   â”œâ”€â”€ environment.py             # Path resolution
-â”‚   â”‚   â”œâ”€â”€ filesystem.py              # File operations
-â”‚   â”‚   â”œâ”€â”€ supervision.py             # Readiness signaling
-â”‚   â”‚   â””â”€â”€ time.py                    # Time utilities
-â”‚   â”œâ”€â”€ schemas/                       # Bundled schemas (copied during build)
-â”‚   â”‚   â”œâ”€â”€ sql/
-â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ soil.sql
-â”‚   â”‚   â”‚   â”‚   â””â”€â”€ core.sql
-â”‚   â”‚   â”‚   â””â”€â”€ types/
-â”‚   â”‚   â”‚       â”œâ”€â”€ items/
-â”‚   â”‚   â”‚       â””â”€â”€ entities/
-â”‚   â”‚   â”œâ”€â”€ schemas.py                # Schema access utilities
-â”‚   â”‚   â””â”€â”€ utils/                    # Shared utilities
-â”‚   â”‚       â”œâ”€â”€ __init__.py
-â”‚   â”‚       â”œâ”€â”€ uid.py                # UUID generation
-â”‚   â”‚       â”œâ”€â”€ hashing.py            # Hash chain utilities
-â”‚   â”‚       â””â”€â”€ validation.py         # JSON Schema validation
+├── pyproject.toml                    # Package configuration
+├── system/                            # Import as "system"
+│   ├── __init__.py
+│   ├── soil/                          # Immutable record layer
+│   │   ├── __init__.py
+│   │   ├── items.py                   # Item CRUD operations
+│   │   ├── relations.py               # SystemRelation operations
+│   │   └── database.py                # Soil DB connection
+│   ├── core/                          # Mutable belief layer
+│   │   ├── __init__.py
+│   │   ├── entities.py                # Entity CRUD operations
+│   │   ├── relations.py               # UserRelation operations
+│   │   ├── context.py                 # ContextFrame operations
+│   │   └── database.py                # Core DB connection
+│   ├── host/                          # OS interface abstraction
+│   │   ├── __init__.py
+│   │   ├── environment.py             # Path resolution
+│   │   ├── filesystem.py              # File operations
+│   │   ├── supervision.py             # Readiness signaling
+│   │   └── time.py                    # Time utilities
+│   ├── schemas/                       # Bundled schemas (copied during build)
+│   │   ├── sql/
+│   │   │   │   ├── soil.sql
+│   │   │   │   └── core.sql
+│   │   │   └── types/
+│   │   │       ├── items/
+│   │   │       └── entities/
+│   │   ├── schemas.py                # Schema access utilities
+│   │   └── utils/                    # Shared utilities
+│   │       ├── __init__.py
+│   │       ├── uid.py                # UUID generation
+│   │       ├── hashing.py            # Hash chain utilities
+│   │       └── validation.py         # JSON Schema validation
 â"‚   â"”â"€â"€ tests/
 â"”â"€â"€ scripts/                           # Build automation (e.g., copy-schemas.sh)
 ```
@@ -173,21 +191,26 @@ from system.host.environment import get_data_dir
 
 ### 2.3 Package Dependencies
 
+Dependency discipline is the invariant: minimal, audited sets;
+stdlib-first in the core; providers never import the API — they meet the
+system only through the runtime contract (§12.2).
+
 ```
 memogarden-system:
   - Python >=3.9
-  - No external dependencies (stdlib only)
+  - minimal audited dependencies (stdlib-first)
 
 memogarden-api:
-  - memogarden-system
-  - FastAPI
-  - pydantic
-  - uvicorn (ASGI server)
+  - memogarden-system, memogarden-utils
+  - server framework + auth/validation libraries
 
 <provider>:
-  - memogarden-system
-  - Provider-specific dependencies
+  - runtime contract (§12.2), memogarden-utils
+  - provider-specific dependencies
 ```
+
+Concrete package selections are implementation detail, not invariant;
+the shipped sets live in each repo's `pyproject.toml`.
 
 ---
 
@@ -252,14 +275,14 @@ Schemas are **bundled into the `memogarden-system` Python package** during build
 
 ```
 Source:     /memogarden/schemas/
-            â”œâ”€â”€ sql/
-            â””â”€â”€ types/
+            ├── sql/
+            └── types/
 
 Build:      Copy into package during `python -m build`
 
 Installed:  /opt/memogarden/venv/lib/python3.x/site-packages/system/schemas/
-            â”œâ”€â”€ sql/
-            â””â”€â”€ types/
+            ├── sql/
+            └── types/
 
 Access:     Via importlib.resources in system.schemas module
 ```
@@ -401,7 +424,7 @@ Resource profiles control operational parameters. Profiles are **operator-declar
   - `log_level`: "warning"
 
 **standard (default):**
-- Target: Laptops, desktops, servers, containers (â‰¥2GB RAM)
+- Target: Laptops, desktops, servers, containers (≥2GB RAM)
 - Characteristics:
   - `max_view_entries`: 1000
   - `max_search_results`: 100
@@ -410,6 +433,16 @@ Resource profiles control operational parameters. Profiles are **operator-declar
   - `log_level`: "info"
 
 **Setting:** Declared in `config.toml` or via `--resource-profile` flag. Individual parameters can be overridden.
+
+**Enforcement points.** Profile parameters bind at two levels. *Process
+resource controls* (memory ceilings, CPU weight) belong to the systemd
+unit — per-profile drop-ins or the templates of §6 — because the operating
+system, not the process, must own survivability: an over-limit process is
+throttled, killed, and retried cleanly, where in-process self-limiting
+that fails to anticipate a spike takes the whole machine into swap
+(2026-11-12 incident). *Application tunables* (view sizes, checkpoint
+intervals, log level) flow through configuration as above. The `embedded`
+profile is expected to always carry explicit process caps.
 
 ### 5.3 Container Configuration via Environment
 
@@ -422,8 +455,18 @@ Container deployments prefer environment variables over config files:
 | `MEMOGARDEN_BIND_PORT` | Override bind port | `8080` |
 | `MEMOGARDEN_LOG_LEVEL` | Override log level | `info` |
 | `MEMOGARDEN_ENCRYPTION` | Encryption mode | `disabled` |
+| `MEMOGARDEN_VERB` | Deployment verb context | `run` |
+| `MEMOGARDEN_DATA_DIR` | Data root (explicit pin) | `/var/lib/memogarden` |
+| `MEMOGARDEN_PROVIDER_ROOTS` | Provider code origin pins (§12.2) | colon-separated paths |
+| `MEMOGARDEN_BIND` | Combined bind address:port (as-built spelling) | `127.0.0.1:8600` |
 
-Environment variables take precedence over config file values.
+Environment variables take precedence over config file values. Originally
+scoped to containers, this layer is the general transport for unit-based
+deployments (systemd `Environment=` / `EnvironmentFile=`) and is what ships
+today; `MEMOGARDEN_BIND` (combined) is the as-built form of the
+`BIND_ADDRESS`/`BIND_PORT` pair above. Port convention: the server binds
+**8600** — 8080 belongs to the OAuth consent callback server, 5000 to the
+dev server.
 
 ---
 
@@ -471,7 +514,7 @@ SyslogIdentifier=memogarden
 WantedBy=multi-user.target
 ```
 
-**Note:** Resource limits (MemoryMax, CPUQuota) are NOT specified in the unit file. They are applied at runtime based on `resource_profile` in config.toml if needed. See RFC-006 for details.
+**Note:** Resource limits (MemoryMax, CPUQuota) are NOT specified in the unit file. They are applied at runtime based on `resource_profile` in config.toml if needed. See RFC-007 for details.
 
 ### 6.2 User Service Unit
 
@@ -498,6 +541,39 @@ RestartSec=5s
 [Install]
 WantedBy=default.target
 ```
+
+**Lingering semantics.** A user install is session-scoped: it starts at
+login and stops at logout, and enables lingering only by explicit operator
+decision. This — more than file locations — is the boundary between the
+two install modes: a device install is survived-by-design
+(`multi-user.target`, lingered daemon user); a user install belongs to the
+session it serves.
+
+### 6.3 Ingest Companion Units (timer + oneshot)
+
+The provider runtime (§12.2) runs in-server; its scheduled heartbeat is a
+*unit pair* alongside the server, not a separate daemon:
+
+```ini
+# ~/.config/systemd/user/memogarden-ingest.timer
+#   (or /etc/systemd/system/ for device installs)
+[Timer]
+OnCalendar=hourly
+AccuracySec=5min
+Persistent=false
+Unit=memogarden-ingest.service
+
+# .../memogarden-ingest.service  (oneshot)
+[Service]
+Type=oneshot
+TimeoutStartSec=30min
+# Triggers the server's provider-run endpoint with a restricted-
+# capability key (RFC-013 E3); the server does the work in-process.
+ExecStart=/usr/bin/curl -sf -X POST -H "X-API-Key: ${MEMOGARDEN_API_KEY}" ...
+```
+
+Resource caps apply to **both** units — the ingest oneshot is the
+memory-heavy one — configured per profile (§5.2) as drop-ins.
 
 ---
 
@@ -548,7 +624,7 @@ dependencies = [
 
 ## 8. Installation Overview
 
-**Detailed installation procedures are specified in RFC-006 Section 2.** This section provides a brief summary of what gets installed.
+**Detailed installation procedures are specified in RFC-007 §2.** This section provides a brief summary of what gets installed.
 
 ### 8.1 System Installation
 
@@ -741,9 +817,9 @@ Alembic-style migration system:
 
 ```
 system/schemas/migrations/
-â”œâ”€â”€ 001_initial.sql
-â”œâ”€â”€ 002_add_fidelity.sql
-â””â”€â”€ 003_add_context_frames.sql
+├── 001_initial.sql
+├── 002_add_fidelity.sql
+└── 003_add_context_frames.sql
 ```
 
 ### 12.2 Provider Registration (supersedes entry-point discovery)
@@ -845,10 +921,11 @@ only modules whose origin resolves under an allowlisted **provider root**
 
 ## References
 
-- RFC-001 v4: Security & Operations Architecture
+- RFC-001 v5: Security & Operations Architecture
 - RFC-002 v5: Relation Time Horizon & Fossilization
-- RFC-003 v2: Context Capture Mechanism
-- RFC-006 v1: Runtime Operations & Installation (this document's companion)
+- RFC-003 v5: Context Capture Mechanism
+- RFC-006 v1: Error Handling & Diagnostics
+- RFC-007 v2: Runtime Operations (this document's companion)
 - PRD v0.10.0: MemoGarden Personal Information System
 - Python Packaging User Guide: https://packaging.python.org/
 
@@ -862,6 +939,7 @@ only modules whose origin resolves under an allowlisted **provider root**
 | 2.0 | 2026-02-02 | **Major revision**: Verb-based deployment, explicit resource profiles, removed hardware detection, added systemd unit templates, clarified config structure |
 | 2.1 | 2026-11-05 | Provider registration resolved: server-side registry + API-resource registration + in-process execution (§12.2, supersedes entry-point discovery); added memogarden-client repo and `memogarden` CLI entry point to §2.1; documented client vs server command surfaces |
 | 2.2 | 2026-11-05 | §12.2 origin pin: registration activates operator-placed code only (provider roots, plugin-dir loader, runtime re-check); auth transport note (X-API-Key canonical, Bearer-for-API-keys undecided) |
+| 2.3 | 2026-11-21 | Schematic review after first production deployments — goal and profile architecture unchanged: §5.2 enforcement points (systemd cgroup controls per profile; in-process self-limiting demoted), §5.3 canonical env-var set as shipped + port convention, §6 lingering semantics + §6.3 ingest companion units, §1.1 dependency-principle wording, implementation-experience note. |
 
 ---
 
@@ -872,7 +950,7 @@ only modules whose origin resolves under an allowlisted **provider root**
 3. Implement `system.host.environment.resolve_context()`
 4. Update build scripts for schema bundling
 5. Test installation on all verbs
-6. See RFC-006 for runtime operations and installation procedures
+6. See RFC-007 for runtime operations and installation procedures
 
 ---
 
