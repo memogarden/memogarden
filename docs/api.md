@@ -54,6 +54,52 @@ curl -H "Authorization: Bearer $JWT" \
 `/api/v1/triage` accepts `scope=` (uuid, builtin alias, or label) and
 `account=` (RFC-012 attribution stamp).
 
+`/api/v1/triage` accepts `scope=` (uuid, builtin alias, or label) and
+`account=` (RFC-012 attribution stamp).
+
+### Decision-model recommendations + item URLs (2026-11-22)
+
+The triage queue attaches a per-fact `rec` object
+(`{pred, confidence, runner, gate, soft?}`) from the operator-owned
+sidecar `~/.local/share/memogarden/triage-model/recommendations.json`
+(path override: `MEMOGARDEN_TRIAGE_RECS`; mtime-cached; absence of an
+entry = escalate = no badge). `gate` is the binary classification:
+`pass` (confident unclassified) or `escalate`; scope routing on
+escalated items is a suggestion only. Response also carries
+`decision_model` metadata. The console renders badges + one-tap apply;
+`✨` marks AI recommendations.
+
+```bash
+# Agreement eval: operator amend decisions vs stored recommendations
+# (first n=100 non-escalated; soft leans and cleared handling per spec)
+curl -H "Authorization: Bearer $JWT" "http://localhost:8600/api/v1/triage/eval?n=100"
+# → {"model", "generated_at", "target", "n", "correct", "agreement", "decisions": [...]}
+
+# Single-fact inspector (unique item URL /item/<uuid> — console shell):
+# any historical uuid resolves forward through supersedes; attachments
+# (contained family, collapsed to live versions) and parents/references
+# (contained_by + replies_to, kind-tagged) included. Facts only.
+curl -H "Authorization: Bearer $JWT" "http://localhost:8600/api/v1/items/soil_…"
+# → {"item": {uuid, type, canonical_at, data, metadata}, "chain": [...],
+#     "attachments": [...], "parents": [{uuid, kind, type, title, scopes}]}
+
+# Item browse/search: scope/type filters; recent browse without q;
+# q= runs ✨ semantic via the model layer's lazy embed daemon
+# (triage-model/embed_daemon.py — spawned on first use, idle self-exit,
+# index from triage-model/build_search_index.py) with keyword LIKE
+# fallback when the daemon is unavailable. mode reports which ran.
+curl -H "Authorization: Bearer $JWT" \
+  "http://localhost:8600/api/v1/items/search?q=lazada%20invoice&scope=Household&type=Email&limit=50"
+# → {"mode": "semantic|keyword_fallback|recent", "results":
+#     [{uuid, type, title, canonical_at, scopes, score?}], "offset", "limit"}
+```
+
+Console pages: `/console/items` (browse/search) and `/item/<uuid>`
+(item inspector; `/console/item?uuid=` redirects). Scope changes from
+the inspector cascade to undecided family members (triage/never-labeled
+children); decided children and parents are never rewritten.
+
+
 ### Change Password (RFC-015 §3.1)
 
 ```bash
@@ -557,6 +603,52 @@ curl -H "Authorization: Bearer $JWT" \
 
 `/api/v1/triage` accepts `scope=` (uuid, builtin alias, or label) and
 `account=` (RFC-012 attribution stamp).
+
+`/api/v1/triage` accepts `scope=` (uuid, builtin alias, or label) and
+`account=` (RFC-012 attribution stamp).
+
+### Decision-model recommendations + item URLs (2026-11-22)
+
+The triage queue attaches a per-fact `rec` object
+(`{pred, confidence, runner, gate, soft?}`) from the operator-owned
+sidecar `~/.local/share/memogarden/triage-model/recommendations.json`
+(path override: `MEMOGARDEN_TRIAGE_RECS`; mtime-cached; absence of an
+entry = escalate = no badge). `gate` is the binary classification:
+`pass` (confident unclassified) or `escalate`; scope routing on
+escalated items is a suggestion only. Response also carries
+`decision_model` metadata. The console renders badges + one-tap apply;
+`✨` marks AI recommendations.
+
+```bash
+# Agreement eval: operator amend decisions vs stored recommendations
+# (first n=100 non-escalated; soft leans and cleared handling per spec)
+curl -H "Authorization: Bearer $JWT" "http://localhost:8600/api/v1/triage/eval?n=100"
+# → {"model", "generated_at", "target", "n", "correct", "agreement", "decisions": [...]}
+
+# Single-fact inspector (unique item URL /item/<uuid> — console shell):
+# any historical uuid resolves forward through supersedes; attachments
+# (contained family, collapsed to live versions) and parents/references
+# (contained_by + replies_to, kind-tagged) included. Facts only.
+curl -H "Authorization: Bearer $JWT" "http://localhost:8600/api/v1/items/soil_…"
+# → {"item": {uuid, type, canonical_at, data, metadata}, "chain": [...],
+#     "attachments": [...], "parents": [{uuid, kind, type, title, scopes}]}
+
+# Item browse/search: scope/type filters; recent browse without q;
+# q= runs ✨ semantic via the model layer's lazy embed daemon
+# (triage-model/embed_daemon.py — spawned on first use, idle self-exit,
+# index from triage-model/build_search_index.py) with keyword LIKE
+# fallback when the daemon is unavailable. mode reports which ran.
+curl -H "Authorization: Bearer $JWT" \
+  "http://localhost:8600/api/v1/items/search?q=lazada%20invoice&scope=Household&type=Email&limit=50"
+# → {"mode": "semantic|keyword_fallback|recent", "results":
+#     [{uuid, type, title, canonical_at, scopes, score?}], "offset", "limit"}
+```
+
+Console pages: `/console/items` (browse/search) and `/item/<uuid>`
+(item inspector; `/console/item?uuid=` redirects). Scope changes from
+the inspector cascade to undecided family members (triage/never-labeled
+children); decided children and parents are never rewritten.
+
 
 ### Change Password (RFC-015 §3.1)
 

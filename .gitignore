@@ -115,3 +115,7 @@ wt/
 # Agent/session artifacts
 .playwright-mcp/
 .zcode/
+
+# triage decision-model working folder: model caches, venvs, embeddings
+triage-model/*
+!triage-model/README.md
