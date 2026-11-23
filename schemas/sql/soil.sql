@@ -51,6 +51,70 @@ CREATE INDEX IF NOT EXISTS idx_item_canonical ON item(canonical_at);
 CREATE INDEX IF NOT EXISTS idx_item_fidelity ON item(fidelity);
 
 -- ============================================================================
+-- ITEM FULL-TEXT INDEX (derived, rebuildable — api#95 Phase 1)
+-- ============================================================================
+
+-- External-content FTS5 over item.data: zero text duplication — the index
+-- stores only the inverted term index and reads `data` back from `item`
+-- (content_rowid = item.rowid) when snippets or the 'rebuild' command need
+-- the original text. Default unicode61 tokenizer: whole-word latin matching
+-- with BM25 ranking. CJK runs are NOT tokenized by unicode61, so CJK recall
+-- stays on the LIKE paths (parity with pre-FTS behavior).
+--
+-- Maintenance is structural: items are append-only (no UPDATE ever touches
+-- `data`; no DELETE FROM item exists), so a single AFTER INSERT trigger
+-- keeps the index complete for everything inserted after it was created.
+-- AU/AD triggers are deliberately absent — a supersede UPDATE never
+-- changes `data`.
+--
+-- Legacy rows (inserted before this DDL first executed) are backfilled
+-- incrementally by Soil.backfill_item_fts(), keyed off the
+-- item_fts_created_maxrowid boundary recorded below. The boundary is the
+-- max(item.rowid) at the moment the trigger was created; everything above
+-- it is guaranteed trigger-indexed, so backfill batches can never
+-- double-index a row (a duplicate external-content insert corrupts the
+-- index).
+--
+-- Caveat: anything that removes or renumbers item rowids desyncs an
+-- external-content index — VACUUM (may renumber rowids of tables without
+-- an INTEGER PRIMARY KEY) and bulk DELETE FROM item (the index has no AD
+-- trigger; the test harness cleans up with a rebuild for exactly this
+-- reason). No maintenance path does either today (RFC-007 `maintain
+-- --vacuum` is unbuilt); if one ever ships, rebuild afterwards:
+--   Soil(...).rebuild_item_fts()  (atomic, lock-heavy at prod corpus size)
+--
+-- The section below is wrapped in a single transaction: the boundary stamp
+-- must be atomic with trigger creation or a concurrent insert (documented:
+-- account runs collide with restarts) could be trigger-indexed AND
+-- backfilled — a duplicate external-content insert corrupts the index
+-- (phantom-term false positives, wrong bm25 ranks). executescript honors
+-- in-script transaction control; IF NOT EXISTS / INSERT OR IGNORE keep the
+-- replay idempotent.
+
+BEGIN IMMEDIATE;
+
+CREATE VIRTUAL TABLE IF NOT EXISTS item_fts USING fts5(
+    data,
+    content='item',
+    content_rowid='rowid'
+);
+
+CREATE TRIGGER IF NOT EXISTS item_fts_ai AFTER INSERT ON item BEGIN
+    INSERT INTO item_fts(rowid, data) VALUES (NEW.rowid, NEW.data);
+END;
+
+-- Record the legacy/pre-trigger rowid boundary once (INSERT OR IGNORE keeps
+-- the original value on every subsequent server start).
+INSERT OR IGNORE INTO _schema_metadata VALUES
+    ('item_fts_created_maxrowid', (SELECT COALESCE(MAX(rowid), 0) FROM item),
+     datetime('now')),
+    ('item_fts_index',
+     'external-content over item.data; api#95 Phase 1; legacy rows backfilled '
+     || 'via backfill_item_fts()', datetime('now'));
+
+COMMIT;
+
+-- ============================================================================
 -- SYSTEM RELATION TABLE (Immutable structural facts)
 -- ============================================================================
 
