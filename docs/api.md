@@ -86,11 +86,13 @@ curl -H "Authorization: Bearer $JWT" "http://localhost:8600/api/v1/items/soil_�
 # Item browse/search: scope/type filters; recent browse without q;
 # q= runs ✨ semantic via the model layer's lazy embed daemon
 # (triage-model/embed_daemon.py — spawned on first use, idle self-exit,
-# index from triage-model/build_search_index.py) with keyword LIKE
-# fallback when the daemon is unavailable. mode reports which ran.
+# index from triage-model/build_search_index.py); when the daemon is
+# unavailable it probes the lexical plane — FTS5 BM25 over item data
+# (api#95 phase 1) — and keeps the narrow keyword LIKE fallback only for
+# CJK/substring queries the tokenizer can't see. mode reports which ran.
 curl -H "Authorization: Bearer $JWT" \
   "http://localhost:8600/api/v1/items/search?q=lazada%20invoice&scope=Household&type=Email&limit=50"
-# → {"mode": "semantic|keyword_fallback|recent", "results":
+# → {"mode": "semantic|lexical|keyword_fallback|recent", "results":
 #     [{uuid, type, title, canonical_at, scopes, score?}], "offset", "limit"}
 ```
 
@@ -636,11 +638,13 @@ curl -H "Authorization: Bearer $JWT" "http://localhost:8600/api/v1/items/soil_�
 # Item browse/search: scope/type filters; recent browse without q;
 # q= runs ✨ semantic via the model layer's lazy embed daemon
 # (triage-model/embed_daemon.py — spawned on first use, idle self-exit,
-# index from triage-model/build_search_index.py) with keyword LIKE
-# fallback when the daemon is unavailable. mode reports which ran.
+# index from triage-model/build_search_index.py); when the daemon is
+# unavailable it probes the lexical plane — FTS5 BM25 over item data
+# (api#95 phase 1) — and keeps the narrow keyword LIKE fallback only for
+# CJK/substring queries the tokenizer can't see. mode reports which ran.
 curl -H "Authorization: Bearer $JWT" \
   "http://localhost:8600/api/v1/items/search?q=lazada%20invoice&scope=Household&type=Email&limit=50"
-# → {"mode": "semantic|keyword_fallback|recent", "results":
+# → {"mode": "semantic|lexical|keyword_fallback|recent", "results":
 #     [{uuid, type, title, canonical_at, scopes, score?}], "offset", "limit"}
 ```
 
@@ -1130,7 +1134,10 @@ curl -X POST http://localhost:8080/mg \
 
 #### search
 
-Fuzzy text search across entities and facts.
+Text search across entities and facts — LIKE matching by default, or
+BM25-ranked FTS5 full-text over fact data with `strategy: "lexical"`
+(api#95 phase 1; entity matches still LIKE; `semantic` reserved per
+RFC-005).
 
 ```bash
 curl -X POST http://localhost:8080/mg \
@@ -1148,8 +1155,9 @@ curl -X POST http://localhost:8080/mg \
 **Request Fields:**
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `query` | string | Yes | Search query |
+| `query` | string | Yes | Search query (lexical strategy hardens it: quoted prefix terms, implicit AND) |
 | `target_type` | string | No | "entity", "fact", or "all" (default: "all") |
+| `strategy` | string | No | "fuzzy"/"auto" (LIKE, default) or "lexical" (FTS5 BM25 over fact data) |
 | `coverage` | string | No | "names", "content", or "full" (default: "content") |
 | `limit` | integer | No | Max results (default: 20) |
 

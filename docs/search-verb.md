@@ -1,6 +1,6 @@
 # Search Verb (Session 9)
 
-**Status:** ✅ Complete
+**Status:** ✅ Complete — updated 2026-11-24 (api#95 phase 1: `strategy: lexical` FTS5 BM25 over fact data; see the strategy section below and `system/soil/database.py::search_items_fts`)
 **Date:** 2026-02-09
 **Tests:** 8/8 passing (part of 256 total tests)
 
@@ -69,7 +69,16 @@ Implemented the `search` verb for semantic search and discovery across entities 
 ### `strategy` - Search Algorithm
 - `fuzzy` - Text matching with typo tolerance (SQLite LIKE)
 - `auto` - System chooses based on query (currently: fuzzy)
-- **Future:** `semantic` - Embedding-based vector search
+- `lexical` - **Shipped 2026-11-24 (api#95 phase 1):** FTS5 BM25-ranked
+  full-text over fact `data` (external-content index `item_fts`,
+  trigger-maintained; queries hardened to quoted prefix terms with
+  implicit AND; RFC-011 §4.9(3) pre-match scope enforcement identical to
+  `fuzzy`). Entity matches still use LIKE. Result rows carry `rank`
+  (bm25; more negative = better). Superseded rows match, same as `fuzzy`.
+  CJK runs are not tokenized (unicode61) — CJK/substring recall remains
+  on the LIKE path (console: `keyword_fallback` mode).
+- **Future:** `semantic` - Embedding-based vector search (shipped for the
+  console via the lazy embed daemon; not yet a verb strategy)
 
 ### `effort` - Search Thoroughness
 - `quick` - Cached results, shallow index (future)
@@ -161,10 +170,10 @@ def search_items(self, query: str, coverage: str = "content", limit: int = 100) 
 
 ### ⏳ Deferred (Documented TODOs)
 - **Continuation tokens** - Base64-encoded offset/limit/timestamp for deep pagination
-- **Semantic search** - Embedding-based vector search (requires vector DB or external service)
+- **Semantic strategy** - Embedding-based vector search as a verb strategy (console semantic mode ships today via the lazy embed daemon; see `api/v1/operator.py`)
 - **Quick effort mode** - Cached results for frequent queries
 - **Deep effort mode** - Exhaustive search with higher limits
-- **Threshold filtering** - Similarity score filtering (requires semantic search)
+- **Threshold filtering** - Similarity score filtering (requires the semantic strategy)
 
 ## Performance Characteristics
 
