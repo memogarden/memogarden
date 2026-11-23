@@ -1,11 +1,12 @@
 -- MemoGarden Core Database Schema
--- Schema Version: 20260130
--- Description: Base Core tables only (no type-specific extensions)
+-- Schema Version: 20261124
+-- Description: Base Core tables + change feed (system#12 search-sync slice)
 --
 -- DESIGN:
 -- - entity: Global registry with JSON data field
 --   - Entity types: Artifact, ContextFrame, ConversationLog, Label, Scope, Transaction, User, View, ViewMerge
--- - user_relation: Engagement signals with time horizon
+-- - user_relation: Engagement signals with a time horizon
+-- - change_log: Trigger-maintained write feed (monotonic seq per DB)
 -- - context_frame: Attention tracking (LRU containers)
 -- - Type-specific schemas in /schemas/types/entities/*.schema.json
 
@@ -20,7 +21,7 @@ CREATE TABLE IF NOT EXISTS _schema_metadata (
 );
 
 INSERT OR IGNORE INTO _schema_metadata VALUES
-    ('version', '20261121', datetime('now')),
+    ('version', '20261124', datetime('now')),
     ('base_schema', 'memogarden-core-base', datetime('now')),
     ('description', 'Core base tables only; type schemas in JSON', datetime('now')),
     ('epoch_date', '2020-01-01', datetime('now'));
@@ -83,6 +84,97 @@ CREATE TABLE IF NOT EXISTS user_relation (
 CREATE INDEX IF NOT EXISTS idx_userrel_source ON user_relation(source);
 CREATE INDEX IF NOT EXISTS idx_userrel_target ON user_relation(target);
 CREATE INDEX IF NOT EXISTS idx_userrel_horizon ON user_relation(time_horizon);
+
+-- ============================================================================
+-- CHANGE FEED (memogarden-system#12 slice — search-sync high-water mark)
+-- ============================================================================
+-- Same design as the soil.sql feed (see that file for the full rationale):
+-- trigger-maintained, transactionally consistent, monotonic per database.
+-- Core covers the content tables Core owns: entity, user_relation. Infra
+-- tables (providers, api_keys, users, ...) stay outside the feed.
+--
+-- Boundary note: soil.db and core.db each run their own feed; a consumer
+-- tracks two checkpoints (one per database) — there is no single global seq
+-- across the two files, and that is deliberate (no ATTACH coupling between
+-- the layers).
+--
+-- Double-fire note (entity only): an UPDATE whose writer did NOT set
+-- updated_at makes entity_update_timestamp's guarded stomp a second
+-- statement, which fires entity_change_update again — two feed rows for one
+-- logical write. Sanctioned writers (update_hash / update_data / supersede)
+-- set updated_at and get exactly one row. Consumers re-hydrate current row
+-- state, so a doubled row is harmless; a missed change would not be.
+
+CREATE TABLE IF NOT EXISTS change_log (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    tbl TEXT NOT NULL,                  -- 'entity' | 'user_relation'
+    uuid TEXT NOT NULL,
+    kind TEXT NOT NULL,                 -- 'insert' | 'update' | 'delete'
+    changed_at TEXT NOT NULL            -- UTC ISO 8601 (trigger time)
+);
+
+CREATE TRIGGER IF NOT EXISTS entity_change_insert
+AFTER INSERT ON entity
+BEGIN
+    INSERT INTO change_log (tbl, uuid, kind, changed_at)
+    VALUES ('entity', NEW.uuid, 'insert', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+END;
+
+CREATE TRIGGER IF NOT EXISTS entity_change_update
+AFTER UPDATE ON entity
+    WHEN NEW.type IS NOT OLD.type
+      OR NEW.hash IS NOT OLD.hash
+      OR NEW.previous_hash IS NOT OLD.previous_hash
+      OR NEW.version IS NOT OLD.version
+      OR NEW.created_at IS NOT OLD.created_at
+      OR NEW.updated_at IS NOT OLD.updated_at
+      OR NEW.group_id IS NOT OLD.group_id
+      OR NEW.superseded_by IS NOT OLD.superseded_by
+      OR NEW.superseded_at IS NOT OLD.superseded_at
+      OR NEW.derived_from IS NOT OLD.derived_from
+      OR NEW.data IS NOT OLD.data
+BEGIN
+    INSERT INTO change_log (tbl, uuid, kind, changed_at)
+    VALUES ('entity', NEW.uuid, 'update', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+END;
+
+CREATE TRIGGER IF NOT EXISTS entity_change_delete
+AFTER DELETE ON entity
+BEGIN
+    INSERT INTO change_log (tbl, uuid, kind, changed_at)
+    VALUES ('entity', OLD.uuid, 'delete', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+END;
+
+CREATE TRIGGER IF NOT EXISTS userrel_change_insert
+AFTER INSERT ON user_relation
+BEGIN
+    INSERT INTO change_log (tbl, uuid, kind, changed_at)
+    VALUES ('user_relation', NEW.uuid, 'insert', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+END;
+
+CREATE TRIGGER IF NOT EXISTS userrel_change_update
+AFTER UPDATE ON user_relation
+    WHEN NEW.kind IS NOT OLD.kind
+      OR NEW.source IS NOT OLD.source
+      OR NEW.target IS NOT OLD.target
+      OR NEW.source_type IS NOT OLD.source_type
+      OR NEW.target_type IS NOT OLD.target_type
+      OR NEW.time_horizon IS NOT OLD.time_horizon
+      OR NEW.last_access_at IS NOT OLD.last_access_at
+      OR NEW.created_at IS NOT OLD.created_at
+      OR NEW.evidence IS NOT OLD.evidence
+      OR NEW.metadata IS NOT OLD.metadata
+BEGIN
+    INSERT INTO change_log (tbl, uuid, kind, changed_at)
+    VALUES ('user_relation', NEW.uuid, 'update', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+END;
+
+CREATE TRIGGER IF NOT EXISTS userrel_change_delete
+AFTER DELETE ON user_relation
+BEGIN
+    INSERT INTO change_log (tbl, uuid, kind, changed_at)
+    VALUES ('user_relation', OLD.uuid, 'delete', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+END;
 
 -- ============================================================================
 -- CONTEXT FRAME TABLE (Attention tracking)

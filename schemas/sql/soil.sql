@@ -1,10 +1,11 @@
 -- MemoGarden Soil Database Schema
--- Schema Version: 20260130
--- Description: Base Soil tables only (no type-specific extensions)
+-- Schema Version: 20261124
+-- Description: Base Soil tables + change feed (system#12 search-sync slice)
 --
 -- DESIGN:
 -- - item: Polymorphic timeline with JSON data field
 -- - system_relation: Immutable structural facts
+-- - change_log: Trigger-maintained write feed (monotonic seq per DB)
 -- - Type-specific schemas in /schemas/types/items/*.schema.json
 
 -- ============================================================================
@@ -18,7 +19,7 @@ CREATE TABLE IF NOT EXISTS _schema_metadata (
 );
 
 INSERT OR IGNORE INTO _schema_metadata VALUES
-    ('version', '20260130', datetime('now')),
+    ('version', '20261124', datetime('now')),
     ('base_schema', 'memogarden-soil-base', datetime('now')),
     ('description', 'Soil base tables only; type schemas in JSON', datetime('now')),
     ('epoch_date', '2020-01-01', datetime('now'));
@@ -70,6 +71,103 @@ CREATE TABLE IF NOT EXISTS system_relation (
 CREATE INDEX IF NOT EXISTS idx_sysrel_source ON system_relation(source);
 CREATE INDEX IF NOT EXISTS idx_sysrel_target ON system_relation(target);
 CREATE INDEX IF NOT EXISTS idx_sysrel_kind ON system_relation(kind);
+
+-- ============================================================================
+-- CHANGE FEED (memogarden-system#12 slice — search-sync high-water mark)
+-- ============================================================================
+-- Trigger-maintained feed of every write to the content tables, in the same
+-- transaction as the write it records (rollback removes the feed rows too —
+-- the feed never reports a change that did not commit). Served to derived
+-- consumers (FTS5 lexical index, embed-daemon vector catch-up, offline index
+-- rebuilds) as the monotonic "what changed since seq N" sweep.
+--
+-- Why triggers, not call-site instrumentation: writers reach these tables
+-- through many paths — Soil methods, raw conn.execute repairs
+-- (system/core/__init__.py §migrate_private_scope_rename), migration SQL,
+-- provider runtimes, CLI passes — and any instrumented-method list silently
+-- misses the next raw-SQL writer. The DB fires on all of them.
+--
+-- seq is INTEGER PRIMARY KEY AUTOINCREMENT: monotonic per database, never
+-- reused (SQLite guarantees max(seq) grows); WAL single-writer serializes
+-- concurrent feed appends. Consumers checkpoint their high-water seq.
+--
+-- Boundary: content tables only (item, system_relation). Infra tables the
+-- api owns directly (providers, provider_runs, ...) are outside the feed —
+-- search and derived views never consume them.
+--
+-- Pruning: append-only by design; prune from the head once every consumer
+-- has checkpointed past it (no consumer checkpoints exist yet — leave whole).
+
+CREATE TABLE IF NOT EXISTS change_log (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    tbl TEXT NOT NULL,                  -- 'item' | 'system_relation'
+    uuid TEXT NOT NULL,
+    kind TEXT NOT NULL,                 -- 'insert' | 'update' | 'delete'
+    changed_at TEXT NOT NULL            -- UTC ISO 8601 (trigger time)
+);
+
+-- AFTER UPDATE with a content guard: identical-value rewrites (idempotent
+-- repair loops re-writing the same text) do not pollute the feed. Recursive
+-- triggers are OFF by default, so trigger bodies that UPDATE the row
+-- (entity_update_timestamp in core.sql) do not double-fire here.
+CREATE TRIGGER IF NOT EXISTS item_change_insert
+AFTER INSERT ON item
+BEGIN
+    INSERT INTO change_log (tbl, uuid, kind, changed_at)
+    VALUES ('item', NEW.uuid, 'insert', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+END;
+
+CREATE TRIGGER IF NOT EXISTS item_change_update
+AFTER UPDATE ON item
+    WHEN NEW._type IS NOT OLD._type
+      OR NEW.realized_at IS NOT OLD.realized_at
+      OR NEW.canonical_at IS NOT OLD.canonical_at
+      OR NEW.integrity_hash IS NOT OLD.integrity_hash
+      OR NEW.fidelity IS NOT OLD.fidelity
+      OR NEW.superseded_by IS NOT OLD.superseded_by
+      OR NEW.superseded_at IS NOT OLD.superseded_at
+      OR NEW.data IS NOT OLD.data
+      OR NEW.metadata IS NOT OLD.metadata
+BEGIN
+    INSERT INTO change_log (tbl, uuid, kind, changed_at)
+    VALUES ('item', NEW.uuid, 'update', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+END;
+
+CREATE TRIGGER IF NOT EXISTS item_change_delete
+AFTER DELETE ON item
+BEGIN
+    INSERT INTO change_log (tbl, uuid, kind, changed_at)
+    VALUES ('item', OLD.uuid, 'delete', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+END;
+
+CREATE TRIGGER IF NOT EXISTS sysrel_change_insert
+AFTER INSERT ON system_relation
+BEGIN
+    INSERT INTO change_log (tbl, uuid, kind, changed_at)
+    VALUES ('system_relation', NEW.uuid, 'insert', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+END;
+
+CREATE TRIGGER IF NOT EXISTS sysrel_change_update
+AFTER UPDATE ON system_relation
+    WHEN NEW.kind IS NOT OLD.kind
+      OR NEW.source IS NOT OLD.source
+      OR NEW.target IS NOT OLD.target
+      OR NEW.source_type IS NOT OLD.source_type
+      OR NEW.target_type IS NOT OLD.target_type
+      OR NEW.created_at IS NOT OLD.created_at
+      OR NEW.evidence IS NOT OLD.evidence
+      OR NEW.metadata IS NOT OLD.metadata
+BEGIN
+    INSERT INTO change_log (tbl, uuid, kind, changed_at)
+    VALUES ('system_relation', NEW.uuid, 'update', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+END;
+
+CREATE TRIGGER IF NOT EXISTS sysrel_change_delete
+AFTER DELETE ON system_relation
+BEGIN
+    INSERT INTO change_log (tbl, uuid, kind, changed_at)
+    VALUES ('system_relation', OLD.uuid, 'delete', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+END;
 
 -- ============================================================================
 -- COMMON QUERIES
