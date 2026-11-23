@@ -102,8 +102,10 @@ CREATE INDEX IF NOT EXISTS idx_userrel_horizon ON user_relation(time_horizon);
 -- updated_at makes entity_update_timestamp's guarded stomp a second
 -- statement, which fires entity_change_update again — two feed rows for one
 -- logical write. Sanctioned writers (update_hash / update_data / supersede)
--- set updated_at and get exactly one row. Consumers re-hydrate current row
--- state, so a doubled row is harmless; a missed change would not be.
+-- set updated_at, so the stomp never adds an extra row — but update_data
+-- still feeds twice (data UPDATE + update_hash re-chain: one row per
+-- statement). Consumers re-hydrate current row state, so extra rows are
+-- harmless; a missed change would not be.
 
 CREATE TABLE IF NOT EXISTS change_log (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
