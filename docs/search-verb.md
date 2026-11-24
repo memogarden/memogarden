@@ -1,8 +1,84 @@
 # Search Verb (Session 9)
 
-**Status:** ✅ Complete — updated 2026-11-24 (api#95 phase 1: `strategy: lexical` FTS5 BM25 over fact data; see the strategy section below and `system/soil/database.py::search_items_fts`)
+**Status:** ✅ Complete — updated 2026-11-24 (api#95 phase 1: `strategy: lexical` FTS5 BM25 over fact data; phase 2a `semantic`/`hybrid` staged on branch `feat/search-verb-semantic-hybrid`, pending merge; see the strategy section and "The FTS Index" below)
 **Date:** 2026-02-09
-**Tests:** 8/8 passing (part of 256 total tests)
+**Tests:** search verb tests are part of memogarden-api's suite (541 passing 2026-11-24, incl. the lexical and staged semantic/hybrid strategies)
+
+## The FTS Index (`item_fts`)
+
+The lexical plane's index is **not a separate database** — it is an FTS5
+virtual table living **inside `soil.db` itself** (the same single file as
+every other table), plus its FTS5 "shadow tables". Measured 2026-11-24 at
+~266k live items: `item` ≈ 2.4 GB, `item_fts_data` ≈ 600 MB (the other
+shadow tables are housekeeping-scale). No extra files beyond soil.db's own
+WAL — backups and RPi replication stay single-file.
+
+### External content — document text is not duplicated
+
+```sql
+CREATE VIRTUAL TABLE item_fts USING fts5(
+    data,
+    content='item',          -- documents live in item.data
+    content_rowid='rowid'    -- index keyed by item rowid
+)
+```
+
+`content='item'` makes this an **external-content** index: text is stored
+once, in `item.data`; the index stores only the inverted index
+(token → rowid). Two consequences: the index is *derived state* — fully
+reconstructible from `item` at any time — and any writer that changes or
+removes `item` rows without telling the index will desync it (see the
+lifecycle gap below).
+
+### Maintenance lifecycle (trigger-maintained, never app-managed)
+
+The system#12 change_log rationale applies verbatim: writers may bypass
+Python, triggers cannot be bypassed. So the index is maintained by:
+
+- **`item_fts_ai`** — `AFTER INSERT ON item` trigger indexing every new
+  row: `INSERT INTO item_fts(rowid, data) VALUES (NEW.rowid, NEW.data)`.
+- **Atomic boundary stamp** — creating the trigger records
+  `item_fts_created_maxrowid` in `_schema_metadata`, so the trigger and
+  the backfill can never overlap on one row (a duplicate external-content
+  insert corrupts the index).
+- **`Soil.backfill_item_fts()`** — resumable watermark sweep
+  (`item_fts_backfill_rowid`) for rows predating the DDL; one
+  `BEGIN IMMEDIATE` transaction per batch. Completed 2026-11-24
+  (266,458 rows; a second run is a no-op).
+- **`Soil.rebuild_item_fts()`** — the FTS5 `'rebuild'` command plus a
+  done marker; full reconstruction from `item`. Rebuild parity
+  (incremental state == rebuild output) is the standing integrity check.
+
+### Known gap: insert-only (lifecycle triggers proposed, not yet built)
+
+Supersede flips (`superseded_by` UPDATE), in-place data amendments, and
+hard DELETEs currently do **not** leave the index — there is no
+AFTER UPDATE/DELETE trigger. Superseded versions' tokens therefore
+accumulate (today `search_items_fts(..., live_only=True)` filters them at
+query time), and an unsynced hard DELETE would desync an external-content
+index outright. The proposed lifecycle triggers — FTS5 `'delete'` command
+on supersede/delete (with `OLD.data`, which the command requires),
+delete+re-insert on data amendment — remove dead versions from the index
+itself, shrink it over time, and keep `live_only` as belt-and-suspenders.
+
+### Query path
+
+`Soil.search_items_fts()` hardens raw query text into safe MATCH syntax
+(quoted prefix terms, implicit AND — injection-proof against every FTS5
+operator token), ranks with `bm25()` (more negative = better) with a rowid
+tiebreak, and enforces RFC-011 §4.9(3) scopes **pre-match** (scoped-out
+rows never become matches, so counts stay truthful). `live_only`, `types`,
+and `scope_filter` are post-MATCH refinements (console chips). The
+tokenizer is `unicode61` — CJK runs are not tokenized, which is why the
+console ladder falls through to narrow LIKE (`keyword_fallback`) for
+CJK/substring queries.
+
+### Two planes, two storage models
+
+| plane | index | lives in | maintained by |
+|---|---|---|---|
+| lexical | `item_fts` (FTS5, external-content) | inside `soil.db` — one file with everything | triggers + backfill/rebuild |
+| semantic | `search_index.npz` + `search_index_ids.json` + `search_meta.json` | derived cache files owned by [memogarden-search](https://github.com/memogarden/memogarden-search) (`MEMOGARDEN_SEARCH_CACHE`) | offline builder; vectors never touch the DB |
 
 ## Overview
 
@@ -79,6 +155,11 @@ Implemented the `search` verb for semantic search and discovery across entities 
   on the LIKE path (console: `keyword_fallback` mode).
 - **Future:** `semantic` - Embedding-based vector search (shipped for the
   console via the lazy embed daemon; not yet a verb strategy)
+- **Staged (api#95 phase 2a, branch `feat/search-verb-semantic-hybrid`,
+  pending merge):** `semantic` — daemon cosine re-checked at the API
+  boundary under current-time visibility; `hybrid` — Reciprocal Rank
+  Fusion (k=60) of lexical + semantic; the response `strategy` field
+  echoes whichever plane actually ran (honest degradation).
 
 ### `effort` - Search Thoroughness
 - `quick` - Cached results, shallow index (future)
