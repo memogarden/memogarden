@@ -49,17 +49,41 @@ Python, triggers cannot be bypassed. So the index is maintained by:
   done marker; full reconstruction from `item`. Rebuild parity
   (incremental state == rebuild output) is the standing integrity check.
 
-### Known gap: insert-only (lifecycle triggers proposed, not yet built)
+### Lifecycle sync (shipped 2026-11-25) + the dead-token bloat caveat
 
-Supersede flips (`superseded_by` UPDATE), in-place data amendments, and
-hard DELETEs currently do **not** leave the index — there is no
-AFTER UPDATE/DELETE trigger. Superseded versions' tokens therefore
-accumulate (today `search_items_fts(..., live_only=True)` filters them at
-query time), and an unsynced hard DELETE would desync an external-content
-index outright. The proposed lifecycle triggers — FTS5 `'delete'` command
-on supersede/delete (with `OLD.data`, which the command requires),
-delete+re-insert on data amendment — remove dead versions from the index
-itself, shrink it over time, and keep `live_only` as belt-and-suspenders.
+`item_fts_ad` (AFTER DELETE) issues the FTS5 `'delete'` command with
+`OLD.data`, so hard DELETEs leave the index immediately — closing the
+corruption vector where a deleted rowid, reused by SQLite for a new row,
+would make ghost tokens resolve to a *different* item's content. This is
+not hypothetical: gcal occurrence churn inserted-then-deleted 811 items on
+2026-11-24 alone (change_log evidence).
+
+Two deliberate non-features, both consequences of FTS5 `'delete'` having
+**exactly-once semantics** — a duplicate or mismatched `'delete'`
+corrupts the index (observed live as "database disk image is malformed"
+when an earlier AU+AD trigger pair double-fired):
+
+- **No AU trigger**: a supersede flip does not un-index. An AU `'delete'`
+  would double-fire with the row's eventual DELETE. Superseded rows still
+  match by default (parity with the fuzzy path, unchanged from Phase 1);
+  `live_only=True` keeps the console's results correct.
+- **No data-amend trigger**: `data` is append-only (verified: the only
+  `UPDATE item` paths touch lifecycle columns).
+
+**Bloat caveat & resolution.** Because supersede flips don't un-index,
+superseded versions' tokens accumulate until a rebuild — skewing bm25
+statistics and growing the index (`item_fts_data` ≈ 600 MB baseline at
+~266k items). Resolution: periodic `Soil.rebuild_item_fts()`, which
+re-indexes every row from scratch and resets dead-token mass to "every
+superseded row that exists today" (bounded, not zero). Scheduled **weekly**
+by the `memogarden-maintenance` user timer (`scripts/maintenance/` —
+Sunday 04:17, `Persistent=true` for the laptop; rebuild holds the FTS
+write lock for its duration, readers keep serving, writers queue behind
+it). Watch `item_fts_data` size via `dbstat`; if weekly feels frequent
+the cost is one ~minutes-long locked write per week. Do **not** add a
+"purge superseded" sweep instead — a per-row `'delete'` sweep can
+double-fire exactly like the AU did, unless it grows marker
+bookkeeping, which is not worth it at this scale.
 
 ### Query path
 

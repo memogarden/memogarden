@@ -1,0 +1,14 @@
+[Unit]
+Description=MemoGarden weekly maintenance timer (item_fts rebuild)
+
+[Timer]
+# Weekly beats monthly for maintenance cadence the operator actually
+# maintains. 04:17 Sunday dodges the hourly ingest heartbeat's typical
+# completion window; Persistent=true catches up missed runs at next boot
+# (laptop).
+OnCalendar=Sun *-*-* 04:17:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

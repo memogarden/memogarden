@@ -1,0 +1,9 @@
+[Unit]
+Description=MemoGarden weekly maintenance — item_fts dead-token rebuild
+
+[Service]
+Type=oneshot
+ExecStart=%h/memogarden/memogarden-api/.venv/bin/python %h/memogarden/scripts/maintenance/rebuild_item_fts.py
+# rebuild holds the FTS write lock for its duration; give WAL writers room
+# to finish their own transactions before we start
+SyslogIdentifier=memogarden-maintenance
