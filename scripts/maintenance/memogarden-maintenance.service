@@ -4,6 +4,9 @@ Description=MemoGarden weekly maintenance — item_fts dead-token rebuild
 [Service]
 Type=oneshot
 ExecStart=%h/memogarden/memogarden-api/.venv/bin/python %h/memogarden/scripts/maintenance/rebuild_item_fts.py
+# explicit per sysinfo PROTOCOLS.md (long oneshot); observed run 2026-11-24:
+# 217s at ~266k items — 30min is ~8x headroom for corpus growth
+TimeoutStartSec=30min
 # get_db_path falls through to ./soil.db without this — same pin as
 # memogarden.service (canonical resolver, memogarden-system#7)
 Environment=MEMOGARDEN_DATA_DIR=%h/.local/share/memogarden
