@@ -9,7 +9,9 @@ agreement tracker).
 
 | piece | role |
 |---|---|
-| `recommend.py` | sidecar generator (see Production below) |
+| `recommend.py` | sidecar generator (see Production below); writes `nn_dist` per entry (cosine distance to nearest decided anchor — the exploration signal, 2026-11-24) |
+| `extend_train_cache.py` | run between `build_dataset.py` and `recommend.py`: append new gold members' embeddings to the frozen train cache — skipped = new decisions silently never vote (round-4/5 lesson: the gap had grown to 1,578 members) |
+| `eval_round.py` | offline round eval BEFORE the next regen: scores the operator's decisions since `generated_at` against the frozen sidecar (same join as the tracker, full round) — regen resets the tracker window and the round goes strip-blind (round-4 lesson) |
 | `family_reset.py` | ONE-TIME (executed 2026-11-22): reset never-labeled parents of triage attachments into Triage via batch `/mg amend` |
 | `build_search_index.py` | embeds all live text facts → `cache/search_index.npz` + meta (incremental; ~90 min full, seconds after) |
 | `embed_daemon.py` | lazy search daemon: unix socket `~/.local/share/memogarden/triage-model/embed.sock`, spawned by the API on first semantic search, idle self-exit 10 min |
@@ -39,7 +41,8 @@ operator verdict; scope routing on escalated items = suggestion only) and
   unclassified — bulk-clearable) or `gate: escalate` (needs human; the
   pred/confidence on escalated items is a router SUGGESTION, not a
   recommendation). 4-scope routing is secondary, by operator or a more
-  capable agent. Live: **4,807 pass / 571 escalate** of 5,378.
+  capable agent. Live (2026-11-24 post-round-5 fold): **5,732 pass /
+  532 escalate** of 6,264.
 - No backfill (operator decision 2026-11-22): pass items keep the per-row
   flash UX (→ Public ring) until the operator confirms; the eval tracker
   gathers accuracy from those decisions. Events/Notes are
@@ -54,13 +57,20 @@ operator verdict; scope routing on escalated items = suggestion only) and
   caches in `cache/`).
 - **Sidecar**: `~/.local/share/memogarden/triage-model/recommendations.json`
   (atomic write; API picks it up by mtime; `MEMOGARDEN_TRIAGE_RECS` env
-  overrides). Live: 5,359 hard + 18 soft over the 5,377-item pool.
+  overrides). Live: 6,211 hard + 53 soft over the 6,264-item pool.
+  Entries carry `nn_dist` — the console's Explore sort
+  (`?sort=explore`, 2026-11-24) surfaces farthest-from-decided first.
 
-Regenerate after ingestion (seconds warm):
+Regenerate after a triage session (the full fold; seconds warm once caches
+exist — ⚠️ the eval window resets, run `eval_round.py` first if you want the
+round's numbers):
 
 ```bash
 cd ~/memogarden/triage-model
-HF_HOME=$PWD/hf-cache .venv/bin/python recommend.py bge-small --tau 0.5
+python3 -I eval_round.py                          # 1. record the round's numbers (pre-regen only!)
+python3 build_dataset.py                          # 2. absorb decisions into gold/pool
+HF_HOME=$PWD/hf-cache .venv/bin/python extend_train_cache.py bge-small   # 3. append new gold embeddings (NECESSARY)
+HF_HOME=$PWD/hf-cache .venv/bin/python recommend.py bge-small --tau 0.5 # 4. regenerate sidecar
 # --with-regex adds the rule layer (opt-in only, per 2026-11-22 verdict)
 # alternatives: regex (instant) | modernbert-base | d1-omni-600M (see results/)
 ```

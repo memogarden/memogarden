@@ -60,20 +60,33 @@ curl -H "Authorization: Bearer $JWT" \
 ### Decision-model recommendations + item URLs (2026-11-22)
 
 The triage queue attaches a per-fact `rec` object
-(`{pred, confidence, runner, gate, soft?}`) from the operator-owned
+(`{pred, confidence, runner, gate, soft?, nn_dist?}`) from the operator-owned
 sidecar `~/.local/share/memogarden/triage-model/recommendations.json`
 (path override: `MEMOGARDEN_TRIAGE_RECS`; mtime-cached; absence of an
 entry = escalate = no badge). `gate` is the binary classification:
 `pass` (confident unclassified) or `escalate`; scope routing on
 escalated items is a suggestion only. Response also carries
-`decision_model` metadata. The console renders badges + one-tap apply;
-`✨` marks AI recommendations.
+`decision_model` metadata and `sort` (the ordering actually applied).
+The console renders badges + one-tap apply; `✨` marks AI recommendations.
+
+`GET /api/v1/triage?sort=explore` orders facts farthest-first by
+`nn_dist` (cosine distance to the nearest operator-decided anchor,
+written by recommend.py on every entry) so each decision populates the
+least-covered region of the item space; rows without the signal (new
+mail, no sidecar) sort last, ties keep canonical-time order. Falls
+back to `recent` (canonical-time DESC, the default) when the sidecar
+predates the signal — check the response `sort` field to know which
+applied. Console toggle persists the preference (default `explore`).
 
 ```bash
 # Agreement eval: operator amend decisions vs stored recommendations
 # (first n=100 non-escalated; soft leans and cleared handling per spec)
 curl -H "Authorization: Bearer $JWT" "http://localhost:8600/api/v1/triage/eval?n=100"
 # → {"model", "generated_at", "target", "n", "correct", "agreement", "decisions": [...]}
+
+# Triage queue, exploration order (default recent)
+curl -H "Authorization: Bearer $JWT" \
+  "http://localhost:8600/api/v1/triage?limit=200&sort=explore"
 
 # Single-fact inspector (unique item URL /item/<uuid> — console shell):
 # any historical uuid resolves forward through supersedes; attachments
@@ -612,20 +625,33 @@ curl -H "Authorization: Bearer $JWT" \
 ### Decision-model recommendations + item URLs (2026-11-22)
 
 The triage queue attaches a per-fact `rec` object
-(`{pred, confidence, runner, gate, soft?}`) from the operator-owned
+(`{pred, confidence, runner, gate, soft?, nn_dist?}`) from the operator-owned
 sidecar `~/.local/share/memogarden/triage-model/recommendations.json`
 (path override: `MEMOGARDEN_TRIAGE_RECS`; mtime-cached; absence of an
 entry = escalate = no badge). `gate` is the binary classification:
 `pass` (confident unclassified) or `escalate`; scope routing on
 escalated items is a suggestion only. Response also carries
-`decision_model` metadata. The console renders badges + one-tap apply;
-`✨` marks AI recommendations.
+`decision_model` metadata and `sort` (the ordering actually applied).
+The console renders badges + one-tap apply; `✨` marks AI recommendations.
+
+`GET /api/v1/triage?sort=explore` orders facts farthest-first by
+`nn_dist` (cosine distance to the nearest operator-decided anchor,
+written by recommend.py on every entry) so each decision populates the
+least-covered region of the item space; rows without the signal (new
+mail, no sidecar) sort last, ties keep canonical-time order. Falls
+back to `recent` (canonical-time DESC, the default) when the sidecar
+predates the signal — check the response `sort` field to know which
+applied. Console toggle persists the preference (default `explore`).
 
 ```bash
 # Agreement eval: operator amend decisions vs stored recommendations
 # (first n=100 non-escalated; soft leans and cleared handling per spec)
 curl -H "Authorization: Bearer $JWT" "http://localhost:8600/api/v1/triage/eval?n=100"
 # → {"model", "generated_at", "target", "n", "correct", "agreement", "decisions": [...]}
+
+# Triage queue, exploration order (default recent)
+curl -H "Authorization: Bearer $JWT" \
+  "http://localhost:8600/api/v1/triage?limit=200&sort=explore"
 
 # Single-fact inspector (unique item URL /item/<uuid> — console shell):
 # any historical uuid resolves forward through supersedes; attachments
