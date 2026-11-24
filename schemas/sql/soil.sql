@@ -61,11 +61,26 @@ CREATE INDEX IF NOT EXISTS idx_item_fidelity ON item(fidelity);
 -- with BM25 ranking. CJK runs are NOT tokenized by unicode61, so CJK recall
 -- stays on the LIKE paths (parity with pre-FTS behavior).
 --
--- Maintenance is structural: items are append-only (no UPDATE ever touches
--- `data`; no DELETE FROM item exists), so a single AFTER INSERT trigger
--- keeps the index complete for everything inserted after it was created.
--- AU/AD triggers are deliberately absent — a supersede UPDATE never
--- changes `data`.
+-- Maintenance is trigger-maintained, never application-managed. `data`
+-- itself is append-only (verified 2026-11-25: the only UPDATE item paths
+-- touch lifecycle columns), so content never re-indexes in place. One
+-- genuine lifecycle hazard needs the AD trigger below: hard DELETEs
+-- happen (gcal occurrence churn inserted-then-deleted 811 items on
+-- 2026-11-24 alone), and a deleted rowid that SQLite later reuses makes
+-- ghost tokens resolve to a DIFFERENT item's content — real corruption,
+-- not just index bloat. item_fts_ad issues the FTS5 'delete' command
+-- with OLD.data (the exact indexed text — a mismatched 'delete' corrupts
+-- the index, so the command must fire exactly once per row: SAFE because
+-- every row in a triggered DB was necessarily insert-indexed by
+-- item_fts_ai or the boundary backfill, and 'delete' therefore always
+-- matches). Consequences, both deliberate:
+--   * a supersede flip does NOT remove tokens — an AU 'delete' would
+--     double-fire with the later row DELETE and corrupt; superseded
+--     versions' tokens stay until a rebuild (live_only keeps results
+--     correct), so rebuild_item_fts() remains the periodic de-bloat.
+--   * exactly-once matters: no second 'delete' path may exist for a
+--     rowid. Change_log's own item triggers coexist (they don't touch
+--     item_fts).
 --
 -- Legacy rows (inserted before this DDL first executed) are backfilled
 -- incrementally by Soil.backfill_item_fts(), keyed off the
@@ -102,6 +117,22 @@ CREATE VIRTUAL TABLE IF NOT EXISTS item_fts USING fts5(
 CREATE TRIGGER IF NOT EXISTS item_fts_ai AFTER INSERT ON item BEGIN
     INSERT INTO item_fts(rowid, data) VALUES (NEW.rowid, NEW.data);
 END;
+
+-- Lifecycle sync (2026-11-25): the 'delete' command needs the exact
+-- indexed text, hence OLD.data — and exactly-once semantics, which is
+-- why there is deliberately NO AU trigger pair (a supersede 'delete'
+-- followed by the row's eventual DELETE would double-fire and corrupt).
+CREATE TRIGGER IF NOT EXISTS item_fts_ad AFTER DELETE ON item BEGIN
+    INSERT INTO item_fts(item_fts, rowid, data)
+    VALUES ('delete', OLD.rowid, OLD.data);
+END;
+
+INSERT OR IGNORE INTO _schema_metadata VALUES
+    ('item_fts_lifecycle',
+     'DELETE sync via FTS5 delete command (2026-11-25): prevents '
+     || 'rowid-reuse ghost tokens; superseded versions stay until a '
+     || 'rebuild (live_only compensates)',
+     datetime('now'));
 
 -- Record the legacy/pre-trigger rowid boundary once (INSERT OR IGNORE keeps
 -- the original value on every subsequent server start).
