@@ -185,6 +185,30 @@ Implemented the `search` verb for semantic search and discovery across entities 
   Fusion (k=60) of lexical + semantic; the response `strategy` field
   echoes whichever plane actually ran (honest degradation).
 
+### `rerank` - Cross-Encoder Reordering (api#95 final slice)
+
+Opt-in boolean on `semantic`/`hybrid` (verb: request field `rerank`;
+console: `&rerank=1`), **default off**. When set, the api sends the top
+30 boundary-checked candidates to the embed daemon's `{"op":"rerank"}`
+scoring op — the daemon scores one (query, document passage) pair per
+candidate with an int8 bge-reranker-base (passage = title +
+style-stripped body prefix ~1700 chars, the cross-encoder's
+document-level view) and the final order/scores come from those logits.
+Silently skipped when the daemon can't score (response `reranked: false`
+/ console mode keeps its base name; console marks `hybrid+rerank` /
+`semantic+rerank` when it ran). Costs ~0.5–1s/query; with the reranker
+resident the daemon peaks ~2.3G RSS — bump the embed unit's
+`MemoryHigh` before enabling it regularly.
+
+**Default-off rationale (replay evidence, 2026-11-25):**
+`memogarden-search/tools/golden_replay.py` over an 8-query golden set
+curated from live prod data scored rerank-vs-cosine at 0 win / 7 par /
+1 loss (the loss itself was truth-incompleteness) — hybrid already
+covers the known failure modes, so the flip needs a disappointing query
+class first. The replay tooling + golden set are the standing harness:
+extend `golden_set.json` when a query class disappoints, re-run, and
+let the artifacts decide.
+
 ### `effort` - Search Thoroughness
 - `quick` - Cached results, shallow index (future)
 - `standard` - Full search (default, current)
