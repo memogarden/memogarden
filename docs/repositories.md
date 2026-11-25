@@ -172,6 +172,22 @@ memogarden-api/
 
 These are related to MemoGarden but not part of the core system.
 
+### `memogarden-search/`
+
+**Purpose:** The semantic search plane and the opt-in rerank plane (api#95) — the model-layer service behind the `search` verb's `semantic` / `hybrid` strategies and the console Items tab. Query-time inference never runs inside the API process: the API talks to this layer over a unix socket (`api/search_daemon.py`).
+
+**Status:** Live — socket-activated (`memogarden-embed.socket` / `memogarden-embed.service` in `deploy/`), idle self-exit after 600s; woken by searches and by the embed-on-ingest ping after each provider run
+**Contains:**
+- `embed_daemon.py` - lazy search daemon: loads bge-small + the chunked vector index once, answers `search` / `rerank` / `ping` ops, and runs a change_log-driven catch-up on every wake
+- `build_search_index.py` - index builder (chunking, CLS pooling, hash-keyed chunk cache so rebuilds embed only new/changed text)
+- `index_store.py` - index format (mmap-able `search_index.npy` + ids/meta JSON + watermark) and the catch-up planner
+- `reranker.py` - cross-encoder rerank plane (int8, lazy-loaded; opt-in)
+- `tools/` - `golden_replay.py` + `golden_set.json` (golden-set replay), `smoke_compare.py`
+- `deploy/` - the systemd user units
+- `tests/` - no-torch tests (`.venv/bin/python -m pytest tests/`)
+
+**Dependencies:** consumes the trigger-maintained `change_log` feed from memogarden-system; called by memogarden-api
+
 ### `memogarden-readly/`
 
 **Purpose:** readly — RSS reader PWA on MemoGarden (the first MemoGarden app)

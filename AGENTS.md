@@ -30,6 +30,7 @@ This document provides context and guidelines for AI assistants (Claude, GPT, et
 8. **CD** (`memogarden-devcd/`) - Webhook-based deployment automation
 9. **Readly** (`memogarden-readly/`) - RSS reader PWA, the first MemoGarden app (React 19 + Vite + node:http serve on 127.0.0.1:7428; deployed at readly.ngjunsiang.me via the tada Cloudflare tunnel + Access; read state app-local pending future URL-visit facts)
 10. `memogarden.github.io/` - Documentation site
+11. **Search** (`memogarden-search/`) - Model-layer search service: the semantic plane + opt-in cross-encoder rerank behind the `search` verb's `semantic`/`hybrid` strategies and the console Items tab (embed daemon over a unix socket, socket-activated `memogarden-embed.{socket,service}`, index builder, change_log-driven catch-up); query-time inference never runs inside the API process
 
 ### Submodules (pinned in root repo as gitlinks)
 
@@ -67,7 +68,7 @@ This document provides context and guidelines for AI assistants (Claude, GPT, et
    - Commits here affect: system/, tests/
    - **Separate from root repository!**
 
-The same applies to `memogarden-client/`, `memogarden-utils/`, `mg-project-studio/`, `mush/`, `memogarden-devcd/`, `memogarden-readly/`, and `memogarden.github.io/`. Run `git status` inside whichever directory you changed.
+The same applies to `memogarden-client/`, `memogarden-utils/`, `memogarden-search/`, `mg-project-studio/`, `mush/`, `memogarden-devcd/`, `memogarden-readly/`, and `memogarden.github.io/`. Run `git status` inside whichever directory you changed.
 
 ### ⚠️ Before Committing: Always Verify
 
@@ -304,6 +305,6 @@ If stuck or unsure:
 
 ---
 
-**Last Updated**: 2026-11-21
+**Last Updated**: 2026-11-26
 **For**: AI agents working on MemoGarden
 **Maintained by**: Project contributors
