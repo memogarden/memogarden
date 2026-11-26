@@ -133,9 +133,12 @@ Implemented the `search` verb for semantic search and discovery across entities 
     "query": "search terms",
     "target_type": "entity",
     "coverage": "content",
-    "strategy": "auto",
+    "strategy": "hybrid",
     "effort": "standard",
     "count": 42,
+    "reranked": false,
+    "index_lag": 0,
+    "continuation_token": null,
     "results": [
       {
         "kind": "entity",  // or "fact"
@@ -147,6 +150,19 @@ Implemented the `search` verb for semantic search and discovery across entities 
   }
 }
 ```
+
+`index_lag` appears only when a semantic plane shaped the answer
+(`strategy` is `semantic` or `hybrid`): how many indexed-type items
+(Email, Attachment, Note, Entry, Event) changed after the watermark the
+semantic index reflects. The index only catches up when the embed daemon
+wakes, so `0` means current and a non-zero figure means recently created
+or superseding items may be missing from the ranking. Relabels and
+supersessions of items that *are* ranked cost nothing: hits are always
+re-checked against live rows before they are returned. The figure is
+trustworthy only while the catch-up applies what it advances past
+(memogarden-search `plan_from_change_log`, fixed 2026-11-26). The operator
+console's `/api/v1/items/search` reports the same field next to its mode
+badge (api#91).
 
 ## Search Parameters
 
@@ -177,13 +193,11 @@ Implemented the `search` verb for semantic search and discovery across entities 
   (bm25; more negative = better). Superseded rows match, same as `fuzzy`.
   CJK runs are not tokenized (unicode61) — CJK/substring recall remains
   on the LIKE path (console: `keyword_fallback` mode).
-- **Future:** `semantic` - Embedding-based vector search (shipped for the
-  console via the lazy embed daemon; not yet a verb strategy)
-- **Staged (api#95 phase 2a, branch `feat/search-verb-semantic-hybrid`,
-  pending merge):** `semantic` — daemon cosine re-checked at the API
-  boundary under current-time visibility; `hybrid` — Reciprocal Rank
-  Fusion (k=60) of lexical + semantic; the response `strategy` field
-  echoes whichever plane actually ran (honest degradation).
+- **Shipped (api#95 phase 2):** `semantic` — daemon cosine, re-checked at
+  the API boundary under current-time visibility; `hybrid` — Reciprocal
+  Rank Fusion (k=60) of lexical + semantic; the response `strategy` field
+  echoes whichever plane actually ran (honest degradation). `rerank`
+  reorders the candidate head (api#95 final).
 
 ### `rerank` - Cross-Encoder Reordering (api#95 final slice)
 
@@ -216,7 +230,12 @@ let the artifacts decide.
 
 ### `limit` - Result Pagination
 - Maximum results to return (default: 100)
-- **Future:** Continuation tokens for deep pagination
+- A response is a single page. The lexical and fuzzy strategies return at
+  most `limit` rows; the semantic and hybrid strategies rank a candidate
+  list of `min(max(2 × limit, 50), 200)` and return its top `limit`.
+- **Future:** Continuation tokens for deep pagination — still a
+  documented TODO (tracked on api#91); `continuation_token` is always
+  `null` today.
 
 ## Implementation
 
@@ -299,10 +318,9 @@ def search_items(self, query: str, coverage: str = "content", limit: int = 100) 
 
 ### ⏳ Deferred (Documented TODOs)
 - **Continuation tokens** - Base64-encoded offset/limit/timestamp for deep pagination
-- **Semantic strategy** - Embedding-based vector search as a verb strategy (console semantic mode ships today via the lazy embed daemon; see `api/v1/operator.py`)
 - **Quick effort mode** - Cached results for frequent queries
 - **Deep effort mode** - Exhaustive search with higher limits
-- **Threshold filtering** - Similarity score filtering (requires the semantic strategy)
+- **Threshold filtering** - Similarity score filtering (the semantic strategy now exists; the `threshold` request field is still ignored)
 
 ## Performance Characteristics
 
@@ -311,7 +329,7 @@ def search_items(self, query: str, coverage: str = "content", limit: int = 100) 
 - **Precision:** Medium (text matching only)
 - **Recall:** High (finds all partial matches)
 
-### Future (Semantic)
+### Semantic and Hybrid
 - **Speed:** Medium (embedding computation + vector search)
 - **Precision:** High (semantic similarity)
 - **Recall:** Medium-High (depends on embedding quality)

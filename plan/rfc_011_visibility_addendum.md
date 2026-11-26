@@ -3,7 +3,7 @@
 **Version:** 1.0
 **Status:** Decisions ratified 2026-11-19. Read-path predicate, schema
 attribute, and console UI shipped 2026-11-19 with RFC-011 item 5;
-remaining open: §6 items 1–2.
+remaining open: §6 item 1 (item 2 settled 2026-11-26).
 **Amends:** RFC-011 v1.3 (Scopes, Grants, and Attention-Gated Access)
 **Related:** `rfc_011_implementation.md` (progress tracker), RFC-010 v1.2 (Agent Identity), RFC-001 v5 §4.4 (multi-operator, orthogonal)
 
@@ -14,7 +14,8 @@ addendum ratifies the design for that axis. Written as a decision record;
 the read-path predicate (public short-circuit), the `scope.schema.json`
 attribute, builtin-seed stamping, and the console badge + flip control
 shipped 2026-11-19 alongside RFC-011 item 5 (dated status lives in the
-`rfc_011_implementation.md` tracker). §6 items 1–2 remain open.
+`rfc_011_implementation.md` tracker). §6 item 1 remains open (item 2 was
+settled 2026-11-26).
 
 What this is: **a `visibility` attribute on Scope entities** — existing and
 new scopes alike. There is **no "Public scope"**; any scope can carry
@@ -120,11 +121,32 @@ alias maps break clean (no legacy `private` alias). See
 1. **Superseded-original visibility** — relabel = supersede; the old
    version persists with its old labels. A public→private relabel leaves the
    public-labeled original queryable (content leak past containerization).
-   Verify whether superseded rows are queryable by default; decide: inherit
-   successor's visibility, or suppress superseded rows for non-sovereign
-   readers.
+   **Measured 2026-11-26 (read-only, production):**
+   - `query` excludes superseded rows. `get` serves them, gated on the
+     *predecessor's own* labels.
+   - The search verb's `fuzzy` and `lexical` strategies still match them:
+     `search_items_fts(live_only=…)` defaults to `False` and the verb does
+     not pass it.
+   - **4,368 unlabelled predecessors of privately-labelled live items**
+     (Email 1,411 · Attachment 2,951 · a handful of Notes/Events/Tasks) are
+     readable by every key today, and would stay readable after the
+     enforcement flag flips. (No public→private transition exists yet; these
+     are unscoped→triage/Private/NS.)
+   - So "enforcement hides what has been filed into a private scope" does
+     not hold for those rows. **STILL OPEN — decide before the flip:**
+     (a) a superseded row inherits its live successor's labels for read
+     gating, or (b) superseded rows are suppressed for non-sovereign
+     readers (`live_only` on by default in the verb, 404/403 on `get`).
+     (b) is the smaller change and the stricter one.
 2. **SSE transition events** — relabel events must be checked against both
    old and new labels at emit (extends RFC-011 implementation item 7).
+   **SETTLED 2026-11-26** with item 7: no event ever carries an item's
+   old reference or old labels. A Soil relabel is an `amend`, which
+   publishes nothing; entity `edit` publishes only for Scope entities.
+   Publishers hand the manager the labels as they stand *after* the write,
+   which closes the public→private case (the narrowing direction). In the
+   widening direction the event reaches principals who can now read the
+   item — correct by §2's most-permissive rule.
 3. **Soft grant expiry** — grants are checked at `enter` time; expiry
    mid-frame does not eject. Known behavior; record only.
 4. **Bulk visibility flips** — flipping a scope `public↔private` re-labels
@@ -141,8 +163,8 @@ alias maps break clean (no legacy `private` alias). See
 ---
 
 **Status:** decisions ratified; predicate + schema + UI shipped
-2026-11-19 with RFC-011 item 5. §6 items 1–2 (superseded-original
-visibility, SSE transition events) remain open. Rename companion shipped
-2026-11-19.
+2026-11-19 with RFC-011 item 5. §6 item 2 settled 2026-11-26; §6 item 1
+(superseded-original visibility) remains open, measured — decide before
+the enforcement flip. Rename companion shipped 2026-11-19.
 
 **END OF ADDENDUM**

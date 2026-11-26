@@ -96,17 +96,23 @@ curl -H "Authorization: Bearer $JWT" "http://localhost:8600/api/v1/items/soil_�
 # → {"item": {uuid, type, canonical_at, data, metadata}, "chain": [...],
 #     "attachments": [...], "parents": [{uuid, kind, type, title, scopes}]}
 
-# Item browse/search: scope/type filters; recent browse without q;
-# q= runs ✨ semantic via the model layer's lazy embed daemon
-# (triage-model/embed_daemon.py — spawned on first use, idle self-exit,
-# index from triage-model/build_search_index.py); when the daemon is
-# unavailable it probes the lexical plane — FTS5 BM25 over item data
-# (api#95 phase 1) — and keeps the narrow keyword LIKE fallback only for
-# CJK/substring queries the tokenizer can't see. mode reports which ran.
+# Item browse/search: scope/type filters; recent browse without q. A
+# query runs hybrid — lexical (FTS5 BM25) fused with ✨ semantic (the
+# model layer's embed daemon, memogarden-search) — when both planes
+# answer; with only one plane up it runs that plane alone (semantic-only
+# included); with neither it falls back to narrow keyword LIKE (CJK and
+# substrings the tokenizer can't see). Every mode pages with limit/offset;
+# a semantic-shaped page walks a candidate list capped at 50 per plane, so
+# those modes end there. Daemon hits are re-checked against live rows for
+# scope AND type before they are returned (api#91). mode names the plane
+# that ran, with "+rerank" appended when the rerank ran on that page;
+# index_lag rides along whenever a semantic plane shaped the page.
 curl -H "Authorization: Bearer $JWT" \
   "http://localhost:8600/api/v1/items/search?q=lazada%20invoice&scope=Household&type=Email&limit=50"
-# → {"mode": "semantic|lexical|keyword_fallback|recent", "results":
-#     [{uuid, type, title, canonical_at, scopes, score?}], "offset", "limit"}
+# → {"mode": "hybrid|semantic|lexical|keyword_fallback|recent"
+#     [+ "+rerank"], "results":
+#     [{uuid, type, title, canonical_at, scopes, score?}],
+#     "offset", "limit", "next_offset", "has_more", "index_lag"?}
 ```
 
 Console pages: `/console/items` (browse/search) and `/item/<uuid>`
@@ -559,11 +565,24 @@ Revocation is immediate for future operations (grants are re-read per
 request); an in-flight session is not retroactively ejected — revoke the
 *key* itself for that.
 
-**Labeling:** items created via `add` are auto-labeled with the creator's
-active scope when enforcement is on; explicitly supplied
-`metadata.scopes` require grants for those scopes. Derived facts inherit
-their source's labels (amend merges metadata, so the superseding fact
-carries the original's labels).
+**Labeling:** items created via `add` are labeled with the creator's
+active scope — in advisory mode too, so labels are right before
+enforcement turns on; explicitly supplied `metadata.scopes` require
+grants for those scopes (checked under enforcement). A derived fact
+inherits its source's labels two ways: amend merges metadata, so the
+superseding fact carries the original's labels; and an UNLABELED fact
+that declares `metadata.derived_from` (a source **Soil fact's** uuid)
+copies that source's *current* labels at creation (RFC-011 §4.6, SG-9 —
+the anti-side-channel default for extraction). The second rule is
+default-on and applies in both fact-creation lanes: providers copy the
+source's labels verbatim — the triage scope included, so text extracted
+from a document still waiting in triage stays in triage — while an API
+requester keeps only the labels it holds a live grant for under
+enforcement, so inheritance can never file a fact into a scope the
+requester cannot enter. When no label survives, the fact takes the
+ordinary creation default. Nothing emits the marker yet (the statement
+pipeline will be the first); Core entities are not covered as sources.
+`MEMOGARDEN_DERIVE_INHERIT_SCOPE=off` is the operator's escape hatch.
 
 **Enforcement flag:** `MEMOGARDEN_SCOPE_ENFORCEMENT` (default **off**).
 While off, reads are unfiltered and the rollout is provisioning-only.
@@ -576,15 +595,31 @@ pre-match at the SQL level: scoped items outside the allowed set never
 become matches, so scoped hits cannot displace real ones. `explore`
 gates its anchor like a read and presents inaccessible nodes as
 unresolved references (truthful count, edges unlisted never). Entity
-edit/forget are write-gated and D2 label-grant-checked like amend.
+edit/forget are write-gated and D2 label-grant-checked like amend. On
+the event stream (`/mg/events`) this is **suppress** (§4.9(5)): an
+API-key subscriber receives nothing — not even the reference — for an
+event about an item it cannot read right now. Relation events are judged
+on both endpoints, and one unreadable item suppresses the whole event.
+Events about unlabeled items flow as before, and JWT sessions are never
+suppressed.
 
 **Current limitations (v1, tracked in
-[RFC-011 implementation progress](../plan/rfc_011_implementation.md)):**
-query filtering happens after pagination (`total` reflects the fetched
-set, pages can be short — cardinality leak is ratified); SSE payload
-routing by label remains open (item 7); SG-9 `derive_inherit_scope`
-config not built. Providers are never scope-gated — they label at
-creation per operator policy (`unscoped | triage | rules`).
+[RFC-011 implementation progress](../plan/rfc_011_implementation.md)
+and the [visibility addendum](../plan/rfc_011_visibility_addendum.md)):**
+- Superseded originals keep their old labels (addendum §6 item 1): `get`
+  serves an unlabelled predecessor of a privately-labeled item, and the
+  search verb's `fuzzy`/`lexical` strategies still match it. ~4.4k such
+  rows exist today. Undecided.
+- SG-9 covers facts only — entity creation lanes and Core-entity sources
+  are not covered.
+- `commit_artifact`, `link`, `unlink` and `edit_relation` have no write
+  gate; `handle_track` is ungated.
+- Query filtering happens after pagination (`total` reflects the fetched
+  set, pages can be short — cardinality leak is ratified).
+- `POST /grants` with `expires_at` fails with a 500.
+
+Providers are never scope-gated — they label at creation per operator
+policy (`unscoped | triage | rules`).
 
 ---
 
@@ -661,17 +696,23 @@ curl -H "Authorization: Bearer $JWT" "http://localhost:8600/api/v1/items/soil_�
 # → {"item": {uuid, type, canonical_at, data, metadata}, "chain": [...],
 #     "attachments": [...], "parents": [{uuid, kind, type, title, scopes}]}
 
-# Item browse/search: scope/type filters; recent browse without q;
-# q= runs ✨ semantic via the model layer's lazy embed daemon
-# (triage-model/embed_daemon.py — spawned on first use, idle self-exit,
-# index from triage-model/build_search_index.py); when the daemon is
-# unavailable it probes the lexical plane — FTS5 BM25 over item data
-# (api#95 phase 1) — and keeps the narrow keyword LIKE fallback only for
-# CJK/substring queries the tokenizer can't see. mode reports which ran.
+# Item browse/search: scope/type filters; recent browse without q. A
+# query runs hybrid — lexical (FTS5 BM25) fused with ✨ semantic (the
+# model layer's embed daemon, memogarden-search) — when both planes
+# answer; with only one plane up it runs that plane alone (semantic-only
+# included); with neither it falls back to narrow keyword LIKE (CJK and
+# substrings the tokenizer can't see). Every mode pages with limit/offset;
+# a semantic-shaped page walks a candidate list capped at 50 per plane, so
+# those modes end there. Daemon hits are re-checked against live rows for
+# scope AND type before they are returned (api#91). mode names the plane
+# that ran, with "+rerank" appended when the rerank ran on that page;
+# index_lag rides along whenever a semantic plane shaped the page.
 curl -H "Authorization: Bearer $JWT" \
   "http://localhost:8600/api/v1/items/search?q=lazada%20invoice&scope=Household&type=Email&limit=50"
-# → {"mode": "semantic|lexical|keyword_fallback|recent", "results":
-#     [{uuid, type, title, canonical_at, scopes, score?}], "offset", "limit"}
+# → {"mode": "hybrid|semantic|lexical|keyword_fallback|recent"
+#     [+ "+rerank"], "results":
+#     [{uuid, type, title, canonical_at, scopes, score?}],
+#     "offset", "limit", "next_offset", "has_more", "index_lag"?}
 ```
 
 Console pages: `/console/items` (browse/search) and `/item/<uuid>`

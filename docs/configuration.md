@@ -34,6 +34,21 @@ Complete reference for MemoGarden environment variables and configuration.
 | `MEMOGARDEN_RESOURCE_PROFILE` | String | `standard` | Resource profile: `embedded` or `standard` |
 | `MEMOGARDEN_LOG_LEVEL` | String | (profile) | Logging level: `debug`, `info`, `warning`, `error` |
 
+### Scope Variables (RFC-011)
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `MEMOGARDEN_SCOPE_ENFORCEMENT` | Flag | `off` | Scope enforcement switch (RFC-011 §8); truthy: `1` / `true` / `yes` / `on`. Off = advisory: reads are unfiltered while labels and grants are put in place. On = the §4.9 enforcement points gate API-key requests by the key's active scope: fact get/query, entity get/query, search (pre-match), explore, the event stream (suppress), and the write gates on amend / relabel / edit / forget. JWT operator sessions are never filtered; providers are never gated (they label at creation per operator policy). Scope minting and scope-policy edits are operator-gated regardless of the switch. Known ungated writes: `commit_artifact` and the relation verbs |
+| `MEMOGARDEN_DERIVE_INHERIT_SCOPE` | Flag | `on` | SG-9: an unlabeled fact declaring `metadata.derived_from` (a source fact's uuid) inherits that source's current scope labels at creation. Anything but `0` / `false` / `no` / `off` means on. Runs with the enforcement switch off too; under enforcement, a fact added through the API keeps only the inherited labels its requester holds a live grant for |
+
+### Search Variables (api#95)
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `MEMOGARDEN_SEARCH_MODEL_DIR` | Path | `~/memogarden/memogarden-search` | memogarden-search checkout (daemon + index builder); `MEMOGARDEN_TRIAGE_MODEL_DIR` is a legacy alias. Set it for the API and the daemon alike, or their index paths diverge |
+| `MEMOGARDEN_EMBED_SOCK` | Path | `~/.local/share/memogarden/triage-model/embed.sock` | Unix socket of the semantic embed daemon (memogarden-search) |
+| `MEMOGARDEN_SEARCH_CACHE` | Path | `<MEMOGARDEN_SEARCH_MODEL_DIR>/cache` | Where the semantic index artifacts live; shared with the daemon and the index builder. The API reads only the watermark in `index_state.json` there, to report how far the index is behind |
+
 ### Network Variables (RFC-004 Section 5.3)
 
 | Variable | Type | Default | Description |

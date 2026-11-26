@@ -517,7 +517,9 @@ Traces causal chain from entity back to originating facts.
 
 #### search
 
-Performs fuzzy text search.
+Searches entities and facts. `strategy` echoes the plane that actually ran
+(`fuzzy`, `lexical`, `semantic` or `hybrid`); see
+[search-verb.md](search-verb.md) for the strategies.
 
 ```json
 {
@@ -525,20 +527,31 @@ Performs fuzzy text search.
   "actor": "usr_xxx",
   "timestamp": "2026-02-12T10:30:00Z",
   "result": {
+    "query": "search terms",
     "results": [
       {
-        "uuid": "core_xxx",
-        "_type": "Transaction",
-        "score": 0.95,
-        "match_type": "content",
-        "data": { ... }
+        "kind": "fact",
+        "uuid": "soil_xxx",
+        "type": "Note",
+        "data": { ... },
+        "score": 0.81
       }
     ],
-    "total": 10,
-    "continuation_token": "abc123..."
+    "count": 1,
+    "continuation_token": null,
+    "strategy": "hybrid",
+    "coverage": "content",
+    "effort": "standard",
+    "reranked": false,
+    "index_lag": 0
   }
 }
 ```
+
+`index_lag` — indexed-type items changed since the semantic index's last
+catch-up — appears only when a semantic plane shaped the answer (api#91).
+`continuation_token` is always `null`: deep pagination is a documented
+TODO.
 
 ---
 
