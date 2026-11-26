@@ -21,7 +21,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
-from gmail_importer.gmail_api import GmailApiClient, GmailApiError
+from gmail_importer.gmail_api import (
+    HISTORY_PAGES,
+    GmailApiClient,
+    GmailApiError,
+    walk_history,
+)
 from gmail_importer.importer import GmailImporter
 
 logger = logging.getLogger(__name__)
@@ -233,24 +238,20 @@ class GmailProvider:
 
         candidates: list[str] = []
         remaining: list[str] = []
+        history_complete = True
+        history_resume: Optional[str] = None  # cursor when the budget ran out
         if not stored:
             self._log(f"seeding history sync at {current} — new mail flows from the next sync")
         else:
-            token: Optional[str] = None
-            resp: Optional[dict] = None
+            # A mailbox can change more between two runs than one run's page
+            # budget covers — a bulk archive or delete is thousands of
+            # records. The walk then reads its budget's worth, delivers it,
+            # and leaves the cursor at the last record read, so the backlog
+            # drains across runs. This used to raise on an exhausted budget
+            # and leave the cursor alone, which made every later run start
+            # from the same place and fail identically, forever.
             try:
-                for _ in range(20):
-                    resp = api.history_list(stored, token)
-                    for record in resp.get("history") or []:
-                        for entry in record.get("messagesAdded") or []:
-                            candidates.append(entry["message"]["id"])
-                        for entry in record.get("labelsRemoved") or []:
-                            candidates.append(entry["message"]["id"])
-                    token = resp.get("nextPageToken")
-                    if not token:
-                        break
-                else:
-                    raise GmailApiError("history page budget exceeded (>20 pages)")
+                records, history_complete, history_resume = walk_history(api, stored)
             except GmailApiError as e:
                 if e.status_code == 404:
                     self._log(
@@ -260,6 +261,23 @@ class GmailProvider:
                     self.importer._store_sync_state(current)
                     return
                 raise
+            for record in records:
+                for entry in record.get("messagesAdded") or []:
+                    candidates.append(entry["message"]["id"])
+                for entry in record.get("labelsRemoved") or []:
+                    candidates.append(entry["message"]["id"])
+            if not history_complete and history_resume is None:
+                # Pages remained but none carried a record id: nothing to
+                # resume from. Fail loudly rather than skip unread history.
+                raise GmailApiError(
+                    f"history page budget exceeded (>{HISTORY_PAGES} pages) "
+                    "with no record id to resume from"
+                )
+            if not history_complete:
+                self._log(
+                    f"history backlog exceeds {HISTORY_PAGES} pages — draining "
+                    f"across runs; the cursor resumes after {history_resume}"
+                )
 
             remaining = [i for i in candidates if i not in skip]
 
@@ -281,8 +299,9 @@ class GmailProvider:
             # when incremental mail truncated the batch (new mail first),
             # and skipped once the walk has completed. For mailboxes deeper
             # than one run's page budget, the walk continues via a tightening
-            # `before:` date cursor (horizon walk, RFC-012 §4.10).
-            if not backfill_done and not incremental_truncated:
+            # `before:` date cursor (horizon walk, RFC-012 §4.10). Also
+            # deferred while a history backlog is still draining.
+            if not backfill_done and not incremental_truncated and history_complete:
                 walker_skip = skip | yielded_ids
                 walker_before = state.get("backfill_before") or None
                 walker_batch, backfill_exhausted, walker_boundary = (
@@ -350,8 +369,11 @@ class GmailProvider:
             # the runtime asks for the item past the end, everything yielded
             # is already committed in Soil by the runtime itself.
             if completed and len(remaining) <= len(batch):
+                # A complete walk jumps to the mailbox's current id; one
+                # that hit its page budget resumes at the last record read,
+                # so the unread pages are picked up next run.
                 self.importer._store_sync_state(
-                    current,
+                    current if history_complete else history_resume,
                     backfill=(
                         "complete" if backfill_exhausted
                         else state.get("backfill", "running")

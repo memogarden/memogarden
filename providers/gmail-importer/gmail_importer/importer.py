@@ -33,10 +33,12 @@ from mbox_importer.email_parser import (
 )
 
 from gmail_importer.gmail_api import (
+    HISTORY_PAGES,
     GmailApiClient,
     GmailApiError,
     find_oldest_message_ids,
     page_budget_for,
+    walk_history,
 )
 from gmail_importer.search_cache import SearchCache
 
@@ -494,7 +496,9 @@ class GmailImporter(EmailImporter):
         Returns ids oldest-change-first, filtered through the done set and
         capped at `limit`; when the cap truncates candidates, the returned
         history id is None so the sync state is NOT advanced (the remainder
-        is re-delivered next run and absorbed by dedup).
+        is re-delivered next run and absorbed by dedup). A backlog larger
+        than one run's page budget is not an error: the id resumes at the
+        last record read, so the backlog drains across runs.
         """
         state = self._load_sync_state()
         profile = api.get_profile()
@@ -509,25 +513,8 @@ class GmailImporter(EmailImporter):
             return []
 
         candidates: list[str] = []
-        token: Optional[str] = None
-        resp: Optional[dict] = None
         try:
-            for _ in range(20):  # 20 pages = very generous burst budget
-                resp = api.history_list(stored, token)
-                for record in resp.get("history") or []:
-                    for entry in record.get("messagesAdded") or []:
-                        candidates.append(entry["message"]["id"])
-                    for entry in record.get("labelsRemoved") or []:
-                        candidates.append(entry["message"]["id"])
-                    for entry in record.get("messagesDeleted") or []:
-                        # Gmail-native deletion signal: exclude before fetch
-                        self._exclude_ids([entry["message"]["id"]], "messagesDeleted")
-                        done.add(entry["message"]["id"])
-                token = resp.get("nextPageToken")
-                if not token:
-                    break
-            else:
-                raise GmailApiError("history page budget exceeded (>20 pages)")
+            records, history_complete, history_resume = walk_history(api, stored)
         except GmailApiError as e:
             if e.status_code == 404:
                 # History expired: reseed at the current id. The gap mail is
@@ -539,11 +526,29 @@ class GmailImporter(EmailImporter):
                 self._pending_history_id = current
                 return []
             raise
+        for record in records:
+            for entry in record.get("messagesAdded") or []:
+                candidates.append(entry["message"]["id"])
+            for entry in record.get("labelsRemoved") or []:
+                candidates.append(entry["message"]["id"])
+            for entry in record.get("messagesDeleted") or []:
+                # Gmail-native deletion signal: exclude before fetch
+                self._exclude_ids([entry["message"]["id"]], "messagesDeleted")
+                done.add(entry["message"]["id"])
+        if not history_complete and history_resume is None:
+            # Pages remained but none carried a record id: nothing to resume
+            # from. Fail loudly rather than skip unread history.
+            raise GmailApiError(
+                f"history page budget exceeded (>{HISTORY_PAGES} pages) "
+                "with no record id to resume from"
+            )
 
         fully_processed = len(candidates) <= limit
         remaining = [i for i in candidates if i not in done]
         if fully_processed:
-            self._pending_history_id = str(resp.get("historyId") or current)
+            # A complete walk jumps to the mailbox's current id; one that hit
+            # its page budget resumes at the last record read.
+            self._pending_history_id = current if history_complete else history_resume
         else:
             self._pending_history_id = None  # partial: re-diff next run
         self._log_verbose_log(
