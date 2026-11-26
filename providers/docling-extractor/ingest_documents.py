@@ -4,27 +4,41 @@ The MemoGarden-aware half of the docling pipeline (the worker daemon in
 memogarden-docling/ is content-agnostic). Idempotent by sha256; designed
 to run every minute under a systemd timer and to catch up after downtime.
 
-Per new PDF (relative to the watch root, `ingested/` subtree skipped):
-  1. sha256; content-addressed copy into the AttachmentStore (same layout
-     as gmail attachments: <store>/<h2>/<h4>/<sha256>.pdf)
-  2. `Attachment` fact in Soil — gmail fact shape (filename, mime_type,
-     size, sha256, title, content_path) with metadata.provider="docling",
-     metadata.source="documents_watch"; scope: Triage (trial phase —
-     unclassified content, operator decision 2026-11-26)
-  3. file moved to the `ingested/` mirror (relative path preserved)
-  4. Docling worker (unix socket) converts the STORE copy
-  5. `Artifact` entity in Core — label/content/content_type per schema,
-     data.scopes=[Triage], data.source={attachment_uuid, sha256,
-     origin_path} (the memogarden linkage: artifact -> fact; reverse
-     lookups query json_extract(data,'$.source.attachment_uuid')),
-     data.category="unknown" (categorisation is a later slice),
-     data.extraction={engine, version, seconds, pages}
+Two-phase scheduler (operator directive 2026-11-26: large documents are
+deferred so they cannot clog the pipeline, and ingested during idle
+periods; new documents always go first):
 
-Canonical time = the source file's mtime (documents have a real user
-time); realized_at = now. A file that fails conversion keeps its fact and
-its place in the mirror, and the failure is logged — retryable by hand;
-nothing is silently lost. Duplicate content (a file whose sha256 was
-already ingested from Documents) is moved to the mirror and skipped.
+  Phase 1 (fresh)   — new PDFs in the watch root: sha256 → AttachmentStore
+                      copy → `Attachment` fact (Triage, trial phase) → move
+                      to the `ingested/` mirror → convert if small. Large
+                      files (> DOCLING_MAX_PAGES) get their fact + mirror
+                      slot and are DEFERRED.
+  Phase 2 (heal)    — small facts whose Artifact is missing (crash/
+                      worker-outage recovery): the STORE copy is what
+                      converts, so the original file's position is
+                      irrelevant.
+  Phase 3 (idle)    — LARGE facts, converted back-to-back, but between any
+                      two conversions the watch root is re-checked; if new
+                      documents arrived, large-doc work PAUSES (deferred to
+                      the next tick) so new documents never queue behind a
+                      monster. The client timeout for a large conversion
+                      scales with its page count so it can complete.
+
+`Attachment` fact shape mirrors the gmail facts (filename, mime_type,
+size, sha256, title, content_path) with metadata.provider="docling",
+metadata.source="documents_watch", metadata.scopes=[Triage] (trial phase —
+unclassified content, operator decision 2026-11-26).
+
+`Artifact` entity: label/content/content_type per schema, data.scopes=
+[Triage], data.source={attachment_uuid, sha256, origin_path} (the linkage:
+artifact -> fact; reverse lookups query
+json_extract(data,'$.source.attachment_uuid')), data.category="unknown"
+(categorisation is a later slice), data.extraction={engine, version,
+seconds, pages, truncated}.
+
+canonical_at = the source file's mtime (documents have a real user time);
+realized_at = now. Failures keep their fact and mirror slot and are
+logged — retryable by hand; nothing is silently lost.
 """
 
 from __future__ import annotations
@@ -63,8 +77,10 @@ LOCK_FILE = HOME / ".local/share/memogarden/docling/ingest.lock"
 MAX_CONTENT_CHARS = int(os.environ.get("DOCLING_MAX_CONTENT_CHARS", "400000"))
 MAX_SINGLE_FILE_BYTES = 100 * 1024 * 1024
 MAX_PAGES = int(os.environ.get("DOCLING_MAX_PAGES", "150"))
+SMALL_TIMEOUT_S = int(os.environ.get("DOCLING_SOCK_TIMEOUT_S", "1800"))
+LARGE_S_PER_PAGE = int(os.environ.get("DOCLING_LARGE_S_PER_PAGE", "90"))
 
-DOCLING_SOCK_TIMEOUT_S = 1800
+OK, FAILED, DEFERRED, DUP = "ok", "failed", "deferred", "dup"
 
 
 def log(msg: str) -> None:
@@ -78,6 +94,26 @@ def sha256_of(path: Path) -> str:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def page_count(pdf_path: Path) -> int | None:
+    try:
+        out = subprocess.run(
+            ["pdfinfo", str(pdf_path)], capture_output=True, text=True, timeout=30
+        ).stdout
+        for line in out.splitlines():
+            if line.startswith("Pages:"):
+                return int(line.split()[-1])
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    return None
+
+
+def pending_new_pdfs() -> list[Path]:
+    return sorted(
+        p for p in WATCH_DIR.rglob("*.pdf")
+        if p.is_file() and DONE_DIR not in p.parents
+    )
 
 
 def triage_scope_uuid(core) -> str | None:
@@ -100,9 +136,9 @@ def fact_exists_for_sha(soil, sha: str) -> str | None:
     return row["uuid"] if row else None
 
 
-def worker_convert(pdf_path: Path) -> dict:
+def worker_convert(pdf_path: Path, timeout_s: int) -> dict:
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-        s.settimeout(DOCLING_SOCK_TIMEOUT_S)
+        s.settimeout(timeout_s)
         s.connect(str(SOCK))
         s.sendall((json.dumps({"path": str(pdf_path)}) + "\n").encode())
         buf = b""
@@ -145,35 +181,28 @@ def artifact_exists_for_fact(core, fact_uuid: str) -> str | None:
     return row["uuid"] if row else None
 
 
-def page_count(pdf_path: Path) -> int | None:
-    try:
-        out = subprocess.run(
-            ["pdfinfo", str(pdf_path)], capture_output=True, text=True, timeout=30
-        ).stdout
-        for line in out.splitlines():
-            if line.startswith("Pages:"):
-                return int(line.split()[-1])
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        return None
-    return None
-
-
 def make_artifact(store_path: Path, fact_uuid: str, sha: str, rel: str,
-                  filename: str, triage: str) -> tuple[bool, str]:
-    """Convert via the worker and create the Core Artifact. Returns (ok, detail)."""
+                  filename: str, triage: str, large: bool = False
+                  ) -> tuple[str, str]:
+    """Convert via the worker and create the Core Artifact.
+
+    Returns (OK | FAILED | DEFERRED, detail). DEFERRED = the document is
+    over the page cap and this call is not an idle-phase slot — it does
+    not touch the worker, so it can never clog the pipeline.
+    """
     pages = page_count(store_path)
-    # MAX_PAGES guard: monster docs (e.g. a 280-page deck) would hold the
-    # single-threaded worker for hours while every queued request burns its
-    # client timeout behind it. Convert those separately, one deliberate
-    # run at a time.
-    if pages is not None and pages > MAX_PAGES:
-        return False, f"skipped: {pages} pages > cap {MAX_PAGES}"
+    if pages is not None and pages > MAX_PAGES and not large:
+        return DEFERRED, f"{pages} pages > cap {MAX_PAGES} — deferred to idle"
+    timeout_s = SMALL_TIMEOUT_S
+    if large:
+        # scale with page count so a monster conversion can complete
+        timeout_s = max(SMALL_TIMEOUT_S, pages * LARGE_S_PER_PAGE + 600)
     try:
-        resp = worker_convert(store_path)
+        resp = worker_convert(store_path, timeout_s)
     except (OSError, RuntimeError, ValueError) as e:
-        return False, f"worker unreachable: {e}"
+        return FAILED, f"worker unreachable: {e}"
     if resp.get("status") != "ok":
-        return False, f"convert failed: {str(resp.get('error', '?'))[:160]}"
+        return FAILED, f"convert failed: {str(resp.get('error', '?'))[:160]}"
 
     content = resp["markdown"]
     truncated = len(content) > MAX_CONTENT_CHARS
@@ -196,18 +225,59 @@ def make_artifact(store_path: Path, fact_uuid: str, sha: str, rel: str,
         },
     }
     with get_core() as core:
-        artifact_uuid = core.entity.create(entity_type="Artifact", data=artifact_data)
+        artifact_uuid = core.entity.create(entity_type="Artifact",
+                                           data=artifact_data)
         core._get_conn().commit()
-    return True, f"{artifact_uuid} ({resp['pages']}p, {resp['seconds']}s)"
+    return OK, f"{artifact_uuid} ({resp['pages']}p, {resp['seconds']}s)"
 
 
-def heal_missing_artifacts(triage: str) -> tuple[int, int]:
-    """Convert facts whose Artifact is missing (crash/worker-outage recovery).
+def ingest_new_file(src: Path, triage: str) -> tuple[str, str | None, str, Path]:
+    """Fresh-file path: fact + mirror, then convert if small.
 
-    The store copy is what the worker converts, so the original file's
-    position is irrelevant — everything derives from the fact. Returns
-    (healed, failed).
+    Returns (status, fact_uuid, sha, rel). status is OK (new fact) or DUP
+    (content already ingested — fact_uuid is the existing fact's uuid).
     """
+    rel = src.relative_to(WATCH_DIR)
+    sha = sha256_of(src)
+    canonical_at = datetime.fromtimestamp(
+        src.stat().st_mtime, tz=timezone.utc
+    ).isoformat()
+
+    fact_uuid = None
+    with get_soil() as soil:
+        fact_uuid = fact_exists_for_sha(soil, sha)
+        if not fact_uuid:
+            fact = create_email_item(
+                _type="Attachment",
+                realized_at=datetime.now(timezone.utc).isoformat(),
+                canonical_at=canonical_at,
+                fidelity="full",
+                data={
+                    "filename": src.name,
+                    "mime_type": "application/pdf",
+                    "size": src.stat().st_size,
+                    "sha256": sha,
+                    "title": src.stem,
+                    "content_path": f"{sha[0:2]}/{sha[2:4]}/{sha}.pdf",
+                },
+                metadata={
+                    "provider": "docling",
+                    "source": "documents_watch",
+                    "storage_root": str(STORE_ROOT),
+                    "fetched_at": datetime.now(timezone.utc).isoformat(),
+                    "origin_path": str(rel),
+                    "scopes": [triage],
+                },
+            )
+            soil.create_fact(fact)
+            fact_uuid = fact.uuid
+    store_copy(src, sha)
+    mirror_move(src, rel)
+    return OK, fact_uuid, sha, rel
+
+
+def missing_artifacts() -> tuple[list[dict], list[dict]]:
+    """documents_watch facts without a live Artifact, split by page cap."""
     with get_soil() as soil:
         facts = soil._get_connection().execute(
             """SELECT uuid,
@@ -229,27 +299,19 @@ def heal_missing_artifacts(triage: str) -> tuple[int, int]:
                      AND json_extract(data, '$.source.attachment_uuid') IS NOT NULL"""
             ).fetchall()
         }
-    missing = [f for f in facts if f["uuid"] not in have]
-    if not missing:
-        return 0, 0
-    log(f"heal: {len(missing)} fact(s) without an Artifact")
-    healed = failed = 0
-    for f in missing:
+    small: list[dict] = []
+    large: list[dict] = []
+    for f in facts:
+        if f["uuid"] in have:
+            continue
         store_path = STORE_ROOT / f["content_path"]
         if not store_path.exists():
             log(f"HEAL-SKIP {f['filename']} — store copy missing ({f['content_path']})")
-            failed += 1
             continue
-        ok, detail = make_artifact(store_path, f["uuid"], f["sha"],
-                                   f["origin_path"] or f["filename"],
-                                   f["filename"], triage)
-        if ok:
-            healed += 1
-            log(f"ARTIFACT(healed) {f['filename']} -> {detail}")
-        else:
-            failed += 1
-            log(f"ARTIFACT-FAILED {f['filename']}: {detail}")
-    return healed, failed
+        pages = page_count(store_path)
+        f["store_path"] = store_path
+        (large if (pages is not None and pages > MAX_PAGES) else small).append(f)
+    return small, large
 
 
 def main() -> int:
@@ -268,99 +330,82 @@ def main() -> int:
         log("FATAL: Triage / Untrusted scope not found in core — not ingesting")
         return 1
 
-    processed = dups = skipped = failed = 0
-    # heal FIRST: facts from crashed/outaged runs may already sit in the
-    # mirror with no artifact — recoverable from the fact alone
-    healed, heal_failed = heal_missing_artifacts(triage)
-    processed += healed
-    failed += heal_failed
+    processed = healed = dups = skipped = failed = deferred = 0
 
-    candidates = sorted(
-        p for p in WATCH_DIR.rglob("*.pdf")
-        if p.is_file() and DONE_DIR not in p.parents
-    )
+    # Phase 1 — fresh files: new documents ALWAYS go first
+    candidates = pending_new_pdfs()
     if candidates:
         log(f"{len(candidates)} PDF(s) pending in {WATCH_DIR}")
     for src in candidates:
         try:
-            rel = src.relative_to(WATCH_DIR)
             if src.stat().st_size > MAX_SINGLE_FILE_BYTES:
-                log(f"SKIP oversized {rel}")
+                log(f"SKIP oversized {src.name}")
                 skipped += 1
                 continue
             if src.stat().st_size == 0:
-                log(f"SKIP empty {rel}")
+                log(f"SKIP empty {src.name}")
                 skipped += 1
                 continue
-            sha = sha256_of(src)
-            canonical_at = datetime.fromtimestamp(
-                src.stat().st_mtime, tz=timezone.utc
-            ).isoformat()
-
-            existing = None
-            with get_soil() as soil:
-                existing = fact_exists_for_sha(soil, sha)
-                if not existing:
-                    fact = create_email_item(
-                        _type="Attachment",
-                        realized_at=datetime.now(timezone.utc).isoformat(),
-                        canonical_at=canonical_at,
-                        fidelity="full",
-                        data={
-                            "filename": src.name,
-                            "mime_type": "application/pdf",
-                            "size": src.stat().st_size,
-                            "sha256": sha,
-                            "title": src.stem,
-                            "content_path": f"{sha[0:2]}/{sha[2:4]}/{sha}.pdf",
-                        },
-                        metadata={
-                            "provider": "docling",
-                            "source": "documents_watch",
-                            "storage_root": str(STORE_ROOT),
-                            "fetched_at": datetime.now(timezone.utc).isoformat(),
-                            "origin_path": str(rel),
-                            "scopes": [triage],
-                        },
-                    )
-                    soil.create_fact(fact)
-            store_path = store_copy(src, sha)
-            moved = mirror_move(src, rel)
-
-            if existing:
-                # Self-healing: a fact from a crashed earlier run may lack its
-                # artifact — convert + create it now, don't just skip.
-                with get_core() as core:
-                    have = artifact_exists_for_fact(core, existing)
-                if have:
-                    dups += 1
-                    log(f"DUP {rel} — already ingested ({existing[:18]}…)")
-                    continue
-                ok, detail = make_artifact(store_path, existing, sha, str(rel),
-                                           src.name, triage)
-                if ok:
-                    processed += 1
-                    log(f"ARTIFACT(recovered) {rel} -> {detail}")
-                else:
-                    failed += 1
-                    log(f"ARTIFACT-RECOVERY-FAILED {rel}: {detail}")
+            rel = src.relative_to(WATCH_DIR)
+            status, fact_uuid, sha, rel = ingest_new_file(src, triage)
+            if status == DUP:
+                dups += 1
                 continue
-
-            log(f"FACT {rel} -> {fact.uuid[:22]}… (store {sha[:12]}…)")
-
-            ok, detail = make_artifact(store_path, fact.uuid, sha, str(rel),
-                                       src.name, triage)
-            if not ok:
+            store_path = STORE_ROOT / sha[0:2] / sha[2:4] / f"{sha}.pdf"
+            pages = page_count(store_path)
+            large = pages is not None and pages > MAX_PAGES
+            if large:
+                deferred += 1
+                log(f"LARGE-DEFERRED {rel} ({pages}p) — fact + mirror done; "
+                    "converts in an idle-phase slot")
+                continue
+            ok, detail = make_artifact(store_path, fact_uuid, sha,
+                                       str(rel), src.name, triage)
+            if ok == OK:
+                processed += 1
+                log(f"ARTIFACT {rel} -> {detail}")
+            else:
                 failed += 1
                 log(f"ARTIFACT-FAILED {rel}: {detail} — fact kept, artifact deferred")
-                continue
-            processed += 1
-            log(f"ARTIFACT {rel} -> {detail}")
         except Exception as e:  # noqa: BLE001 — one bad file must not stop the run
             failed += 1
             log(f"ERROR {src}: {type(e).__name__}: {e}")
 
-    log(f"done: {processed} artifacts, {dups} dups, {skipped} skipped, {failed} failed")
+    # Phase 2 — heal small facts (crash/outage recovery)
+    small_missing, large_missing = missing_artifacts()
+    for f in small_missing:
+        ok, detail = make_artifact(f["store_path"], f["uuid"], f["sha"],
+                                   f["origin_path"] or f["filename"],
+                                   f["filename"], triage)
+        if ok == OK:
+            healed += 1
+            log(f"ARTIFACT(healed) {f['filename']} -> {detail}")
+        else:
+            failed += 1
+            log(f"ARTIFACT-FAILED {f['filename']}: {detail}")
+
+    # Phase 3 — idle tail: LARGE documents, preemptible by new arrivals
+    if large_missing:
+        log(f"IDLE: {len(large_missing)} large document(s) queued "
+            f"(> {MAX_PAGES} pages); pausing if new files arrive")
+        for f in large_missing:
+            fresh = pending_new_pdfs()
+            if fresh:
+                log(f"IDLE-PAUSED: {len(fresh)} new document(s) arrived — "
+                    "large queue deferred to the next tick")
+                break
+            ok, detail = make_artifact(f["store_path"], f["uuid"], f["sha"],
+                                       f["origin_path"] or f["filename"],
+                                       f["filename"], triage, large=True)
+            if ok == OK:
+                processed += 1
+                log(f"ARTIFACT(large) {f['filename']} -> {detail}")
+            else:
+                failed += 1
+                log(f"ARTIFACT-FAILED(large) {f['filename']}: {detail}")
+
+    log(f"done: {processed} artifacts ({healed} healed), {dups} dups, "
+        f"{skipped} skipped, {deferred} deferred, {failed} failed")
     return 0 if failed == 0 else 1
 
 
