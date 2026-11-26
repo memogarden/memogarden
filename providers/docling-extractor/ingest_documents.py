@@ -174,7 +174,7 @@ def make_artifact(store_path: Path, fact_uuid: str, sha: str, rel: str,
         },
     }
     with get_core() as core:
-        artifact_uuid = core.entities.create("Artifact", data=artifact_data)
+        artifact_uuid = core.entity.create(entity_type="Artifact", data=artifact_data)
         core._get_conn().commit()
     return True, f"{artifact_uuid} ({resp['pages']}p, {resp['seconds']}s)"
 
