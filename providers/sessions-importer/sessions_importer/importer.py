@@ -314,11 +314,20 @@ class SessionsImporter:
         """contained_by: every drained fact of this session -> the Session
         entity. Covers this run's facts AND everything drained before this
         slice (backfill mandate, register C5). UNIQUE(kind, source,
-        target) + the NOT EXISTS probe make reruns no-ops."""
+        target) + the NOT EXISTS probe make reruns no-ops.
+
+        The scan is typed: this importer only writes Attachment, SessionEvent
+        and PageVisit facts, and `json_extract(metadata, …)` alone forces a
+        read of every item row's metadata — past every email body. The
+        type filter lets it use the item type index (measured on the
+        production corpus: a full scan at ~1.4 s became ~0.2 s, and it ran
+        twice an hour, reading ~1.25 GB of the database into page cache).
+        """
         session = manifest["name"]
         rows = soil._get_connection().execute(
             """SELECT uuid FROM item
-               WHERE json_extract(metadata, '$.session') = ?
+               WHERE _type IN ('Attachment', 'SessionEvent', 'PageVisit')
+                 AND json_extract(metadata, '$.session') = ?
                  AND json_extract(metadata, '$.provider') = 'memogarden-sessions'
                  AND NOT EXISTS (
                      SELECT 1 FROM system_relation r
