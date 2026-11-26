@@ -301,14 +301,15 @@ def missing_artifacts() -> tuple[list[dict], list[dict]]:
         }
     small: list[dict] = []
     large: list[dict] = []
-    for f in facts:
-        if f["uuid"] in have:
+    for row in facts:
+        if row["uuid"] in have:
             continue
-        store_path = STORE_ROOT / f["content_path"]
+        store_path = STORE_ROOT / row["content_path"]
         if not store_path.exists():
-            log(f"HEAL-SKIP {f['filename']} — store copy missing ({f['content_path']})")
+            log(f"HEAL-SKIP {row['filename']} — store copy missing ({row['content_path']})")
             continue
         pages = page_count(store_path)
+        f = dict(row)  # sqlite3.Row is immutable — copy before annotating
         f["store_path"] = store_path
         (large if (pages is not None and pages > MAX_PAGES) else small).append(f)
     return small, large
