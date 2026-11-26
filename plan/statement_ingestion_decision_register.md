@@ -1,192 +1,236 @@
-# Statement ingestion — decision register (root#14)
+# Statement ingestion — decision register v2 (root#14)
 
-**Status:** DRAFT 2026-11-26 — awaiting operator ratification. Decisions
-D1–D6 gate the first slice (text extraction); D7–D9 gate the slices after
-it. Style follows `rfc_013_ingestion_decision_register.md`: each decision
-states a question, the options, and a recommendation; silence in a review
-pass adopts the recommendation.
+**Status:** REVISED DRAFT 2026-11-26 (evening) — supersedes the morning
+draft of the same day. The morning draft predated the layout-engine
+experiment and the live ingestion trial; its D2/D4/D5 are replaced by
+operator decisions taken 2026-11-26 (recorded below with their evidence).
+Style follows `rfc_013_ingestion_decision_register.md`: question, options,
+recommendation; silence in a review pass adopts the recommendation.
 
-## Where we start from (measured 2026-11-26)
+## Where we start from (as of 2026-11-26 evening)
 
-- **4,904 PDF attachments** are already stored as immutable `Attachment`
-  facts in the content-addressed `AttachmentStore` — every one with a
-  `content_path` and a `sha256` — 2.1 GB in total (median 126 KB, p90
-  1.0 MB, max 19 MB). They arrive by email (gmail) and by browser download
-  (sessions). By scope: NYJC 2,930 · Triage 1,238 · global 651 ·
-  Household 80 · Personal 4 · Finances 1.
-- **None has extracted text.** Nothing in the workspace parses a PDF:
-  search can see a statement's filename, never its contents.
-- Prerequisites are built — and, at this writing (2026-11-26), still
-  uncommitted on their branches: RFC-011 labels and provider policies
-  (live); SG-9 (a fact declaring `metadata.derived_from` inherits its
-  source's current scope labels — default-on, both fact-creation lanes);
-  the FTS5 lexical plane (its insert trigger indexes every new fact's
-  `data`); the chunked semantic index; the in-process provider runtime on
-  one heartbeat. One defect in the index is being fixed alongside: its
-  change-log catch-up had been a no-op since it shipped.
-- Tooling on this host: the server venv has no PDF library, but poppler's
-  `pdftotext` / `pdfinfo` and `tesseract` are installed system-wide.
+- **The ingestion stage is LIVE.** `memogarden-docling` worker + the
+  `~/Documents` watch (trial): 375 PDFs/118 MB ingested as Triage-scoped
+  `Attachment` facts, converted to Core `Artifact` entities (markdown,
+  provenance-linked). Ops record:
+  `~/sysinfo/incidents/2026-11-26-memogarden-docling-documents-ingest.md`.
+- **Engine decided by experiment**: Docling 2.153.0 over
+  PP-DocLayoutV3/PP-StructureV3 (8.15 vs 39.40 s/page; born-digital row
+  integrity 0% vs 17% damaged; scans comparable) —
+  `~/sysinfo/incidents/2026-11-26-doclayout-engine-comparison.md`.
+- **The larger corpus still waits**: 4,904 PDFs (2.1 GB) already stored as
+  `Attachment` facts from gmail + sessions; none extracted yet. The trial
+  covers `~/Documents` only; the AttachmentStore backfill pass is one
+  slice away (same extractor logic, heartbeat-scheduled).
+- **Prerequisites all shipped**: RFC-011 labels/policies, SG-9 (fact-level;
+  entity-side = `data.scopes`), FTS5 lexical plane (insert trigger),
+  chunked semantic index, one-heartbeat runtime, socket-activated
+  model-layer services (embed precedent, now docling too).
+- Prior statement-pipeline analysis: the 2026-11-09 assessment + user's
+  6-point scope model; scope-first sequencing completed before any
+  extraction work (the operator's own sequencing, honored).
 
-## What this register covers
+## Scope of this register
 
-MemoGarden's founding purpose is transactions-as-beliefs reconciled
-against documents (PRD principle 6, Document-Centric Traceability). The
-long game is statement → candidate transactions → reconciliation against
-`Transaction` beliefs. **This register covers only the first leg: getting
-document text into Soil, correctly scoped and searchable.** The statement
-schema, candidate extraction and reconciliation get their own register —
-designed against real extracted documents rather than guesses.
+Still **only the first leg**: document text → correctly scoped, searchable
+structured artifacts. The statement schema, candidate transactions, and
+reconciliation get their own register, designed against real extracted
+documents. Trial exit criteria (operator): a credible replacement for
+direct file-manager access — listing, searching, accessing ingested
+documents.
 
 ## Decisions
 
-### D1 — First slice is text, not transactions
+### D1 — First slice is text, not transactions — KEPT, overtaken by events
 
-Build text extraction alone first, or design the whole pipeline up front?
+Text first remains right, and is no longer hypothetical: ingestion is live.
+Transaction extraction is explicitly a later stage (see D10's routing).
 
-**Recommendation: text first.** Text in Soil is useful on its own (it
-makes every past statement searchable), it is the prerequisite for
-everything downstream, and a statement schema designed against real
-extracted documents will be better than one designed now.
+### D2 — Extraction engine — **REPLACED: Docling**
 
-### D2 — Extraction engine
+The morning draft recommended poppler `pdftotext`; the operator redirected
+(tables and scans need layout-aware extraction → structured JSON/markdown),
+the comparison experiment ran, and the verdict is:
 
-| Option | Licence / weight | Quality | Notes |
-|---|---|---|---|
-| (a) poppler `pdftotext` via subprocess | already installed; no Python dependency | good for text PDFs; `-layout` keeps columns usable | external binary — a deploy dependency (`poppler-utils`); no structured tables |
-| (b) `pypdf` | BSD, light pure Python | basic text; weak layout | no system dependency; no tables |
-| (c) `pdfplumber` | MIT; pulls pdfminer.six + Pillow | layout objects and tables | slower, heavier |
-| (d) PyMuPDF | AGPL-3.0; large wheel | best | licence and weight |
+**Docling 2.153.0 for both document classes**, as a content-agnostic
+socket-activated worker (`memogarden-docling/`), one swappable module on
+the MemoGarden side. Rejected: PP-DocLayoutV3/PP-StructureV3 (4.8× slower;
+born-digital row drift hits exactly the structures the pipeline exists
+for; second heavyweight stack); plain pdftotext (no tables/structure;
+still useful as the text-layer probe under Docling's pipeline). GLM-OCR
+(local, ollama-served) remains the **fallback table recognizer for
+scans**, gated on the varied-selection output review (D6) — not yet
+compared on real scanned statements.
 
-**Recommendation: (a) for the first slice**, wrapped in a single
-extraction module (the project's "confine external dependencies to one
-module" rule) so the engine is swappable. It adds no dependency and its
-quality can be judged on the pilot. Revisit (c) when table-structured
-extraction is designed for the statement schema.
+### D3 — Local only — KEPT, EXTENDED to the classification tiers
 
-A scanned PDF yields little or no text: record it and stop — see D7.
+Extraction runs on the host (no content leaves the machine) — now with an
+operator restriction that closes the future loophole: **categorisation and
+classification must also run locally or on trusted remotes only**, because
+content sensitivity is unknown at those stages. Trusted remote = an
+explicit allowlist (MemoGarden API loopback; operator-owned inference
+hosts per-host decision). Public cloud AI APIs are forbidden pre-scope.
+Escalation paths if rules plateau are local models only (bge/kNN sidecar,
+ollama-served GLM).
 
-### D3 — Local only
+### D4 — Where it runs — **REPLACED: worker + watch, proven by trial**
 
-The published Gmail usage policy forbids uploading user data to
-third-party clouds, and the 2026-11-09 assessment named local-first
-extraction as the clean default.
+Not a provider yielding ExtractedText facts (see D5), and not the morning
+draft's shape. What exists:
 
-**Recommendation: a standing rule — extraction runs on the host and no
-statement content leaves the machine.** No cloud toggle in this slice; if
-one is ever wanted it comes with its own explicit policy decision.
+- `memogarden-docling/` worker: content-agnostic unix-socket daemon
+  (uv-pinned python 3.12, docling 2.153.0), systemd socket-activated, idle
+  self-exit, own memory caps — model-layer inference never runs inside
+  `memogarden.service`.
+- `providers/docling-extractor/ingest_documents.py` (root): the
+  MemoGarden-aware seam. Trial form: a `~/Documents` watcher (minutely
+  timer, flock, sha256-idempotent, `ingested/` mirror, self-healing
+  fact→artifact recovery).
+- **Pending slice**: the same extractor logic as a budgeted heartbeat
+  pass over the 4,904-pdf AttachmentStore corpus (facts already exist
+  there; only the Artifact leg runs — the worker converts the store copy,
+  so no source-file access is needed).
 
-### D4 — Where it runs: a provider on the heartbeat
+The register's earlier `scope_policy = {"default": null}` question is
+superseded by D13's trial rule (Triage now; revisit at the
+categorisation slice).
 
-**Options:** (a) a dedicated provider module under `providers/` using the
-standard provider contract — its `sync()` finds PDF `Attachment` facts
-that have no extracted text yet, within a per-run budget, and yields
-derived text facts; (b) a post-attachment hook inside the gmail and
-sessions providers; (c) a separate daemon and unit.
+### D5 — Derived shape — **REPLACED: Core `Artifact` entity**
 
-**Recommendation: (a).** One heartbeat, in-process, no new service. It is
-source-agnostic (email and browser downloads alike), idempotent, budgeted,
-and registered and retired like any other provider — and it inherits
-scope through the same creation seam as every other fact (SG-9).
-Option (b) couples extraction to each ingest path; (c) cuts against the
-one-heartbeat preference. **Register it with
-`scope_policy = {"rules": [], "default": null}`** — not the ratified
-fail-closed default of triage. D6 says why.
+The morning draft's `ExtractedText` fact type is **rejected** (operator):
+the source of information is an **attribute of the entity**, not its
+type. What shipped in the trial:
 
-### D5 — Derived fact shape
+- One **`Artifact` entity per document** (schema
+  `schemas/types/entities/artifact.schema.json` — pre-existing, first
+  real instantiation): `label` (filename), `content` (markdown,
+  capped at 400k chars with an `extraction.truncated` flag),
+  `content_type` (`text/markdown`; this pre-existing required field IS
+  the mimetype field — it describes the artifact's own content, while the
+  source PDF's mime lives on the `Attachment` fact).
+- Provenance: `data.source = {attachment_uuid, sha256, origin_path}` —
+  mirrors SG-9's marker convention. Reverse lookups query
+  `json_extract(data,'$.source.attachment_uuid')`. The
+  `entity.derived_from` column (entity→entity) is reserved for the
+  transaction-extraction stage (Transaction `derived_from` its statement
+  Artifact).
+- Scope: `data.scopes` (entities carry scope labels in data — same
+  convention as facts' `metadata.scopes`). Trial value: Triage
+  everywhere (see D13).
+- Idempotency key: the source `sha256` (skip if a live Artifact with the
+  same source sha256 exists). The type stays off the `add` verb's
+  whitelist — only the extractor creates these.
+- `extractedtext.schema.json` is NOT needed; no new fact schema in this
+  leg.
 
-One fact per document or per page, and under what type?
+### D6 — Pilot — **REFRAMED: the varied-selection output review**
 
-**Recommendation: one fact per document, of a new fact type
-`ExtractedText`.** This decision also ratifies the marker the SG-9
-implementation chose: `metadata.derived_from` naming the source Soil fact.
+Not a timing pilot anymore (the trial measures timing continuously). The
+review the operator set: run the existing trial outputs over a **varied
+selection** — banks not yet sampled (OCBC, DBS), telco, insurance,
+government, receipts, **the known scanned statements** (OCBC PRS, Home
+Loan — found during corpus assembly), course-material controls — and
+judge structure/table quality against reference renders. Its decision:
+**whether GLM-OCR gets inserted anywhere** (and for which document
+classes). Also reports the born-digital/scanned split of the 4,904-doc
+corpus, which sizes the AttachmentStore backfill.
 
-- `data`: `text` (plain text, page breaks preserved as form feeds so a
-  later slice can split pages), `page_count`, `char_count`, `extractor`,
-  `extractor_version`, `truncated` (true when `text` hit the cap), and
-  `status` (`ok` | `no_text` | `failed`).
-- `metadata`: `derived_from` (the `Attachment`'s uuid — the SG-9 marker),
-  `source_sha256` (the exact bytes that were extracted — provenance and
-  the idempotency key), plus the `provider` / `account` stamps the runtime
-  adds. Deliberately no `email_uuid`: that is the parent rule's marker,
-  and a derived fact's visibility follows its source, not a covering
-  email.
-- Text cap: **100,000 characters** per fact, with `truncated` set. A
-  statement is a few pages; a 500-page manual should not become one giant
-  fact. The semantic index embeds at most ~7,200 characters per item
-  anyway (12 chunks × 600); the lexical plane indexes all of it.
-- Idempotency: skip an `Attachment` that already has a live `ExtractedText`
-  with the same `source_sha256`.
-- First schema for a derived fact type:
-  `schemas/types/facts/extractedtext.schema.json`. Only the provider
-  creates these facts, so the type stays off the `add` verb's whitelist.
+### D7 — OCR — DECISION RULE now attached
 
-### D6 — Backfill the existing corpus
+Scanned documents are handled by Docling's internal OCR today
+(`status: no_text` only if it yields nothing). GLM-OCR insertion is
+decided by D6's review — likely per-document fallback on quality
+signals, not a blanket pipeline stage. `tesseract` TSV stays the
+coordinates-of-last-resort.
 
-**Recommendation: a stratified pilot of 20 documents first** (across
-scopes and accounts), reviewed by the operator for text quality; then
-backfill all 4,904 at a budget of **100 documents per run**. `pdftotext`
-is generally fast, but timing is unmeasured on this corpus — the pilot
-reports it. The slower part is likely the semantic index catching up,
-which the embed daemon already does in bounded passes when it wakes.
+### D8 — Relabel cascade — KEPT (the slice after extraction ships)
 
-Note on exposure — the extractor's policy default decides where the text
-of undecided documents lands. Under D4 the text is created in the
-provider lane, where SG-9 inherits a labeled source's labels (triage
-included) and does nothing for an unlabeled one, which then follows the
-provider policy's default:
+When a source is relabelled, its derived Artifact must follow (the
+console's family cascade covers `contained_by`, not `derived_from`/
+source-linkage children). Options unchanged; recommendation (a) extend
+the cascade stands. Note it now applies to **entity** relabels
+(`data.scopes`) rather than fact amends.
 
-- **Decided PDFs (NYJC 2,930 · Household 80 · Personal 4 · Finances 1):**
-  their text inherits the PDF's labels through SG-9.
-- **Triage PDFs (1,238):** their text inherits the triage label — as
-  visible as the PDF, no more.
-- **The 651 global PDFs:** nothing to inherit. With the ratified default
-  (triage) their text would land in triage — *less* visible than the
-  PDFs, and 651 more rows in the triage queue. With
-  `scope_policy.default = null` (D4's recommendation) it stays global,
-  like the PDF.
+### D9 — Search integration — KEPT (the trial-exit slice)
 
-Either way the text is never more visible than its source. Extraction does
-make the content *searchable*, which is the point.
+`Artifact` entities join the semantic index's type list and the console's
+type filter; the lexical plane needs nothing new for the markdown
+content. This is part of the **trial exit criteria**: the listing/
+search/access interface that replaces direct file-manager access.
 
-### D7 — OCR for scanned documents (deferred)
+### D10 — NEW: Categorisation before classification
 
-**Recommendation: out of the first slice.** Scanned documents are recorded
-with `status: no_text`; the pilot reports how many there are. OCR
-(`tesseract` is installed) is slower and lossier, and multiplies a
-document's sensitivity (images, handwriting) — decide once the pilot
-shows whether statements are commonly scans.
+Two granularities, one rules-first mechanism, at the extractor seam:
 
-### D8 — Relabel cascade to derived facts (the slice after)
+- **Categorisation** (routing): `financial / non-financial / unknown`,
+  envelope-first (sender domain + subject + filename — available before
+  conversion), refined by content. Gates **transaction extraction
+  eligibility**, review priority, extraction ordering — NOT conversion or
+  Artifact creation (everything stays searchable; course material
+  included).
+- **Classification** (identification): `doc_class` + institution + period
+  from envelope + page-1 structure/keywords; evidence recorded per
+  decision (today's sorting = tomorrow's audit trail).
 
-SG-9 labels a derived fact correctly at creation. Afterwards the facts
-are independent: when the operator relabels a source document, its
-`ExtractedText` keeps the old labels — the console's family cascade
-covers `contained_by` family, not `derived_from` children.
+Both emit `{value, confidence, evidence[]}`; below threshold →
+`unknown`/`unclassified` (the positive-noise class — the 2026-11-21
+operator reframe applied to document type). No LLM in v1; no new model
+training unless rules plateau (and any escalation obeys D3's
+local/trusted restriction). Stored as Artifact `data.category` /
+`data.doc_class` (+ institution/period).
 
-**Options:** (a) extend the console's cascade to `derived_from` children;
-(b) a periodic sweep; (c) accept drift.
+### D11 — NEW: Uncertain artifacts go to Triage
 
-**Recommendation: (a), as the next small slice after extraction ships.**
-Extraction without it leaves a stale-label window.
+`unknown`-category or unclassified Artifacts get **Triage** scope and
+join the triage queue (the review selection — same flow as every other
+untrusted item). Classified Artifacts **inherit their source's scope**
+(SG-9-style via `data.scopes` from the source Attachment's labels).
+Invariant: **a derived Artifact is never more visible than its source,
+and never less reviewed than an unclassified item.** Trial phase: all
+Artifacts are Triage (nothing is classified yet).
 
-### D9 — Search integration (part of the first slice)
+### D12 — NEW: Pre-scope stages run locally or on trusted remotes only
 
-Add `ExtractedText` to the semantic index's type list and to the console's
-type filter. The lexical plane needs nothing: its insert trigger indexes
-the fact's `data` on creation, and facts are immutable, so the UPDATE gap
-does not apply.
+Extraction, categorisation, and classification process content whose
+sensitivity labels do not exist yet — the only protection is where the
+computation runs. Allowlist per D3; public cloud AI APIs forbidden.
+Costs nothing today (the whole stack is already local); constrains
+tomorrow's shortcuts.
+
+### D13 — Note absorbed into D10/D11
+
+(The morning draft's D4 `scope_policy` sub-question and D13-draft
+triage question are superseded by the D11 trial rule + the
+categorisation-slice revisit.)
 
 ## Sequencing
 
-1. **D1–D6 ratified → slice 1:** extraction module, `ExtractedText`
-   schema, provider registration, the 20-document pilot.
-2. **Slice 2:** budgeted backfill, D8 cascade, D9 index type list.
-3. **Next register:** statement schema (institution, account, period,
-   document class) → candidate transactions → reconciliation (Budget PRD).
+1. **LIVE (trial)**: ingestion of `~/Documents` (worker + watch) —
+   backfill running.
+2. **Varied-selection output review** (D6) → GLM-OCR insertion decision.
+3. **Categorisation/classification slice** (D10/D11 rules + evidence).
+4. **Artifact indexing + listing/search/access interface** (D9) →
+   **trial exits**.
+5. **AttachmentStore backfill pass** (4,904 PDFs, budgeted heartbeat
+   pass over existing facts).
+6. **Next register**: statement schema (institution, account, period,
+   document class) → candidate transactions → reconciliation
+   (Transaction entities; reconciliation outcome on the transaction —
+   required metadata open, operator discussion pending).
 
-## Docs to land with slice 1
+## Docs landed with the trial
 
-`schemas/types/facts/extractedtext.schema.json` · `docs/repositories.md`
-(the new provider) · `docs/configuration.md` (the provider's budget) ·
-RFC-012 §4.9 cross-link (extraction consumes attachments) ·
-`plan/memogarden_prd_v0_11_0.md` status line.
+`docs/repositories.md` (memogarden-docling + extractor) ·
+`docs/configuration.md` (env knobs) · `AGENTS.md` (sibling list) ·
+`memogarden-docling/README.md` (protocol/ops) ·
+`~/sysinfo/systemd/user/` units + manifest ·
+`~/sysinfo/incidents/2026-11-26-memogarden-docling-documents-ingest.md`.
+The morning draft's `extractedtext.schema.json` is not needed.
+
+---
+
+**Status:** REVISED DRAFT 2026-11-26 evening — awaiting operator
+ratification (silence adopts recommendations; object per decision).
+Supersedes the morning draft recorded in the git history of this file.
+
+**END OF REGISTER**

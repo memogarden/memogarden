@@ -3,7 +3,7 @@
 **Version:** 1.0
 **Status:** Decisions ratified 2026-11-19. Read-path predicate, schema
 attribute, and console UI shipped 2026-11-19 with RFC-011 item 5;
-remaining open: §6 item 1 (item 2 settled 2026-11-26).
+all §6 items settled (item 1 settled 2026-11-26 — INHERIT, see footer).
 **Amends:** RFC-011 v1.3 (Scopes, Grants, and Attention-Gated Access)
 **Related:** `rfc_011_implementation.md` (progress tracker), RFC-010 v1.2 (Agent Identity), RFC-001 v5 §4.4 (multi-operator, orthogonal)
 
@@ -163,8 +163,22 @@ alias maps break clean (no legacy `private` alias). See
 ---
 
 **Status:** decisions ratified; predicate + schema + UI shipped
-2026-11-19 with RFC-011 item 5. §6 item 2 settled 2026-11-26; §6 item 1
-(superseded-original visibility) remains open, measured — decide before
-the enforcement flip. Rename companion shipped 2026-11-19.
+2026-11-19 with RFC-011 item 5. §6 item 1 settled 2026-11-26 (option **a,
+INHERIT** — both halves: the read gate follows `superseded_by` to the live
+successor's labels, and the search verb passes `live_only` accordingly;
+system `321d879` + api `b3d9c56`, reviewed, CLOSED as completed on api#97);
+§6 item 2 settled 2026-11-26. No §6 items remain open. Rename companion
+shipped 2026-11-19.
+
+## Follow-up (2026-11-26 evening): §6 item 1 settled — INHERIT
+
+api#97 resolved as **option (a)**: a superseded row is read-gated by its
+live successor's labels (both halves — the fact read gate and the verb's
+`live_only`). Shipped same day (system `321d879`, api `b3d9c56`, deployed
+with the day's restart), reviewed, api#97 CLOSED completed. The measured
+4,343-row exposure set the comparison experiment recorded earlier the same
+day is closed by this.
+
+**END OF ADDENDUM**
 
 **END OF ADDENDUM**
