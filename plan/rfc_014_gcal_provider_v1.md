@@ -247,3 +247,57 @@ without rewriting the original sections:
   idempotency probes the Event fact
   (`memogarden-api/api/v1/events.py::_existing_occurrence`). §6.3's kind
   name and §14 minor-decision 1 are historical.
+
+## Amendment (2026-11-26): occurrence review stamps are terminal — did_not_occur (tada mirror)
+
+Operator ruling settling #57 (occurrence review dismissal). Context,
+first, why mark-occurred has never fired in production: the operator's
+todo list is managed in tada, whose items are resolved — completed or
+removed — **in tada, before MemoGarden ingests them**; the ingested
+completion facts already carry the terminal state. mark-occurred exists
+for occurrences whose ground truth is only knowable by review
+(calendar-style slots), and its semantics now mirror tada's item
+lifecycle: **once resolved, an item is immutable.**
+
+**Ruling — both review stamps are terminal:**
+
+1. **`did_not_occur` ships as mark-occurred's symmetric sibling.**
+   `POST /api/v1/events/<uuid>/dismiss` (body: optional `reason`,
+   optional `dismissed_at` — defaults to now). Same authz matrix as
+   §6.2. Entity stamps: `data.did_not_occur = true`, `data.dismissed_at`
+   (UTC ISO). Unlike `occurred_at`, `dismissed_at` carries no
+   not-in-the-future rule — dismissing a future slot is legitimate (the
+   slot will not happen); `occurred_at` keeps its rule because an
+   occurrence cannot postdate its stamp.
+2. **The verdict fact lands the same universal Event fact** —
+   `metadata.status = "did_not_occur"` (per the 2026-11-21 convergence
+   above), plus the audit Action fact. No new fact kind; a dismissed
+   slot is visible in the timeline as a recorded non-occurrence rather
+   than a silent gap.
+3. **Terminal immutability:** once either stamp exists, the review state
+   is closed — mark-after-dismiss and dismiss-after-mark are **409**;
+   un-marking/un-dismissing is not offered. Same-value idempotent
+   re-submits keep the existing 200-idempotent behavior. As in tada,
+   the immutability lives at the review-API layer; Soil remains what it
+   is (operator sovereignty can still amend — SG-11), and the schema's
+   optional fields ride the same schema-version bump as system#5's
+   deferred index (or land independently).
+4. **system#5 / api#59 are unaffected:** their partial unique index on
+   live `Event.data.event_uuid` hardens entity identity (double-mark /
+   double-instantiation), which the terminal ruling complements with
+   the 409 guards, not changes.
+
+**Terminology, pinned** (it needed a round of disambiguation):
+
+- An **occurrence** is an Event *entity* instantiated from a Recurrence
+  pattern (api#94 series behavior). It is not a fact type.
+- The occurrence *record* is the authored **Event fact** carrying
+  `metadata.status` as its verdict ("occurred"; "did_not_occur" once
+  #57 ships). The dedicated `EventOccurrence` fact kind was retired
+  2026-11-21 (above) before any instance existed.
+- `_type='Event'` facts in production today are all **tada
+  task-completion records** (`kind: task`) — the authored-occurrence
+  verdict facts do not exist yet, because mark-occurred has never been
+  invoked.
+- system#5 / api#59 are entity-identity hardening, not a fact-type
+  question.
