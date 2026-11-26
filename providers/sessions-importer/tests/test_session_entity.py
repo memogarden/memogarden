@@ -6,6 +6,8 @@ this slice (backfill)."""
 import json
 
 from sessions_importer.importer import SessionsImporter
+from system.soil import Fact, generate_soil_uuid
+from utils import isodatetime
 
 
 def _append_event(sdir, **rec):
@@ -102,3 +104,32 @@ def test_rerun_no_duplicate_relations(provider, make_session, drain):
     first = _relation_count(provider)
     drain()                        # rerun: everything probed as drained
     assert _relation_count(provider) == first
+
+
+def test_backfill_links_only_the_sessions_fact_types(provider, make_session, drain):
+    """The scan is typed so it can use the item type index instead of
+    reading every row's metadata. This importer only writes Attachment,
+    SessionEvent and PageVisit facts, so a fact of another type that merely
+    carries session metadata is not the importer's and must not be linked."""
+    sdir = make_session("dbs")
+    _append_event(sdir, ts=1.0, seq=1, event="session_created", actor="daemon")
+    provider._session_entity_uuid = (
+        lambda name, machine: f"core_session_{name}-{machine}")
+    drain()                                     # one SessionEvent fact, linked
+
+    now = isodatetime.now()
+    with provider._soil_factory() as soil:     # a foreign fact, same metadata
+        soil.create_fact(Fact(
+            uuid=generate_soil_uuid(), _type="Note",
+            realized_at=now, canonical_at=now,
+            data={"title": "not the importer's"},
+            metadata={"provider": "memogarden-sessions", "session": "dbs"},
+            integrity_hash=None, fidelity="full"))
+
+    drain()
+    with provider._soil_factory() as soil:
+        linked = soil._get_connection().execute(
+            """SELECT i._type FROM system_relation r
+               JOIN item i ON i.uuid = r.source
+               WHERE r.kind = 'contained_by'""").fetchall()
+    assert [r["_type"] for r in linked] == ["SessionEvent"]
