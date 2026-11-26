@@ -207,10 +207,15 @@ class GmailProvider:
 
         Cursor advancement: the sync state (historyId AND backfill status)
         advances when the runtime consumes the full batch (this generator
-        runs to completion) and nothing was truncated; truncation leaves
-        both untouched (the remainder re-delivers next sync; the done-set
-        absorbs what already landed), and truncating incremental mail
-        defers the backfill stage to the next run.
+        runs to completion) and neither the batch cap nor a failed fetch cut
+        the incremental stage short. A cap cut leaves the cursor (the
+        remainder re-delivers next sync; the done-set absorbs what already
+        landed) and defers the backfill stage to the next run. A failed
+        fetch holds the cursor so history re-diff retries the message; a 404
+        means the message is gone at the source — it is recorded in the
+        exclusion file and does not hold the cursor. Messages that are in
+        TRASH or SPAM when fetched are skipped by policy and likewise never
+        block.
         """
         api: GmailApiClient = self.importer._build_api_client()
         done = self._ingested_gmail_ids()
@@ -279,20 +284,40 @@ class GmailProvider:
                     f"across runs; the cursor resumes after {history_resume}"
                 )
 
-            remaining = [i for i in candidates if i not in skip]
+            remaining = list(dict.fromkeys(
+                i for i in candidates if i not in skip
+            ))
 
+        # One id can appear in several records of a diff (added, then
+        # archived or trashed), so dedupe BEFORE the cap: a duplicate made
+        # len(remaining) permanently exceed len(batch) in the store guard
+        # below, and a single never-ingested id (TRASH/SPAM at fetch time,
+        # or gone at the source) then froze the cursor forever while every
+        # run reported success — the 2026-11-21 personal-account stall.
         incremental_truncated = len(remaining) > self.batch_limit
-        batch = list(dict.fromkeys(remaining[: self.batch_limit]))  # dedupe: one
-        # id can appear in both messagesAdded and labelsRemoved of a diff
+        batch = remaining[: self.batch_limit]
         completed = False
+        incremental_drops: list[str] = []  # failed fetches — retry next run
+        incremental_gone: list[str] = []   # 404s — gone at the source
         backfill_exhausted: Optional[bool] = None
         backfill_before_next: Optional[str] = None  # tightened horizon cursor
         yielded_ids: set[str] = set()
         try:
             realized_at = datetime.now(timezone.utc).isoformat()
-            for item in self._fetch_batch(api, batch):
+            for item in self._fetch_batch(
+                api, batch, incremental_drops, incremental_gone
+            ):
                 yielded_ids.add(item["metadata"]["gmail_message_id"])
                 yield item
+            if incremental_gone:
+                # Same accounting as the importer path's deleted-at-source
+                # handling: recorded permanently, never re-fetched.
+                self.importer._exclude_ids(incremental_gone, "deleted_at_source")
+            if incremental_drops:
+                self._log(
+                    f"{len(incremental_drops)} fetch(es) failed — holding the "
+                    "cursor so history re-diff retries them next run"
+                )
 
             # Stage 2 — reverse-chronological history backfill (RFC-012
             # §4.10 policy) until the oldest email is ingested. Deferred
@@ -367,8 +392,11 @@ class GmailProvider:
         finally:
             # Advance the cursor only on full, clean consumption: by the time
             # the runtime asks for the item past the end, everything yielded
-            # is already committed in Soil by the runtime itself.
-            if completed and len(remaining) <= len(batch):
+            # is already committed in Soil by the runtime itself — and the
+            # incremental stage must be neither cut by the batch cap nor
+            # holding failed fetches. Policy skips (TRASH/SPAM at fetch
+            # time) and 404s recorded in the exclusion file are not cuts.
+            if completed and not incremental_truncated and not incremental_drops:
                 # A complete walk jumps to the mailbox's current id; one
                 # that hit its page budget resumes at the last record read,
                 # so the unread pages are picked up next run.
@@ -384,20 +412,30 @@ class GmailProvider:
     def _fetch_batch(
         self, api: GmailApiClient, message_ids: list[str],
         transient_drops: Optional[list[str]] = None,
+        permanent_drops: Optional[list[str]] = None,
     ) -> Iterator[dict]:
         """Fetch and translate message ids into runtime-normalized dicts.
 
         Yields nothing for ids that violate the ingestion policy (all mail
         except what is currently in TRASH or SPAM, evaluated at fetch time)
-        or fail validation. Ids whose FETCH failed (lifecycle/transient) are
-        reported via `transient_drops` when that list is passed — the
-        backfill stage uses this to avoid declaring completion with holes;
-        they are retried via history re-diff or the next backfill pass.
+        or fail validation. Ids whose FETCH failed are reported through the
+        out-lists when passed: `permanent_drops` for a 404 (the message is
+        gone at the source — callers record it in the exclusion file, as
+        the importer path does), `transient_drops` for everything else
+        (lifecycle/transient — retried via history re-diff or the next
+        backfill pass; the backfill stage uses this to avoid declaring
+        completion with holes).
         """
         realized_at = datetime.now(timezone.utc).isoformat()
         for message_id in message_ids:
             try:
                 message = api.get_message(message_id)
+            except GmailApiError as e:
+                if e.status_code == 404 and permanent_drops is not None:
+                    permanent_drops.append(message_id)
+                elif transient_drops is not None:
+                    transient_drops.append(message_id)
+                continue  # 404 = gone at source (recorded); others transient — retried next run
             except Exception:
                 if transient_drops is not None:
                     transient_drops.append(message_id)

@@ -1,10 +1,16 @@
-"""A history backlog larger than one run's page budget drains across runs.
+"""A history backlog larger than one run's page budget drains across runs,
+and a message the policy never ingests must not freeze the cursor.
 
 Until 2026-11-26 the incremental walk raised when more than 20 pages of
 change history had accumulated since the stored cursor, and left the cursor
 alone — so every later run began from the same place and failed identically,
 forever. One production account sat in that state for five days after a bulk
-mailbox change. These tests pin the resumable walk in both sync paths.
+mailbox change. The drain fix exposed the deeper lock underneath: the
+provider's cursor-store guard compared a deduplicated batch against an
+undeduplicated candidate list, so a single never-ingested id with two change
+records (added, then archived or trashed) defeated it every run — also
+forever, also with every run reporting success. These tests pin the
+resumable walk, the cursor-advancement rule, and both sync paths.
 """
 
 import json
@@ -186,6 +192,158 @@ class TestProviderDrain:
         with pytest.raises(GmailApiError, match="no record id to resume from"):
             _run(provider, tmp_path)
         assert _state(tmp_path)["history_id"] == "100"
+
+
+LOCK = [
+    {"id": "101", "messagesAdded": [{"message": {"id": "t"}}]},
+    {"id": "102", "labelsRemoved": [{"message": {"id": "t"}}]},  # arrived, then trashed
+]
+
+
+class TrashApi(PagedHistoryApi):
+    """PagedHistoryApi whose message `t` sits in TRASH when fetched."""
+
+    def get_message(self, message_id):
+        msg = super().get_message(message_id)
+        if message_id == "t":
+            msg["labelIds"] = ["TRASH"]
+        return msg
+
+
+class FlakyApi(PagedHistoryApi):
+    """PagedHistoryApi whose first fetch of one id raises (transient)."""
+
+    def __init__(self, walks, fail_once="f", **kw):
+        super().__init__(walks, **kw)
+        self.fail_once = fail_once
+        self.failed_yet = False
+
+    def get_message(self, message_id):
+        if message_id == self.fail_once and not self.failed_yet:
+            self.failed_yet = True
+            raise RuntimeError("connection reset")
+        return super().get_message(message_id)
+
+
+class GoneApi(PagedHistoryApi):
+    """PagedHistoryApi whose message `g` is gone at the source (404)."""
+
+    def get_message(self, message_id):
+        if message_id == "g":
+            raise GmailApiError("no such message", status_code=404)
+        return super().get_message(message_id)
+
+
+def _seed(tmp_path):
+    (tmp_path / "state.json").write_text(json.dumps(
+        {"account": ACCOUNT, "history_id": "100", "backfill": "complete"}
+    ))
+
+
+class TestCursorAdvancement:
+    """A message the policy never ingests must not freeze the cursor.
+
+    The store guard used to compare the deduplicated batch against the
+    UNdeduplicated candidate list, so one never-ingested id carrying two
+    change records (added, then archived or trashed) defeated the guard
+    every run — the cursor never moved while every run reported success.
+    """
+
+    def test_a_trashed_message_with_two_records_no_longer_freezes(
+            self, tmp_path, monkeypatch):
+        api = TrashApi({"100": [LOCK + [
+            {"id": "103", "messagesAdded": [{"message": {"id": "n1"}}]},
+        ]]})
+        provider = _make_provider(tmp_path, batch_limit=100)
+        _seed(tmp_path)
+        monkeypatch.setattr(provider.importer, "_build_api_client", lambda: api)
+
+        assert _run(provider, tmp_path) == ["n1"]          # the run succeeds
+        assert _state(tmp_path)["history_id"] == "900"     # AND the cursor moves
+
+    def test_a_trashed_id_does_not_block_a_deeper_window(
+            self, tmp_path, monkeypatch):
+        """25 one-record pages behind the lock: the backlog still drains
+        across runs and the newest mail lands."""
+        lock_page = LOCK + [
+            {"id": "103", "messagesAdded": [{"message": {"id": "m101"}}]}
+        ]
+        tail = [[{"id": str(103 + k),
+                  "messagesAdded": [{"message": {"id": f"m{101 + k}"}}]}]
+                for k in range(1, 25)]            # records 104..127 → m102..m125
+        api = TrashApi({"100": [lock_page] + tail,
+                        "122": tail[19:]})        # what run 2 reads past the cut
+        provider = _make_provider(tmp_path, batch_limit=100)
+        _seed(tmp_path)
+        monkeypatch.setattr(provider.importer, "_build_api_client", lambda: api)
+
+        first = _run(provider, tmp_path)                   # budget: pages 1-20
+        assert first == [f"m{i}" for i in range(101, 121)]  # the trash id skipped
+        assert _state(tmp_path)["history_id"] == "122"     # resumes at the cut
+
+        second = _run(provider, tmp_path)                  # the rest, then present
+        assert second == [f"m{i}" for i in range(121, 126)]
+        assert _state(tmp_path)["history_id"] == "900"
+        assert api.starts == ["100", "122"]
+
+    def test_a_single_record_for_a_skipped_id_never_blocked_anything(
+            self, tmp_path, monkeypatch):
+        """One record for a trashed message leaves the cursor free — the
+        lock needs the duplicate, not the skip."""
+        api = TrashApi({"100": [[
+            {"id": "101", "messagesAdded": [{"message": {"id": "t"}}]},
+            {"id": "103", "messagesAdded": [{"message": {"id": "n1"}}]},
+        ]]})
+        provider = _make_provider(tmp_path, batch_limit=100)
+        _seed(tmp_path)
+        monkeypatch.setattr(provider.importer, "_build_api_client", lambda: api)
+
+        assert _run(provider, tmp_path) == ["n1"]
+        assert _state(tmp_path)["history_id"] == "900"
+
+    def test_a_404_is_recorded_and_does_not_hold_the_cursor(
+            self, tmp_path, monkeypatch):
+        """Gone-at-source ids join the exclusion file (the importer path's
+        accounting) and the cursor advances past them."""
+        api = GoneApi({"100": [[
+            {"id": "101", "messagesAdded": [{"message": {"id": "g"}}]},
+            {"id": "103", "messagesAdded": [{"message": {"id": "n1"}}]},
+        ]]})
+        provider = _make_provider(tmp_path, batch_limit=100)
+        _seed(tmp_path)
+        monkeypatch.setattr(provider.importer, "_build_api_client", lambda: api)
+
+        assert _run(provider, tmp_path) == ["n1"]
+        assert _state(tmp_path)["history_id"] == "900"
+        excluded = json.loads((tmp_path / "excluded.json").read_text())
+        assert excluded["ids"] == ["g"]
+        assert excluded["reasons"] == {"deleted_at_source": 1}
+
+        api.fetched.clear()
+        second = _run(provider, tmp_path)                  # never re-fetched
+        assert api.fetched == [] and second == []
+        assert _state(tmp_path)["history_id"] == "900"
+
+    def test_a_failed_fetch_holds_the_cursor_until_it_succeeds(
+            self, tmp_path, monkeypatch):
+        """A transient fetch failure must not advance the cursor past the
+        message it lost — the next run re-diffs the same window."""
+        api = FlakyApi({"100": [[
+            {"id": "101", "messagesAdded": [{"message": {"id": "f"}}]},
+            {"id": "103", "messagesAdded": [{"message": {"id": "n1"}}]},
+        ]]})
+        provider = _make_provider(tmp_path, batch_limit=100)
+        _seed(tmp_path)
+        monkeypatch.setattr(provider.importer, "_build_api_client", lambda: api)
+
+        first = _run(provider, tmp_path)                   # delivered around the failure
+        assert first == ["n1"]
+        assert _state(tmp_path)["history_id"] == "100"     # cursor held
+
+        second = _run(provider, tmp_path)                  # re-diff: f succeeds now
+        assert second == ["f"]
+        assert _state(tmp_path)["history_id"] == "900"
+        assert api.starts == ["100", "100"]
 
 
 class TestImporterDrain:
