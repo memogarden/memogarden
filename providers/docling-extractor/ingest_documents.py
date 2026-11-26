@@ -35,6 +35,7 @@ import json
 import os
 import shutil
 import socket
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -61,6 +62,7 @@ STORE_ROOT = Path(
 LOCK_FILE = HOME / ".local/share/memogarden/docling/ingest.lock"
 MAX_CONTENT_CHARS = int(os.environ.get("DOCLING_MAX_CONTENT_CHARS", "400000"))
 MAX_SINGLE_FILE_BYTES = 100 * 1024 * 1024
+MAX_PAGES = int(os.environ.get("DOCLING_MAX_PAGES", "150"))
 
 DOCLING_SOCK_TIMEOUT_S = 1800
 
@@ -143,9 +145,29 @@ def artifact_exists_for_fact(core, fact_uuid: str) -> str | None:
     return row["uuid"] if row else None
 
 
+def page_count(pdf_path: Path) -> int | None:
+    try:
+        out = subprocess.run(
+            ["pdfinfo", str(pdf_path)], capture_output=True, text=True, timeout=30
+        ).stdout
+        for line in out.splitlines():
+            if line.startswith("Pages:"):
+                return int(line.split()[-1])
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    return None
+
+
 def make_artifact(store_path: Path, fact_uuid: str, sha: str, rel: str,
                   filename: str, triage: str) -> tuple[bool, str]:
     """Convert via the worker and create the Core Artifact. Returns (ok, detail)."""
+    pages = page_count(store_path)
+    # MAX_PAGES guard: monster docs (e.g. a 280-page deck) would hold the
+    # single-threaded worker for hours while every queued request burns its
+    # client timeout behind it. Convert those separately, one deliberate
+    # run at a time.
+    if pages is not None and pages > MAX_PAGES:
+        return False, f"skipped: {pages} pages > cap {MAX_PAGES}"
     try:
         resp = worker_convert(store_path)
     except (OSError, RuntimeError, ValueError) as e:
