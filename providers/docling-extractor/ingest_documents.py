@@ -39,6 +39,10 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from system.core import get_core
+from system.soil import get_soil
+from system.soil.database import create_email_item
+
 HOME = Path.home()
 WATCH_DIR = Path(os.environ.get("DOCLING_WATCH_DIR", HOME / "Documents"))
 DONE_DIR = Path(os.environ.get("DOCLING_DONE_DIR", WATCH_DIR / "ingested"))
@@ -129,6 +133,52 @@ def mirror_move(src: Path, rel: Path) -> Path:
     return dest
 
 
+def artifact_exists_for_fact(core, fact_uuid: str) -> str | None:
+    row = core._get_conn().execute(
+        """SELECT uuid FROM entity
+           WHERE type = 'Artifact' AND superseded_by IS NULL
+             AND json_extract(data, '$.source.attachment_uuid') = ?""",
+        (fact_uuid,),
+    ).fetchone()
+    return row["uuid"] if row else None
+
+
+def make_artifact(store_path: Path, fact_uuid: str, sha: str, rel: str,
+                  filename: str, triage: str) -> tuple[bool, str]:
+    """Convert via the worker and create the Core Artifact. Returns (ok, detail)."""
+    try:
+        resp = worker_convert(store_path)
+    except (OSError, RuntimeError, ValueError) as e:
+        return False, f"worker unreachable: {e}"
+    if resp.get("status") != "ok":
+        return False, f"convert failed: {str(resp.get('error', '?'))[:160]}"
+
+    content = resp["markdown"]
+    truncated = len(content) > MAX_CONTENT_CHARS
+    if truncated:
+        content = content[:MAX_CONTENT_CHARS]
+    artifact_data = {
+        "label": filename,
+        "content": content,
+        "content_type": "text/markdown",
+        "scopes": [triage],
+        "source": {"attachment_uuid": fact_uuid, "sha256": sha,
+                   "origin_path": rel},
+        "category": "unknown",
+        "extraction": {
+            "engine": resp["engine"]["name"],
+            "version": resp["engine"]["version"],
+            "seconds": resp["seconds"],
+            "pages": resp["pages"],
+            "truncated": truncated,
+        },
+    }
+    with get_core() as core:
+        artifact_uuid = core.entities.create("Artifact", data=artifact_data)
+        core._get_conn().commit()
+    return True, f"{artifact_uuid} ({resp['pages']}p, {resp['seconds']}s)"
+
+
 def main() -> int:
     DONE_DIR.mkdir(parents=True, exist_ok=True)
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -138,10 +188,6 @@ def main() -> int:
     except BlockingIOError:
         log("another ingest run holds the lock — exiting")
         return 0
-
-    from system.core import get_core
-    from system.soil import get_soil
-    from system.soil.database import create_email_item
 
     candidates = sorted(
         p for p in WATCH_DIR.rglob("*.pdf")
@@ -205,48 +251,34 @@ def main() -> int:
             moved = mirror_move(src, rel)
 
             if existing:
-                dups += 1
-                log(f"DUP {rel} — content already ingested ({existing[:18]}…)")
+                # Self-healing: a fact from a crashed earlier run may lack its
+                # artifact — convert + create it now, don't just skip.
+                with get_core() as core:
+                    have = artifact_exists_for_fact(core, existing)
+                if have:
+                    dups += 1
+                    log(f"DUP {rel} — already ingested ({existing[:18]}…)")
+                    continue
+                ok, detail = make_artifact(store_path, existing, sha, str(rel),
+                                           src.name, triage)
+                if ok:
+                    processed += 1
+                    log(f"ARTIFACT(recovered) {rel} -> {detail}")
+                else:
+                    failed += 1
+                    log(f"ARTIFACT-RECOVERY-FAILED {rel}: {detail}")
                 continue
 
             log(f"FACT {rel} -> {fact.uuid[:22]}… (store {sha[:12]}…)")
 
-            try:
-                resp = worker_convert(store_path)
-            except (OSError, RuntimeError, ValueError) as e:
-                log(f"WORKER-UNREACHABLE {rel}: {e} — fact kept, artifact deferred")
+            ok, detail = make_artifact(store_path, fact.uuid, sha, str(rel),
+                                       src.name, triage)
+            if not ok:
                 failed += 1
+                log(f"ARTIFACT-FAILED {rel}: {detail} — fact kept, artifact deferred")
                 continue
-            if resp.get("status") != "ok":
-                log(f"CONVERT-FAILED {rel}: {str(resp.get('error', '?'))[:160]} — fact kept, artifact deferred")
-                failed += 1
-                continue
-
-            content = resp["markdown"]
-            truncated = len(content) > MAX_CONTENT_CHARS
-            if truncated:
-                content = content[:MAX_CONTENT_CHARS]
-            artifact_data = {
-                "label": src.name,
-                "content": content,
-                "content_type": "text/markdown",
-                "scopes": [triage],
-                "source": {"attachment_uuid": fact.uuid, "sha256": sha,
-                           "origin_path": str(rel)},
-                "category": "unknown",
-                "extraction": {
-                    "engine": resp["engine"]["name"],
-                    "version": resp["engine"]["version"],
-                    "seconds": resp["seconds"],
-                    "pages": resp["pages"],
-                    "truncated": truncated,
-                },
-            }
-            with get_core() as core:
-                artifact_uuid = core.entities.create("Artifact", data=artifact_data)
-                core._get_conn().commit()
             processed += 1
-            log(f"ARTIFACT {rel} -> {artifact_uuid[:22]}… ({resp['pages']}p, {resp['seconds']}s)")
+            log(f"ARTIFACT {rel} -> {detail}")
         except Exception as e:  # noqa: BLE001 — one bad file must not stop the run
             failed += 1
             log(f"ERROR {src}: {type(e).__name__}: {e}")
