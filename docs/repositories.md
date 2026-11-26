@@ -188,6 +188,18 @@ These are related to MemoGarden but not part of the core system.
 
 **Dependencies:** consumes the trigger-maintained `change_log` feed from memogarden-system; called by memogarden-api
 
+### `memogarden-docling/`
+
+**Purpose:** The document-ingestion worker — PDF in, structured JSON (DoclingDocument) + markdown out — the extraction stage of the statement pipeline (root#14). Content-agnostic by design: no Soil, no Core, no MemoGarden paths; the MemoGarden-aware half is `providers/docling-extractor/` in the root repo.
+
+**Status:** Live (trial 2026-11-26) — socket-activated (`memogarden-docling.socket` / `memogarden-docling.service`, idle self-exit 900 s, `MemoryMax=3500M`); `CUDA_VISIBLE_DEVICES` must stay EMPTY (the MX150 is visible to torch via the GLM-OCR driver but pip torch lacks sm_61 kernels)
+**Contains:**
+- `docling_daemon.py` - unix-socket daemon: one JSON request per connection, model stays warm, honors systemd socket activation (LISTEN_FDS fd 3)
+- `pyproject.toml` - uv-pinned python 3.12 venv, docling 2.153.0 (layout-engine comparison verdict: 8.15 s/page, clean born-digital rows)
+- `README.md` - protocol + ops
+
+**Dependencies:** none on MemoGarden packages; called over the socket by `providers/docling-extractor/ingest_documents.py` (root repo), which watches `~/Documents` on `memogarden-docling-ingest.timer` (minutely): sha256 → AttachmentStore copy → Triage-scoped `Attachment` fact → `ingested/` mirror → worker conversion → Core `Artifact` (markdown, `data.scopes`, `data.source.attachment_uuid` linkage, `category="unknown"`). See `~/sysinfo/incidents/2026-11-26-memogarden-docling-documents-ingest.md`.
+
 ### `memogarden-readly/`
 
 **Purpose:** readly — RSS reader PWA on MemoGarden (the first MemoGarden app)

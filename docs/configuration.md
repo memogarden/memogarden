@@ -89,6 +89,26 @@ provider's config keys (account, hacm_path, passphrase_file,
 sync_state_path, excluded_ids_path, soil_path, batch_limit) are documented
 in [memogarden-gmail-provider](https://github.com/memogarden/memogarden-gmail-provider).
 
+### Docling Document Ingestion (trial 2026-11-26)
+
+The `memogarden-docling-ingest.timer` run
+(`providers/docling-extractor/ingest_documents.py`, api venv) reads:
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `DOCLING_WATCH_DIR` | `~/Documents` | directory scanned for new PDFs |
+| `DOCLING_DONE_DIR` | `<watch>/ingested` | mirror directory files are moved to once ingested (skipped by the scan) |
+| `DOCLING_SOCK` | `$XDG_RUNTIME_DIR/memogarden-docling/docling.sock` | the worker socket |
+| `DOCLING_MAX_CONTENT_CHARS` | `400000` | Artifact `content` cap (`extraction.truncated` set) |
+| `MEMOGARDEN_ATTACHMENT_STORE` | `~/.local/share/memogarden/attachments` | content-addressed store root |
+| `MEMOGARDEN_DATA_DIR` | (RFC-004 resolution) | pins soil.db/core.db resolution — set by the unit |
+
+The worker unit (`memogarden-docling.service`) additionally sets
+`HF_HOME=~/.local/share/memogarden/docling/model-cache` (model weights),
+`OMP_NUM_THREADS=8`, and `CUDA_VISIBLE_DEVICES=` (empty — deliberate; the
+MX150 is visible to torch but pip torch has no sm_61 kernels). The worker
+itself reads `DOCLING_IDLE_EXIT_S` (default 900).
+
 ### Precedence Order (RFC-004)
 
 Environment variables take precedence over TOML configuration:
