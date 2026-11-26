@@ -29,6 +29,10 @@ _LIST_PAGE_SIZE = 500
 _DAY_MS = 86_400_000
 _ENUM_PAGES = 12  # 6,000 messages — a full window any personal mailbox prefix fits in
 
+# History pages one incremental run reads (500 change records each). A
+# budget, not a hard limit: a backlog larger than this drains across runs.
+HISTORY_PAGES = 20
+
 
 class GmailApiError(RuntimeError):
     """Raised when the Gmail API returns an error we can't handle.
@@ -242,3 +246,28 @@ def find_oldest_message_ids(
             return ids
         lo_ms = lo_ms + _DAY_MS
     return ids
+
+
+def walk_history(api, start_history_id: str, max_pages: int = HISTORY_PAGES):
+    """Read up to `max_pages` pages of change records since a historyId.
+
+    Takes anything with a `history_list(start, token)` method. Returns
+    `(records, complete, last_id)`: the history records read, in order;
+    `complete` is False when more pages remain past the budget; `last_id`
+    is the id of the last record read (None if none carried one) — the
+    cursor a resumable walk stores so the remainder is read next run.
+    """
+    records: list[dict] = []
+    last_id: Optional[str] = None
+    token: Optional[str] = None
+    for _ in range(max_pages):
+        resp = api.history_list(start_history_id, token)
+        page = resp.get("history") or []
+        records.extend(page)
+        for record in page:
+            if record.get("id"):
+                last_id = str(record["id"])
+        token = resp.get("nextPageToken")
+        if not token:
+            return records, True, last_id
+    return records, False, last_id
