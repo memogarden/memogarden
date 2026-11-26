@@ -179,6 +179,57 @@ def make_artifact(store_path: Path, fact_uuid: str, sha: str, rel: str,
     return True, f"{artifact_uuid} ({resp['pages']}p, {resp['seconds']}s)"
 
 
+def heal_missing_artifacts(triage: str) -> tuple[int, int]:
+    """Convert facts whose Artifact is missing (crash/worker-outage recovery).
+
+    The store copy is what the worker converts, so the original file's
+    position is irrelevant — everything derives from the fact. Returns
+    (healed, failed).
+    """
+    with get_soil() as soil:
+        facts = soil._get_connection().execute(
+            """SELECT uuid,
+                      json_extract(data, '$.sha256') AS sha,
+                      json_extract(data, '$.filename') AS filename,
+                      json_extract(data, '$.content_path') AS content_path,
+                      json_extract(metadata, '$.origin_path') AS origin_path
+               FROM item
+               WHERE _type = 'Attachment'
+                 AND json_extract(metadata, '$.source') = 'documents_watch'"""
+        ).fetchall()
+    with get_core() as core:
+        have = {
+            r["uuid"]
+            for r in core._get_conn().execute(
+                """SELECT json_extract(data, '$.source.attachment_uuid') AS uuid
+                   FROM entity
+                   WHERE type = 'Artifact' AND superseded_by IS NULL
+                     AND json_extract(data, '$.source.attachment_uuid') IS NOT NULL"""
+            ).fetchall()
+        }
+    missing = [f for f in facts if f["uuid"] not in have]
+    if not missing:
+        return 0, 0
+    log(f"heal: {len(missing)} fact(s) without an Artifact")
+    healed = failed = 0
+    for f in missing:
+        store_path = STORE_ROOT / f["content_path"]
+        if not store_path.exists():
+            log(f"HEAL-SKIP {f['filename']} — store copy missing ({f['content_path']})")
+            failed += 1
+            continue
+        ok, detail = make_artifact(store_path, f["uuid"], f["sha"],
+                                   f["origin_path"] or f["filename"],
+                                   f["filename"], triage)
+        if ok:
+            healed += 1
+            log(f"ARTIFACT(healed) {f['filename']} -> {detail}")
+        else:
+            failed += 1
+            log(f"ARTIFACT-FAILED {f['filename']}: {detail}")
+    return healed, failed
+
+
 def main() -> int:
     DONE_DIR.mkdir(parents=True, exist_ok=True)
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -189,14 +240,6 @@ def main() -> int:
         log("another ingest run holds the lock — exiting")
         return 0
 
-    candidates = sorted(
-        p for p in WATCH_DIR.rglob("*.pdf")
-        if p.is_file() and DONE_DIR not in p.parents
-    )
-    if not candidates:
-        return 0
-    log(f"{len(candidates)} PDF(s) pending in {WATCH_DIR}")
-
     with get_core() as core:
         triage = triage_scope_uuid(core)
     if triage is None:
@@ -204,6 +247,18 @@ def main() -> int:
         return 1
 
     processed = dups = skipped = failed = 0
+    # heal FIRST: facts from crashed/outaged runs may already sit in the
+    # mirror with no artifact — recoverable from the fact alone
+    healed, heal_failed = heal_missing_artifacts(triage)
+    processed += healed
+    failed += heal_failed
+
+    candidates = sorted(
+        p for p in WATCH_DIR.rglob("*.pdf")
+        if p.is_file() and DONE_DIR not in p.parents
+    )
+    if candidates:
+        log(f"{len(candidates)} PDF(s) pending in {WATCH_DIR}")
     for src in candidates:
         try:
             rel = src.relative_to(WATCH_DIR)
