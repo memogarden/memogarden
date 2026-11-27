@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -48,7 +48,7 @@ def main() -> None:
                 "confidence": verdict["confidence"],
                 "evidence": verdict["evidence"],
                 "mixed": verdict["mixed"],
-                "classified_at": datetime.now(datetime.UTC).isoformat(),
+                "classified_at": datetime.now(timezone.utc).isoformat()  # noqa: UP017 — matches ingest_documents.py,
             }
             stats[verdict["doc_class"]] = stats.get(verdict["doc_class"], 0) + 1
             considered += 1
