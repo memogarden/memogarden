@@ -97,6 +97,28 @@ data:
       it; date passage NEVER sets it ("never silently converted after
       date past").
 
+  did_not_occur:
+    type: boolean
+    required: false
+    description: >
+      The dismiss review stamp (RFC-014 amendment 2026-11-26, api#57):
+      mark-occurred's symmetric sibling. Set ONLY by the dismiss action
+      (POST /api/v1/events/<uuid>/dismiss). Review stamps are TERMINAL:
+      once either occurred_at or did_not_occur exists, the review state
+      is closed — mark-after-dismiss and dismiss-after-mark are 409, and
+      un-stamping is not offered (immutability lives at the review-API
+      layer; Soil stays sovereign, SG-11).
+
+  dismissed_at:
+    type: datetime-UTC
+    required: false
+    description: >
+      The dismissal moment (defaults to now at dismiss time). Unlike
+      occurred_at there is NO not-in-the-future rule — dismissing a
+      future slot is legitimate (the slot will not happen);
+      occurred_at keeps its rule because an occurrence cannot postdate
+      its stamp.
+
   status:
     type: enum
     enum: [confirmed, tentative]
@@ -340,7 +362,12 @@ metadata:
 #                tada 'completed' | 'cancelled' | 'skipped' (reserved
 #                for sources that record skips); gcal 'occurred' at
 #                convergence (normalizing gcal to 'completed' would be a
-#                semantic loss — decided at the convergence review)
+#                semantic loss — decided at the convergence review);
+#                gcal 'did_not_occur' for the dismiss verdict (RFC-014
+#                amendment 2026-11-26, api#57 — the recorded
+#                non-occurrence, visible in the timeline rather than a
+#                silent gap; optional metadata.reason carries the
+#                reviewer's stated reason)
 #   resolved_at  the decision/observation moment (was task facts'
 #                status_updated_at)
 #   day          tada day-walk provenance
@@ -359,6 +386,10 @@ metadata:
 #                 resolved_at when there was no slot
 #   skipped    -> the cancelled rule (didn't happen: slot, else decision)
 #   gcal convergence -> the actual occurrence time (was occurred_at)
+#   gcal did_not_occur -> the cancelled rule (the slot it was meant for,
+#                falling back to the dismissal moment when there was no
+#                slot) — a recorded non-occurrence happened "at" its
+#                missed slot or not at all
 #   Providers set it deliberately; date passage never sets it silently.
 #
 # CONVERSION ordering contract: the Event fact lands BEFORE the Task

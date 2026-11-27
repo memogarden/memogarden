@@ -51,6 +51,26 @@ CREATE INDEX IF NOT EXISTS idx_item_canonical ON item(canonical_at);
 CREATE INDEX IF NOT EXISTS idx_item_fidelity ON item(fidelity);
 
 -- ============================================================================
+-- EVENT VERDICT IDENTITY (system#5, 2026-11-27)
+-- ============================================================================
+-- One Event verdict fact (mark-occurred / dismiss) per live event entity.
+-- Integrity-carrying, not performance: mark-occurred's _MARK_LOCK +
+-- in-transaction re-probe (api/v1/events.py) is per-process; this index
+-- makes one-verdict-per-event hold across processes — a raced
+-- double-insert fails here with IntegrityError instead of silently
+-- duplicating the verdict. Facts carry data.event_uuid only on the review
+-- path (tada completions omit it), so the IS NOT NULL guard keeps tada's
+-- 10k+ rows out of the index entirely. Applies to existing DBs via the
+-- executescript-at-boot mechanism (init_system -> Soil.init_schema) —
+-- the api#95 item_fts precedent; no core migration involved.
+-- Indexes are accepted optimizations, not canonical schema — the unique
+-- ones enforce integrity; see docs/database-indexes.md.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_event_verdict_identity
+ON item(json_extract(data, '$.event_uuid'))
+WHERE _type = 'Event' AND superseded_by IS NULL
+  AND json_extract(data, '$.event_uuid') IS NOT NULL;
+
+-- ============================================================================
 -- ITEM FULL-TEXT INDEX (derived, rebuildable — api#95 Phase 1)
 -- ============================================================================
 
