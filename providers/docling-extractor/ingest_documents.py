@@ -58,6 +58,8 @@ from system.core import get_core
 from system.soil import get_soil
 from system.soil.database import create_email_item
 
+import doc_class
+
 HOME = Path.home()
 WATCH_DIR = Path(os.environ.get("DOCLING_WATCH_DIR", HOME / "Documents"))
 DONE_DIR = Path(os.environ.get("DOCLING_DONE_DIR", WATCH_DIR / "ingested"))
@@ -208,6 +210,10 @@ def make_artifact(store_path: Path, fact_uuid: str, sha: str, rel: str,
     truncated = len(content) > MAX_CONTENT_CHARS
     if truncated:
         content = content[:MAX_CONTENT_CHARS]
+    # Stage-2 v1 (register D10 revised): content-only doc_class rules at
+    # the extraction seam — filenames are never a signal; mixed/unknown
+    # stay in Triage (operator ruling 2026-11-27). Evidence rides along.
+    verdict = doc_class.classify(content)
     artifact_data = {
         "label": filename,
         "content": content,
@@ -216,6 +222,14 @@ def make_artifact(store_path: Path, fact_uuid: str, sha: str, rel: str,
         "source": {"attachment_uuid": fact_uuid, "sha256": sha,
                    "origin_path": rel},
         "category": "unknown",
+        "doc_class": verdict["doc_class"],
+        "classification": {
+            "method": "rules-v1",
+            "confidence": verdict["confidence"],
+            "evidence": verdict["evidence"],
+            "mixed": verdict["mixed"],
+            "classified_at": datetime.now(timezone.utc).isoformat(),
+        },
         "extraction": {
             "engine": resp["engine"]["name"],
             "version": resp["engine"]["version"],
