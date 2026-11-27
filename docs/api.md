@@ -120,6 +120,49 @@ Console pages: `/console/items` (browse/search) and `/item/<uuid>`
 the inspector cascade to undecided family members (triage/never-labeled
 children); decided children and parents are never rewritten.
 
+### Artifacts — ingested documents (statement pipeline, register v2 D9)
+
+The document-ingestion stage (docling worker + watch) creates a Core
+`Artifact` entity per document — markdown content, provenance-linked to
+its `Attachment` fact (`data.source.attachment_uuid`), scope-labeled in
+`data.scopes`. Read surface (all JWT-only, §4.5-gated — advisory while
+`MEMOGARDEN_SCOPE_ENFORCEMENT` is off):
+
+```bash
+# List (newest first): ?category= & ?scope= (uuid/alias/label) filters
+curl -H "Authorization: Bearer $JWT" \
+  "http://localhost:8600/api/v1/artifacts?limit=50"
+# → {"artifacts": [{uuid, label, category, scopes, pages, seconds,
+#     truncated, content_type, created_at, updated_at}],   # no content
+#    "total", "offset", "limit"}
+
+# Search: recent (no q) → keyword_fallback (LIKE) → lexical (entity_fts
+# bm25 — the runtime-ensured internal index over entity content; FTS
+# failures degrade down the ladder, never up). Lexical hits are
+# re-checked against the LIVE entity row for existence + scope.
+curl -H "Authorization: Bearer $JWT" \
+  "http://localhost:8600/api/v1/artifacts/search?q=sp+services&limit=50"
+# → {"mode": "lexical|keyword_fallback|recent", "q", "results":
+#     [{uuid, label, category, scopes, pages, seconds, updated_at, score?}],
+#     "offset", "limit", "next_offset", "has_more"}
+
+# Detail: full content + provenance + the source fact's summary
+curl -H "Authorization: Bearer $JWT" \
+  "http://localhost:8600/api/v1/artifacts/core_<uuid>"
+# → {"artifact": {…, content, source, derived_from},
+#    "source_fact": {uuid, filename, mime_type, size, sha256, …}}
+
+# Source file: the original PDF, streamed from the content-addressed
+# store (path resolved under the store root, never trusted verbatim)
+curl -OJ -H "Authorization: Bearer $JWT" \
+  "http://localhost:8600/api/v1/artifacts/core_<uuid>/file"
+```
+
+Console page: `/console/documents` — browse/search/detail for ingested
+documents, with relabel through the existing `/mg edit` verb (no new
+write surface; cascade to derived facts is register D8, a later slice).
+No REST write surface: artifacts are created by the extractor only.
+
 
 ### Change Password (RFC-015 §3.1)
 
