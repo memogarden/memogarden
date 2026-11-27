@@ -129,7 +129,7 @@ its `Attachment` fact (`data.source.attachment_uuid`), scope-labeled in
 `MEMOGARDEN_SCOPE_ENFORCEMENT` is off):
 
 ```bash
-# List (newest first): ?category= & ?scope= (uuid/alias/label) filters
+# List (newest first): ?doc_class= & ?scope= (uuid/alias/label) filters
 curl -H "Authorization: Bearer $JWT" \
   "http://localhost:8600/api/v1/artifacts?limit=50"
 # → {"artifacts": [{uuid, label, category, scopes, pages, seconds,
@@ -138,8 +138,9 @@ curl -H "Authorization: Bearer $JWT" \
 
 # Search: recent (no q) → keyword_fallback (LIKE) → lexical (entity_fts
 # bm25 — the runtime-ensured internal index over entity content; FTS
-# failures degrade down the ladder, never up). Lexical hits are
-# re-checked against the LIVE entity row for existence + scope.
+# failures degrade down the ladder, never up). ?doc_class= filters.
+# Lexical hits are re-checked against the LIVE entity row for
+# existence + scope.
 curl -H "Authorization: Bearer $JWT" \
   "http://localhost:8600/api/v1/artifacts/search?q=sp+services&limit=50"
 # → {"mode": "lexical|keyword_fallback|recent", "q", "results":
@@ -159,9 +160,12 @@ curl -OJ -H "Authorization: Bearer $JWT" \
 ```
 
 Console page: `/console/documents` — browse/search/detail for ingested
-documents, with relabel through the existing `/mg edit` verb (no new
-write surface; cascade to derived facts is register D8, a later slice).
-No REST write surface: artifacts are created by the extractor only.
+documents (doc_class filter: statement/overview/bill/notice/policy/
+document/mixed/unknown), with relabel through the existing `/mg edit`
+verb (no new write surface; cascade to derived facts is register D8,
+a later slice). No REST write surface: artifacts are created by the
+extractor only, which stamps `doc_class` at arrival (stage-2 rules-v1,
+content-only, evidence-carrying; mixed/unknown stay in Triage).
 
 
 ### Change Password (RFC-015 §3.1)
