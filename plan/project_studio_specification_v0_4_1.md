@@ -1,8 +1,8 @@
 # Project Studio Specification
 
-**Version:** 0.4.1
+**Version:** 0.4.2
 **Status:** Draft
-**Last Updated:** 2026-02-12
+**Last Updated:** 2026-11-28
 **Supersedes:** MemoGarden Project System PRD v0.3.0
 
 ---
@@ -407,6 +407,10 @@ Creates:
 - Updates Artifact.content in Core
 - System relation: `triggers(source_item, delta)` if applicable
 
+Commit processing (fragment decomposition, extent computation, extent persistence) is
+owned by the **Artifact Handler** (§15) — the main service validates, gates, and
+persists, but does not implement artifact handling itself.
+
 **Delta Operations Syntax:**
 ```
 +15:^a7f              Add fragment a7f at line 15
@@ -792,7 +796,113 @@ Mobile-first voice input for:
 
 ---
 
-## 15. Revision History
+## 15. Artifact Handler
+
+**Added v0.4.2 (operator ruling, 2026-11-28).** The main MemoGarden service
+(memogarden-system / memogarden-api) does **not** take on responsibility for handling
+artifacts. Artifact handling — fragment decomposition, extent determination, extent
+persistence, and extent refresh on edit — is owned by a dedicated **Artifact Handler**
+component. This section specifies the responsibility boundary and the storage design;
+implementation mechanics live with the handler's own repository when built.
+
+### 15.1 Boundary ruling
+
+| Concern | Owner |
+|---------|-------|
+| Artifact as Core entity (belief state, hash chain, §4.5 gates) | Main service (unchanged) |
+| `/mg` verb surface: validation, optimistic locking, Soil delta items, SSE | Main service (unchanged) |
+| Fragment decomposition (§6.2), fragment ID generation | **Artifact Handler** |
+| **Fragment extents** — determination, storage, refresh on edit | **Artifact Handler** |
+| Persistence plumbing for handler output (side-car write, catch-up) | Thin bridge module in the main service process (plumbing only — no handling logic) |
+
+The bridge must stay thin: if fragment/extent logic starts accumulating in the main
+service, the ruling is being violated in substance.
+
+### 15.2 Fragment extents
+
+§6.2 treats a fragment as a *point* reference (insert-at-line). Fragments are actually
+*spans*: an **extent** locates the fragment in the current artifact state.
+
+- Extent = `(fragment_id, start_line, end_line)` — line-inclusive, resolved against a
+  specific artifact content version. Char-level extents are a future refinement; v1 is
+  line-granular.
+- Fragment IDs remain content-hash based (§6.2 `generate_fragment_id`), which gives
+  **id stability across edits**: a fragment whose text is unchanged keeps its ID; only
+  its position (extent) moves.
+- This generalizes the §6.4 reference type `label:line` → fragment references resolve
+  to spans via the extent set.
+
+### 15.3 Handler shape
+
+The handler follows the memogarden-docling operational template: a **content-agnostic
+worker** in its own repository, reached over a local unix socket (socket-activated user
+units, idle self-exit), with its own pinned runtime. It holds **no MemoGarden
+credentials and no Core/DB access** — text in, spans out:
+
+```
+input:  { artifact_uuid, base_content, new_content, fragment_registry? }
+output: { fragments: [ { id, content, start_line, end_line } ],
+          removed: [ id ], extents_version }
+```
+
+### 15.4 Extent storage — without Artifact-schema dependency
+
+The Artifact schema (§5.2) is **not extended**: no `fragments` field, no reserved
+`data` key, no schema-version coupling. Fragments/extents are *derived metadata about*
+the artifact — not part of its belief state — and are stored accordingly:
+
+- **Side-car in the Core database**, following the `entity_fts` precedent: internal
+  derived tables (keyed `(artifact_uuid, fragment_id)`, carrying content hash, extent
+  lines, and the commit the set was computed against, plus a per-artifact head cursor
+  for staleness detection), runtime-ensured by the owning path, **not** part of the
+  canonical `schemas/sql/schema.sql`, excluded from the entity hash chain, documented
+  outside the canonical schema (as `docs/database-indexes.md` already does for FTS).
+- **Traceability stays on the delta trail**: ArtifactDelta Items (§5.3) gain an
+  optional fragment/extent map for the commit they record, so historical extents are
+  replayable and the side-car is a materialized *current view* — rebuildable from
+  deltas, exactly the posture `snapshots` (§5.2) already declare.
+- Fragment **content** is never stored on the artifact: it rides the carrying item
+  (Message.fragments, §5.5) and/or the delta's fragment map; resolution is a lookup.
+- Rejected alternatives: a reserved key in Artifact `data` (schema dependency in
+  substance); a Fragment *entity* type (entity explosion, consistency burden); a
+  handler-owned store (split-brain against Core's single-writer discipline).
+
+### 15.5 Edit flow — extent refresh
+
+1. Client submits a commit (ops or full content) → main service validates `based_on`
+   hash + §4.5 gates, creates the ArtifactDelta, updates `Artifact.content` — the
+   artifact's belief lands **first**.
+2. Bridge invokes the handler with (base content, new content) → handler returns the
+   fresh extent set (re-decomposition is exact and cheap at ≤400k chars; unchanged
+   fragments keep their IDs, so the extent diff is meaningful).
+3. Bridge persists the side-car rows in the same boundary; the delta records the map.
+
+**Failure posture** (docling / embed-daemon precedents): if the handler is
+unreachable, the commit still succeeds and the side-car head cursor falls behind —
+staleness is *visible*, never silent corruption — and a change_log-driven catch-up
+sweep (system#12 change feed) re-invokes the handler when it returns. Concurrency is
+unchanged: all Core writes remain in the main service process; the handler never
+touches the database.
+
+### 15.6 Client impact
+
+Project Studio and ArtiLab (and any future artifact client) stop owning fragment
+registries entirely: they render and resolve references via read surfaces backed by
+the extent side-car. The §6.2 client-side fragment protocol becomes one supported
+input shape (ops with client-supplied fragments for agent-driven edits), not a
+requirement for every client.
+
+### 15.7 Migration and non-goals
+
+- No production migration: the delta verbs have zero production rows today; legacy
+  point-ops remain valid (a point insert is a 1-line extent).
+- Non-goals for v1: char-level extents, cross-artifact fragments, semantic analysis
+  inside the handler (the stage-3 statement pipeline may later ride the same handler,
+  but that is a separate decision).
+
+---
+
+## 16. Revision History
 
 | Version | Date | Changes |
 |---------|------|---------|
@@ -800,10 +910,11 @@ Mobile-first voice input for:
 | 0.2.0 | 2025-12-27 | Added ToolCall, Frame, stack semantics, JCS shared tool model |
 | 0.3.0 | 2025-12-29 | Storage split (Soil/Core), Item hierarchy, Trigger relations |
 | 0.4.0 | 2026-02-12 | **Revised conversation operations:** Replace `collapse_conversation`/`reopen_conversation` with `fold`; clarified implicit branching via RFC-003 ContextFrame inheritance. Aligned with RFC-005 single-word verb convention. |
+| 0.4.2 | 2026-11-28 | **Added §15 Artifact Handler** (operator ruling): main service does not handle artifacts — dedicated handler owns fragment decomposition, extents, extent storage + refresh; extents stored as derived side-car (entity_fts precedent) with delta-trail traceability, Artifact schema untouched; §7.2 cross-ref. (0.4.1 edits carried unversioned.) |
 
 ---
 
-## 16. References
+## 17. References
 
 - JCE Whitepaper v1.0 — Parent architecture
 - MemoGarden PRD v0.6.0 — Substrate specification
