@@ -1,6 +1,6 @@
 # Project Studio Specification
 
-**Version:** 0.4.4
+**Version:** 0.4.5
 **Status:** Draft
 **Last Updated:** 2026-11-28
 **Supersedes:** MemoGarden Project System PRD v0.3.0
@@ -799,15 +799,16 @@ Mobile-first voice input for:
 ## 15. Artifact Handler
 
 **Added v0.4.2 (operator ruling, 2026-11-28); v0.4.3 corrected storage to canonical
-service state (not per-app derived metadata); v0.4.4 formalized per-version span
-semantics + the span-set validity contract (algorithm pluralism) and renamed
-extent → fragment span.** The main MemoGarden service (memogarden-system /
-memogarden-api) does **not** take on responsibility for *handling* artifacts.
-Artifact handling — fragment decomposition, span determination, span persistence, and
-span refresh on edit — is owned by a dedicated **Artifact Handler** component; the
-main service persists and serves the results as canonical state. This section
-specifies the responsibility boundary and the storage design; implementation
-mechanics live with the handler's own repository when built.
+service state; v0.4.4 per-version semantics + the span-set validity contract
+(algorithm pluralism); v0.4.5 redefined spans as semantic text fragments with
+char/block addressing, and made deltas minimal via span_ops diffs (never full
+sets).** The main MemoGarden service (memogarden-system / memogarden-api) does
+**not** take on responsibility for *handling* artifacts. Artifact handling —
+fragment decomposition, span determination, span persistence, and span refresh on
+edit — is owned by a dedicated **Artifact Handler** component; the main service
+persists and serves the results as canonical state. This section specifies the
+responsibility boundary and the storage design; implementation mechanics live with
+the handler's own repository when built.
 
 ### 15.1 Boundary ruling
 
@@ -824,22 +825,36 @@ service, the ruling is being violated in substance.
 
 ### 15.2 Fragment spans
 
-**Terminology (v0.4.4):** the location of a fragment in an artifact version is a
-**fragment span** — `(fragment_id, start_line, end_line)`, line-inclusive. §6.5's
-`span` (the character range of a reference occurrence inside a message) is a
-different object: *reference span*. The qualified names disambiguate; "span set"
-always means the fragment-span set for one artifact content version.
+**Definition (v0.4.5):** a fragment is a *semantic text span* — a clause, a sentence
+part, possibly a full sentence — **not a line region**. A variety of algorithms may
+determine spans (§15.6 recommends a layered pipeline); the contract is
+algorithm-independent. The **fragment span** locates the fragment within an artifact
+content version:
 
+```
+{ fragment_id, block_hash, start_char, end_char, content }
+```
+
+- `fragment_id` = content hash of the exact span text (§6.2).
+- `block_hash` + `start_char`/`end_char` are **relative to the containing markdown
+  block** (paragraph, list item, table cell, code fence — blocks are themselves
+  content-addressed). Block-relative addressing is what keeps re-addressing local:
+  text that moves with its block never re-addresses; only spans inside a *changed*
+  block are re-chunked (§15.7).
+- A navigation **path/selector** (heading chain + block ordinal, for scrolling
+  rendered markdown or structured views) is *derived at read time* from (version,
+  block_hash) — never stored per-span, so it can never drift.
+- **Terminology:** §6.5's `span` (character range of a reference occurrence inside a
+  message) is a different object — *reference span*. Qualified names disambiguate;
+  "span set" always means the fragment-span set for one artifact content version.
 - **Per-version only.** A span set is a property of an artifact *content version*
   (keyed by the delta-chain content hash — `compute_content_hash`), never of the
   artifact timelessly. A metadata-only edit (`/mg edit` on doc_class/scope/tags)
   bumps the entity version but not the content version: **no new span set, no
   recomputation**. Only content edits mint a version and receive a set.
-- Span = `(fragment_id, start_line, end_line)` resolved against that version.
-  Char-level spans are a future refinement; v1 is line-granular.
-- Fragment IDs remain content-hash based (§6.2 `generate_fragment_id`), which gives
-  **id stability across edits** *when producers carry ids forward* (§15.6): a
-  fragment whose text is unchanged keeps its ID; only its position moves.
+- Fragment IDs remain content-hash based, which gives **id stability across edits**
+  *when producers carry ids forward* (§15.6): a fragment whose text is unchanged
+  keeps its ID; only its location moves.
 - This generalizes the §6.4 reference type `label:line` → fragment references
   resolve to spans via the version's span set.
 
@@ -852,7 +867,7 @@ credentials and no Core/DB access** — text in, spans out:
 
 ```
 input:  { artifact_uuid, base_content, new_content, fragment_registry? }
-output: { fragments: [ { id, content, start_line, end_line } ],
+output: { fragments: [ { id, content, block_hash, start_char, end_char } ],
           removed: [ id ], spans_version }
 ```
 
@@ -860,41 +875,52 @@ This contract is not handler-exclusive: any producer — the handler (reference
 implementation) or a client following §6.2 — may emit a span set, subject to the
 same validity contract (§15.6), validated at the persistence boundary.
 
-### 15.4 Span storage — canonical service state (corrected v0.4.3)
+### 15.4 Span storage — canonical, diff-encoded (v0.4.5)
 
-v0.4.2 classified spans as derived side-car (the `entity_fts` posture). **That
-classification was wrong for this data.** The FTS analogy fits *per-consumer indexes*
-— search hits that only one service reads. Fragments are *communication*: Project
-Studio, ArtiLab, generic viewers, and agent editors must all reference the **same**
-fragment set, or shared annotations and cross-app communication become impossible.
-Per-app derived spans would create exactly that fragmentation. Therefore:
+Spans are **canonical main-service state** (v0.4.3 correction stands: the
+`entity_fts` derived-side-car posture fits per-consumer indexes, not cross-app
+communication state — Project Studio, ArtiLab, viewers, and agent editors must all
+reference the *same* fragment set). But canonical does **not** mean deltas embed
+sets: a full set on a 400k-char statement is thousands of spans, and embedding it
+in every ArtifactDelta — even for a one-word edit — is exactly the bloat this
+section prevents. Encoding:
 
-- **Fragment identity needs no sync at all**: IDs are content hashes (§6.2) —
-  identical content anywhere yields the identical ID. Identity is self-converging;
-  there is no registry to distribute.
-- **Span sets are canonical main-service state**: a first-class table in the
-  canonical schema (its own `artifact_fragment_span` table — the Artifact *entity*
-  schema stays untouched, honoring the original constraint; the dependency runs one
-  way: spans reference artifacts, never the reverse). Rows are written
-  transactionally in the commit boundary and are **immutable per content version**:
-  each stored set is *a* valid set for that version (§15.6), never rewritten. The
-  current set is the head pointer; history is per-version sets.
-- The `entity_fts` posture (runtime-ensured, outside canonical schema, rebuildable)
-  remains reserved for genuine indexes that consumers reach through one service. It
-  does not fit addressable, cross-app state.
+- **`artifact_fragment` (content-addressed, insert-only, version-independent)**:
+  `(artifact_uuid, fragment_id, content, block_hash, start_char, end_char)`. A
+  fragment's block-relative address cannot change without its block changing — and
+  a changed block re-chunks its spans anyway (§15.7). Duplicate block content is
+  disambiguated by occurrence index (deterministic).
+- **`artifact_span_set` (per-version membership, tiny)**:
+  `(artifact_uuid, content_version, fragment_id, ord)`. A version's membership rows
+  are exactly the span changes its delta introduced.
+- **ArtifactDelta carries `span_ops`, never a set**: `{span_add: […], span_del:
+  [fragment_id]}` — typically 1–5 ops for a local edit. The full set for any
+  version = fold of `span_ops` along the delta chain; the head set is materialized
+  in the two tables above for O(1) reads. Each delta also carries a `spans_digest`
+  (hash of the materialized set) for verification.
 
-Rejected alternatives (unchanged from v0.4.2, plus the retraction): a reserved key
-in Artifact `data` (schema dependency in substance); a Fragment *entity* type
-(entity explosion, consistency burden); a handler-owned store (split-brain against
-Core's single-writer discipline); and *per-app derived spans* (this section's
-correction — unsyncable across apps).
+This mirrors the substrate's own pattern — content is `base ⊕ ops`, so spans are
+`parent-set ⊕ span_ops` — meaning span history replays through the same machinery
+that replays content (`get_artifact_at_commit` / `diff_commits` generalize
+directly). Delta size is proportional to the *edit*; a whole-rechunk shows up
+honestly as a large `span_ops` diff instead of being silently absorbed.
+
+**Stability incentive is structural**: a stable producer emits near-empty
+`span_ops`; the §15.6 carry-forward SHOULD directly minimizes delta size. Stability
+is never *required* for correctness — a re-chunked version is just a bigger diff.
+
+Rejected alternatives (unchanged from v0.4.2/v0.4.3): a reserved key in Artifact
+`data` (schema dependency in substance); a Fragment *entity* type (entity
+explosion); a handler-owned store (split-brain against single-writer); per-app
+derived spans (unsyncable); **full span sets embedded in deltas** (the bloat this
+section exists to prevent).
 
 ### 15.5 Multi-app coherence — the single-resolver rule
 
 Nothing needs syncing, because **no app ever holds authoritative spans**:
 
 1. **One resolver**: reference resolution (`^a7f` → span + content) is a
-   main-service read surface backed by the canonical table. Apps ask; they never
+   main-service read surface backed by the canonical tables. Apps ask; they never
    compute *authoritatively*. Two apps citing `^a7f` on the same artifact version
    resolve to the same span and the same content because the ID is the content
    hash and the resolver is singular.
@@ -920,28 +946,58 @@ algorithm*: a stored set is acceptable for version V iff it passes these
 mechanically checkable invariants —
 
 1. **Content-addressed ids**: every span's `fragment_id` equals
-   `generate_fragment_id` of the fragment content it claims.
-2. **Fidelity**: each span's fragment content equals the actual lines it covers in
-   V (no ghost spans, no drift).
-3. **Structural sanity**: spans in-bounds and pairwise disjoint (v1 line
-   granularity; unspanned lines are legal — fragments are *atomic semantic units*,
-   not a full partition).
+   `generate_fragment_id` of the exact span text.
+2. **Fidelity**: the span text equals V's content at
+   `(block_hash, start_char..end_char)` (no ghost spans, no drift).
+3. **Structural sanity**: within a block, spans in-bounds, ordered, pairwise
+   disjoint in char ranges; full coverage of the block is NOT required (fragments
+   are *atomic semantic units*, not a partition).
 4. **One set per version**: first valid writer wins; sets are immutable once
    stored (§15.4).
 
 Any producer whose output passes these invariants — the handler's reference
 algorithm, or an editor's own — is reference-safe, because an id resolves to
 exactly the text it hashes regardless of who chunked it. Validation runs at the
-persistence boundary; the algorithm itself is pluggable per producer and may
-evolve over time without rewriting history (old sets are immutable).
+persistence boundary; the algorithm is pluggable per producer and may evolve over
+time without rewriting history (old sets are immutable).
 
 **Stability is a quality goal, not a gate**: producers SHOULD carry ids forward
-for unchanged fragment content (diff-anchored reuse, §6.2's content-hash ids make
-this natural), and id-churn over unchanged lines is the producer-quality metric.
-Algorithm changes between edits cost churn, never broken references.
-Determinism is required only per (algorithm, content) — same algorithm, same
-content ⇒ same set — which is what makes validation-by-recompute and pending
-catch-up (§15.7) sound.
+for unchanged fragment content (diff-anchored reuse — content-hash ids make this
+natural), and id-churn over unchanged text is the producer-quality metric.
+Algorithm changes between edits cost churn, never broken references. Determinism
+is required only per (algorithm, content) — same algorithm, same content ⇒ same
+set — which is what makes validation-by-recompute and pending catch-up (§15.7)
+sound.
+
+**Recommended chunking pipeline (non-normative — the contract above is the only
+gate).** Layered, deterministic-first, LLM optional:
+
+- **Stage 0 — block parse (deterministic):** parse the markdown into a
+  content-addressed block tree (headings, paragraphs, list items, table cells,
+  code fences; fences atomic). Yields `block_hash` addressing and the navigation
+  path for free.
+- **Stage 1 — sentence segmentation (deterministic, the floor):** within a block,
+  split on sentence boundaries with a battle-tested segmenter — abbreviation /
+  decimal / initial guards ("No. 1", "S$1,234.56" are the classic traps;
+  pysbd/pragmatic-segmenter class, not naive `split('.')`). Each sentence is a
+  span candidate. Locality: a one-word edit re-segments only its own sentence.
+- **Stage 2 — density refinement (deterministic, rule-based):** implement
+  "denser text gets more fragments" with cheap, transparent density features
+  (digits, currency, dates, entity/term hits — profiled per `doc_class`:
+  statement vs policy vs notice). Dense sentences split at *clause boundaries*
+  (commas/semicolons); adjacent sparse sentences merge. Rule-based and
+  version-pinned on purpose: a learned density model would churn ids on every
+  model bump.
+- **Stage 3 — LLM refinement (optional, async, a separate producer pass):** for
+  passages deterministic boundaries serve badly (run-on clauses, prose-ified
+  tables). The LLM proposes *adjustments to existing spans* (split/merge anchored
+  to char ranges), never a wholesale re-chunk, and lands through the same
+  validation — never inside the synchronous write path (nondeterminism, latency,
+  and cost stay out of commit).
+
+Why layered: stages 1–2 depend only on *local* context, so edits stay local
+(small `span_ops`); the write path stays deterministic; and the naive→complex
+spectrum is honored without coupling the system to any single model.
 
 ### 15.7 Edit flow — span refresh
 
@@ -952,7 +1008,8 @@ catch-up (§15.7) sound.
    (re-decomposition is exact and cheap at ≤400k chars; unchanged fragments keep
    their IDs, so the span diff is meaningful). A client may supply its own set via
    the §6.2 path; it passes the same validation (§15.6).
-3. **Producer reachable**: span rows are written in the same transaction boundary —
+3. **Producer reachable**: fragment rows + membership rows + the delta's
+   `span_ops`/`spans_digest` are written in the same transaction boundary —
    content, delta, and spans land as one atomic step.
 4. **Producer down** (for handler-driven commits): the commit still lands (belief
    capture outranks reference infrastructure), and the new version is marked
@@ -977,12 +1034,14 @@ for cross-app references.
 
 ### 15.9 Migration and non-goals
 
-- Spans now need a proper (tiny) canonical-schema migration — trivially empty at
-  zero production deltas; legacy point-ops remain valid (a point insert is a 1-line
-  span).
-- Non-goals for v1: char-level spans, cross-artifact fragments, semantic analysis
-  inside the handler (the stage-3 statement pipeline may later ride the same handler,
-  but that is a separate decision).
+- Canonical migration adds the two tables (`artifact_fragment`,
+  `artifact_span_set`) — trivially empty at zero production deltas; legacy
+  point-ops remain valid (a point insert is a single sentence-length span under
+  the reference algorithm).
+- Non-goals for v1: LLM chunking inside the *synchronous* write path (it is a
+  producer-side refinement, §15.6 stage 3); cross-artifact fragments; semantic
+  analysis inside the handler (the stage-3 statement pipeline may later ride the
+  same handler, but that is a separate decision).
 
 ---
 
@@ -997,6 +1056,7 @@ for cross-app references.
 | 0.4.2 | 2026-11-28 | **Added §15 Artifact Handler** (operator ruling): main service does not handle artifacts — dedicated handler owns fragment decomposition, extents, extent storage + refresh; extents stored as derived side-car (entity_fts precedent) with delta-trail traceability, Artifact schema untouched; §7.2 cross-ref. (0.4.1 edits carried unversioned.) |
 | 0.4.3 | 2026-11-28 | **§15.4–15.6 corrected (operator review): extents are CANONICAL main-service state, not per-app derived metadata** — multi-app referencing (Project Studio / ArtiLab / viewers / agent editors) needs one resolver or shared annotations fragment; new first-class `artifact_fragment_extent` canonical table (Artifact entity schema still untouched), immutable per commit (pure function of content), single-resolver rule + cache-by-commit (§15.5), transactional write with explicit `extents_pending` degradation when the handler is down (§15.6) |
 | 0.4.4 | 2026-11-28 | **§15.2/§15.6 sharpened (operator review): per-version semantics formalized** — span sets key on the CONTENT version (metadata-only edits never recompute); terminology extent → **fragment span** (qualified vs §6.5 reference span); **span-set validity contract (§15.6)**: invariants over algorithms — id/ fidelity/structure/one-set-per-version are MUST, algorithm agreement is NOT; stability (unchanged text keeps ids) demoted to a producer SHOULD (diff-anchored carry-forward); producers plural (handler reference algo or editor's own), validated at the persistence boundary; `artifact_fragment_extent` table renamed `artifact_fragment_span`; `extents_pending` → `spans_pending` |
+| 0.4.5 | 2026-11-28 | **§15 redefined (operator review): spans are SEMANTIC TEXT FRAGMENTS** — clause/sentence-part/sentence, not line regions; addressing = block-relative CHAR offsets (`block_hash, start_char, end_char`; blocks content-addressed; navigation path derived at read, never stored); **deltas minimal (§15.4)**: `artifact_fragment` (content-addressed, version-independent rows) + `artifact_span_set` (per-version membership) + deltas carry `span_ops` diffs + `spans_digest` — full sets never embedded in deltas, history replays via the content-ops machinery; **§15.6 recommended layered chunking pipeline** (block parse → sentence segmentation → rule-based density refinement per doc_class → optional async LLM refinement as separate producer pass, never in the synchronous write path); tables: `artifact_fragment` + `artifact_span_set` |
 
 ---
 
