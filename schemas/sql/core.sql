@@ -1,5 +1,5 @@
 -- MemoGarden Core Database Schema
--- Schema Version: 20261128
+-- Schema Version: 20261129
 -- Description: Base Core tables + change feed (system#12 search-sync slice)
 --
 -- DESIGN:
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS _schema_metadata (
 );
 
 INSERT OR IGNORE INTO _schema_metadata VALUES
-    ('version', '20261128', datetime('now')),
+    ('version', '20261129', datetime('now')),
     ('base_schema', 'memogarden-core-base', datetime('now')),
     ('description', 'Core base tables only; type schemas in JSON', datetime('now')),
     ('epoch_date', '2020-01-01', datetime('now'));
@@ -228,6 +228,8 @@ CREATE TABLE IF NOT EXISTS api_keys (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     name TEXT NOT NULL,
+    description TEXT,                         -- what the key is for, where it lives (api#105)
+
     key_hash TEXT NOT NULL,
     key_prefix TEXT NOT NULL,
     agent_entity_id TEXT REFERENCES entity(uuid),
