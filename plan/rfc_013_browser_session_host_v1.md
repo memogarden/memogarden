@@ -301,10 +301,12 @@ forking the engine (§11's guardrail survives — see §13.5).
 
 Isolation granularity under session-per-process, named honestly:
 cross-session ✓ (already true today); per-tab ✓ (embedder per-WebContents
-default); **per-site-iframe ✗ — accepted residual**, not Chrome's full
-site-per-process model. Not worth chasing for this threat model (finance
-sessions load same-trusted-page iframes; research sessions are covered by
-the per-tab line).
+default); **per-site-iframe — substrate-reported, not inherent**: Electron
+ships Chromium site isolation enabled by default (verified 2026-11-28), so
+the residual this lens assumed is narrower there; verify per substrate.
+Not worth chasing beyond what the substrate gives (finance sessions load
+same-trusted-page iframes; research sessions are covered by the per-tab
+line).
 
 ### 13.3 Tier-3 ownership mapping (tentative)
 
