@@ -1,6 +1,6 @@
 # RFC-013 — Browser Session Host (memogarden-sessions)
 
-**Status:** Accepted — design converged 2026-11-15; invariants locked; mechanism validated by spike, verdict accepted 2026-11-15 (§12)
+**Status:** Accepted — design converged 2026-11-15; invariants locked; mechanism validated by spike, verdict accepted 2026-11-15 (§12); shell-layering lens recorded 2026-11-27 (§13 — **TENTATIVE**, only the trajectory-integration intent is fixed)
 **Repos:** `memogarden-sessions/` (sibling app repo, created 2026-11-15;
 scaffolded — daemon, CLI, tests, spike archive, HANDOVER.md — with its
 ingestion half LIVE via `providers/sessions-importer`, see the RFC-013
@@ -187,8 +187,10 @@ driving it.
 
 Verdict: **accepted by operator** after three feel-test rounds. Spike code
 lives in `memogarden-sessions/spike/` (commits 29255ec..a2243ee, branch
-`agent/sessions-host/spike`, merged to `main`). This section records the
-mechanism decisions that emerged — the §7 deferral is resolved.
+`agent/sessions-host/spike`, merged to `main`). Design kernel below;
+**implementation mechanics** (extension bridge internals, probes, polling)
+live in `memogarden-sessions/HANDOVER.md` — design in RFCs, mechanics in
+the implementation repo.
 
 ### 12.1 Vocabulary
 
@@ -200,29 +202,20 @@ mechanism decisions that emerged — the §7 deferral is resolved.
 
 ### 12.2 Signaling — tab strip only
 
-- Page badges and favicon dots **rejected**: badges obscure page visuals;
-  Chrome does not revert a tab icon when an injected `<link rel=icon>` is
-  removed (it keeps the last icon seen), so cleared dots linger. **The
-  daemon never touches favicons.**
-- Tab-strip colors via a **shipped companion extension** (MV3, `tabGroups`
-  API): agent-held = green group ("🤖 agent"), pending request = blinking
-  yellow ("🤖 request", 550 ms color toggle — which also keeps the MV3
-  service worker alive), operator-held = ungrouped / undecorated.
-- Daemon→extension bridge: the daemon writes
-  `document.documentElement.dataset.mgControl` via CDP; a content script
-  polls the shared DOM (isolated worlds do not share `window`) and wakes
-  the service worker, which owns the tabGroups APIs.
-- Extension-load probe must be **functional** (content script sets a
-  `data-mg-bridge` attribute on the shared DOM): `context.service_workers`
-  is a timing-sensitive blindspot — MV3 workers may predate CDP
-  attachment and never appear in the listing.
+- Page badges and favicon dots **rejected** (badges obscure page visuals;
+  browsers do not revert a tab icon when an injected icon is removed).
+  **The daemon never touches favicons.**
+- Control state signals through the **tab strip**, drawn by a shipped
+  companion extension: agent-held = green group, pending request =
+  blinking yellow, operator-held = undecorated.
+- The extension is composition-only infrastructure — a shell (§13) draws
+  signaling natively and retires it.
 
 ### 12.3 Soft lock (the operator-facing direction)
 
 - Agent-held tabs present a transparent pane swallowing physical
-  keyboard/pointer input; the first interception raises a small toast with
-  an in-browser **Commandeer button** (sets a page flag the daemon polls
-  at ~0.4 s).
+  keyboard/pointer input; the first interception raises a small toast
+  with an in-browser **Commandeer button** (a page flag the daemon polls).
 - **Invariant refinement (§5):** "the operator is never locked out" →
   **"the operator is never SILENTLY locked out."** Soft locks are
   permitted iff every interception surfaces an immediate override path.
@@ -233,18 +226,18 @@ mechanism decisions that emerged — the §7 deferral is resolved.
 
 ### 12.4 Dispatch paths — load-bearing for the daemon
 
-- CDP **Input domain** = the physical-input path: subject to arbiter
+- The **physical-input path** (CDP Input domain) is subject to arbiter
   gating *and* the soft-lock pane.
-- CDP **Runtime domain** (direct DOM actions) = the agent's path on locked
-  tabs: unaffected by the pane. **The daemon chooses the dispatch path per
-  control state.**
+- The **direct-DOM path** (CDP Runtime domain) is the agent's route on
+  locked tabs: unaffected by the pane. **The daemon chooses the dispatch
+  path per control state.**
 
 ### 12.5 Base browser
 
-- **Branded Chrome is disqualified**: google-chrome-stable silently blocks
-  `--load-extension` — the companion extension never loads there. The
-  session browser must be an **open Chromium build**: Playwright's pinned
-  Chromium (159) verified; Arch's `chromium` package equally valid.
+- **Branded Chrome is disqualified**: it silently blocks
+  `--load-extension`, so the companion extension never loads. The session
+  browser must be an **open Chromium build** (Playwright's pinned
+  Chromium verified; Arch's `chromium` equally valid).
 - §4's "pin the driver, not the browser" stands: accept browser churn,
   require only open builds.
 
@@ -260,3 +253,138 @@ mechanism decisions that emerged — the §7 deferral is resolved.
 - **Operator→agent handover affordance** ("I'm done — agent can take over
   the session"): richer than the CLI `grant`; protocol + UI surface to be
   explored (live-observed need, DBS scenario 2026-11-15).
+
+---
+
+## 13. Shell layering (2026-11-27) — TENTATIVE lens
+
+> **Read this first.** Exactly one thing in this section is fixed: **the
+> browsing trajectory (pages visited, links followed, downloads captured,
+> lifecycle and control events) belongs in the PIS as first-class facts.**
+> That intent is already implemented and live — `providers/sessions-importer`
+> drains Attachment / SessionEvent / PageVisit facts and mirrors Session
+> entities (decision register, slices 1–5). Everything else below is an
+> *exploratory decomposition* to inform whether and when a different shell
+> would serve that intent better. No prototype is green-lit; no stack below
+> is ratified. §3 and §12 remain the shipped reality.
+
+### 13.1 Why the lens exists
+
+The composition stage (§3–§12) pays a recurring tax: every hard-won spike
+finding is a negotiation with Chromium's **desktop paradigm** — the
+data-model assumptions of a consumer browser, not Google branding (which is
+cosmetic):
+
+- downloads default to a Downloads dir (custody capture is a daemon-side
+  parasite on a scatter-to-`~/Downloads` design; operators look for captured
+  files in the wrong place);
+- one stable profile managed by the user (per-purpose sessions exist only
+  as `--user-data-dir` carvings; dehydration = hand-listed cache globs);
+- sessions and history are internal and opaque (restored tabs never fire
+  page events → ghost-tab adoption; tab strip unscriptable via CDP → the
+  §12.2 extension detour; SNSS restore reachable only through pref
+  incantations + crash-classification workarounds; favicons never revert).
+
+The load-bearing fact: **all of that lives in the browser layer (`chrome/`),
+not the engine.** `content/` + Blink + V8 has no Downloads dir, no desktop
+profile, no SNSS, no history service — an embedder of the content layer
+gets raw events instead. Discarding the browser layer is therefore not
+forking the engine (§11's guardrail survives — see §13.5).
+
+### 13.2 Three-tier decomposition (lens only)
+
+| Tier | What it is | Posture | Operator ruling 2026-11-27 |
+|---|---|---|---|
+| **1 — Engine** (Blink + V8, media stack, web platform) | web compatibility itself | rented, pinned | needed **in full except Widevine** |
+| **2 — Content infrastructure** (multi-process, renderer sandbox, network stack, cookie/storage partitions, navigation events, downloads-as-events, DevTools/CDP) | the embedder tier — Electron/CEF territory | rented via embedder | needed. Session-per-process preferred (own process per session, attached to its context/task). DevTools = agent-RPA surface only, never the consumer surface |
+| **3 — Browser services** (profiles, history, SNSS restore, Downloads dir, browser UI, extensions, password manager, PDF viewer, Google services) | the "desktop paradigm" | **owned or dropped** | integrated with memogarden (§13.3) or discarded |
+
+Isolation granularity under session-per-process, named honestly:
+cross-session ✓ (already true today); per-tab ✓ (embedder per-WebContents
+default); **per-site-iframe ✗ — accepted residual**, not Chrome's full
+site-per-process model. Not worth chasing for this threat model (finance
+sessions load same-trusted-page iframes; research sessions are covered by
+the per-tab line).
+
+### 13.3 Tier-3 ownership mapping (tentative)
+
+| Chromium service | Becomes |
+|---|---|
+| profiles | Session entities + partitions (already modeled in Core) |
+| history service | PageVisit facts (already drained) |
+| SNSS session restore | own dehydrate model — tab set + chosen per-tab state; more honest than restore-by-incantation given §8's fidelity limits |
+| Downloads manager + dir | custody capture → Attachment facts (**live since 2026-11-18**; becomes a native embedder event, no Downloads dir exists) |
+| PDF viewer (PDFium) | separate **document-viewer component** — an ecosystem need independent of sessions (Artifacts, docling markdown, `/console/documents`); downloads-not-viewing is already the pattern |
+| print / spellcheck / find-in-page | free from any embedder — not even a decision |
+| extensions | optional hatch (an extension pipeline exists), **demoted from load-bearing** |
+| Safe Browsing / sync / Google services / auto-update | dropped; engine updates become pin-and-bump (the Playwright-build model today) |
+
+### 13.4 Known residuals — the prototype gate list
+
+A content-layer shell loses real things; these are the verdicts a
+prototype must clear (substrate specifics live in the sessions-repo issue
+and agent memory, not here):
+
+1. **Credential tethering** — password managers that pair with a desktop
+   app over the browser's native-messaging channel cannot work in an
+   embedder shell. The credential path is the primary gate: self-contained
+   extensions if the substrate admits them; the MemoGarden-native fallback
+   is an operator-gated credential bridge (custody question open).
+2. **PDF rendering** — embedders ship no built-in viewer; the
+   document-viewer component (§13.3) must exist before sessions render
+   PDFs (soft, given the downloads-not-viewing pattern).
+3. **Extension compatibility** — substrates admit only subsets of the
+   extension platform. Control signaling must never depend on an extension
+   (a shell draws it natively — §12.2 retires); extensions are an
+   operator-experience hatch only.
+4. **Site-isolation residual** (§13.2) — accepted, recorded.
+5. **Substrate toolchain** — an embedder brings its own runtime ecosystem;
+   the daemon contract insulates everything above it.
+
+Candidate shape, if ever prototyped: **one thin embedder shell behind the
+unchanged daemon contract** — one session per process; custody capture,
+navigation events, and tab persistence as shell-native services (the fact
+stream becomes *generated*, not mined, unlocking click-level trajectory
+later); control signaling drawn natively; the daemon's verbs become
+native shell calls.
+
+### 13.5 Guardrail reinterpretation (amends §3 / §11 — tentative)
+
+"**Never fork the browser**" survives, reinterpreted: **never fork the
+engine.** The browser layer is the part a shell would deliberately
+*replace*, and embedders track upstream Chromium releases without engine
+code — vendor-tracked maintenance, not fork maintenance. Until a prototype
+is green-lit, §3's two-column boundary and §11's composition-only
+non-goal stand unchanged.
+
+### 13.6 Triggers that would move the lens to a prototype
+
+- Google-integration pain resurgent — note **ungoogled-chromium is the
+  cheap composition-stage fix, not a paradigm fix** (a resolution-chain
+  swap in the daemon; explicitly *not* the end-state).
+- Sessions needed as embedded UI: mobile host, or many-sessions-one-process
+  via partitions.
+- The §13.4 password-manager verdict answered (in either direction).
+- Operator handover / control signaling wanting more than an extension can
+  draw (live-observed need, §12.6).
+
+### 13.7 In-page bridge (actionable today, independent of the shell)
+
+Formalize the in-page surfaces introduced by the spike (the signaling
+bridge, §12.2; the snapshot element refs) into a named **`window.mg.*`**
+contract documented in `schemas/sessions.yaml`. The guest-facing protocol
+becoming *ours* (not Chromium's) is what keeps any shell swappable.
+Proposed; not yet ratified.
+
+### 13.8 Substrate steer (2026-11-27) — Electron-class first
+
+Operator ruling on the §13.4 trade-off: **the operator experience wins —
+extensions carry the password managers.** For any prototype:
+**Electron-class embedder first** (its extension subset admits more of the
+operator's tooling; the credential-tethering residual stands regardless);
+the **Python-native embedder (PySide6/QtWebEngine)** is the noted
+substitute — it trades the extension hatch away entirely, so it becomes
+attractive only if the extension path ever loses relevance. Substrate
+mechanics, gate experiments, and the comparison record are parked out of
+this RFC (sessions-repo issue; agent memory). The daemon contract keeps
+the ordering reversible.
