@@ -1,6 +1,6 @@
 # Project Studio Specification
 
-**Version:** 0.4.3
+**Version:** 0.4.4
 **Status:** Draft
 **Last Updated:** 2026-11-28
 **Supersedes:** MemoGarden Project System PRD v0.3.0
@@ -407,7 +407,7 @@ Creates:
 - Updates Artifact.content in Core
 - System relation: `triggers(source_item, delta)` if applicable
 
-Commit processing (fragment decomposition, extent computation, extent persistence) is
+Commit processing (fragment decomposition, span computation, span persistence) is
 owned by the **Artifact Handler** (§15) — the main service validates, gates, and
 persists, but does not implement artifact handling itself.
 
@@ -798,15 +798,16 @@ Mobile-first voice input for:
 
 ## 15. Artifact Handler
 
-**Added v0.4.2 (operator ruling, 2026-11-28); §15.4–15.6 corrected v0.4.3 (extents
-are canonical service state, not per-app derived metadata — multi-app referencing
-requires a single resolver).** The main MemoGarden service (memogarden-system /
+**Added v0.4.2 (operator ruling, 2026-11-28); v0.4.3 corrected storage to canonical
+service state (not per-app derived metadata); v0.4.4 formalized per-version span
+semantics + the span-set validity contract (algorithm pluralism) and renamed
+extent → fragment span.** The main MemoGarden service (memogarden-system /
 memogarden-api) does **not** take on responsibility for *handling* artifacts.
-Artifact handling — fragment decomposition, extent determination, extent refresh on
-edit — is owned by a dedicated **Artifact Handler** component; the main service
-persists and serves the results as canonical state. This section specifies the
-responsibility boundary and the storage design; implementation mechanics live with
-the handler's own repository when built.
+Artifact handling — fragment decomposition, span determination, span persistence, and
+span refresh on edit — is owned by a dedicated **Artifact Handler** component; the
+main service persists and serves the results as canonical state. This section
+specifies the responsibility boundary and the storage design; implementation
+mechanics live with the handler's own repository when built.
 
 ### 15.1 Boundary ruling
 
@@ -815,25 +816,32 @@ the handler's own repository when built.
 | Artifact as Core entity (belief state, hash chain, §4.5 gates) | Main service (unchanged) |
 | `/mg` verb surface: validation, optimistic locking, Soil delta items, SSE | Main service (unchanged) |
 | Fragment decomposition (§6.2), fragment ID generation | **Artifact Handler** |
-| **Fragment extents** — determination, storage, refresh on edit | **Artifact Handler** |
-| Persistence plumbing for handler output (side-car write, catch-up) | Thin bridge module in the main service process (plumbing only — no handling logic) |
+| **Fragment spans** — determination, storage, refresh on edit | **Artifact Handler** |
+| Persistence plumbing for handler output (transactional span write; pending/catch-up) | Thin bridge module in the main service process (plumbing only — no handling logic) |
 
-The bridge must stay thin: if fragment/extent logic starts accumulating in the main
+The bridge must stay thin: if fragment/span logic starts accumulating in the main
 service, the ruling is being violated in substance.
 
-### 15.2 Fragment extents
+### 15.2 Fragment spans
 
-§6.2 treats a fragment as a *point* reference (insert-at-line). Fragments are actually
-*spans*: an **extent** locates the fragment in the current artifact state.
+**Terminology (v0.4.4):** the location of a fragment in an artifact version is a
+**fragment span** — `(fragment_id, start_line, end_line)`, line-inclusive. §6.5's
+`span` (the character range of a reference occurrence inside a message) is a
+different object: *reference span*. The qualified names disambiguate; "span set"
+always means the fragment-span set for one artifact content version.
 
-- Extent = `(fragment_id, start_line, end_line)` — line-inclusive, resolved against a
-  specific artifact content version. Char-level extents are a future refinement; v1 is
-  line-granular.
+- **Per-version only.** A span set is a property of an artifact *content version*
+  (keyed by the delta-chain content hash — `compute_content_hash`), never of the
+  artifact timelessly. A metadata-only edit (`/mg edit` on doc_class/scope/tags)
+  bumps the entity version but not the content version: **no new span set, no
+  recomputation**. Only content edits mint a version and receive a set.
+- Span = `(fragment_id, start_line, end_line)` resolved against that version.
+  Char-level spans are a future refinement; v1 is line-granular.
 - Fragment IDs remain content-hash based (§6.2 `generate_fragment_id`), which gives
-  **id stability across edits**: a fragment whose text is unchanged keeps its ID; only
-  its position (extent) moves.
-- This generalizes the §6.4 reference type `label:line` → fragment references resolve
-  to spans via the extent set.
+  **id stability across edits** *when producers carry ids forward* (§15.6): a
+  fragment whose text is unchanged keeps its ID; only its position moves.
+- This generalizes the §6.4 reference type `label:line` → fragment references
+  resolve to spans via the version's span set.
 
 ### 15.3 Handler shape
 
@@ -845,28 +853,32 @@ credentials and no Core/DB access** — text in, spans out:
 ```
 input:  { artifact_uuid, base_content, new_content, fragment_registry? }
 output: { fragments: [ { id, content, start_line, end_line } ],
-          removed: [ id ], extents_version }
+          removed: [ id ], spans_version }
 ```
 
-### 15.4 Extent storage — canonical service state (corrected v0.4.3)
+This contract is not handler-exclusive: any producer — the handler (reference
+implementation) or a client following §6.2 — may emit a span set, subject to the
+same validity contract (§15.6), validated at the persistence boundary.
 
-v0.4.2 classified extents as derived side-car (the `entity_fts` posture). **That
+### 15.4 Span storage — canonical service state (corrected v0.4.3)
+
+v0.4.2 classified spans as derived side-car (the `entity_fts` posture). **That
 classification was wrong for this data.** The FTS analogy fits *per-consumer indexes*
 — search hits that only one service reads. Fragments are *communication*: Project
 Studio, ArtiLab, generic viewers, and agent editors must all reference the **same**
 fragment set, or shared annotations and cross-app communication become impossible.
-Per-app derived extents would create exactly that fragmentation. Therefore:
+Per-app derived spans would create exactly that fragmentation. Therefore:
 
 - **Fragment identity needs no sync at all**: IDs are content hashes (§6.2) —
   identical content anywhere yields the identical ID. Identity is self-converging;
   there is no registry to distribute.
-- **Extents are canonical main-service state**: a first-class table in the canonical
-  schema (its own `artifact_fragment_extent` table — the Artifact *entity* schema
-  stays untouched, honoring the original constraint; the dependency runs one way:
-  extents reference artifacts, never the reverse). Rows are written transactionally
-  in the commit boundary and are **immutable per commit**: the extent set for a
-  given commit is a pure function of that commit's content. The current set is the
-  head pointer; history is per-commit sets.
+- **Span sets are canonical main-service state**: a first-class table in the
+  canonical schema (its own `artifact_fragment_span` table — the Artifact *entity*
+  schema stays untouched, honoring the original constraint; the dependency runs one
+  way: spans reference artifacts, never the reverse). Rows are written
+  transactionally in the commit boundary and are **immutable per content version**:
+  each stored set is *a* valid set for that version (§15.6), never rewritten. The
+  current set is the head pointer; history is per-version sets.
 - The `entity_fts` posture (runtime-ensured, outside canonical schema, rebuildable)
   remains reserved for genuine indexes that consumers reach through one service. It
   does not fit addressable, cross-app state.
@@ -874,21 +886,22 @@ Per-app derived extents would create exactly that fragmentation. Therefore:
 Rejected alternatives (unchanged from v0.4.2, plus the retraction): a reserved key
 in Artifact `data` (schema dependency in substance); a Fragment *entity* type
 (entity explosion, consistency burden); a handler-owned store (split-brain against
-Core's single-writer discipline); and *per-app derived extents* (this section's
+Core's single-writer discipline); and *per-app derived spans* (this section's
 correction — unsyncable across apps).
 
 ### 15.5 Multi-app coherence — the single-resolver rule
 
-Nothing needs syncing, because **no app ever holds authoritative extents**:
+Nothing needs syncing, because **no app ever holds authoritative spans**:
 
 1. **One resolver**: reference resolution (`^a7f` → span + content) is a
    main-service read surface backed by the canonical table. Apps ask; they never
-   compute. Two apps citing `^a7f` on the same artifact resolve to the same span
-   and the same content because the ID is the content hash and the resolver is
-   singular.
-2. **Cache by commit, safely**: apps may cache extent sets keyed by
-   `(artifact_uuid, commit)`. This cannot diverge: per-commit sets are immutable,
-   so a stale cache is *detectable* (the head commit moved) and never *conflicting*.
+   compute *authoritatively*. Two apps citing `^a7f` on the same artifact version
+   resolve to the same span and the same content because the ID is the content
+   hash and the resolver is singular.
+2. **Cache by version, safely**: apps may cache span sets keyed by
+   `(artifact_uuid, content_version)`. This cannot diverge: per-version sets are
+   immutable, so a stale cache is *detectable* (the head version moved) and never
+   *conflicting*.
 3. **Shared annotations cite, not store**: an annotation from any app — Project
    Studio message, ArtiLab comment, agent editor — carries
    `(artifact_uuid, fragment_id)` (optionally pinned `@commit` per §6.4). The
@@ -896,45 +909,78 @@ Nothing needs syncing, because **no app ever holds authoritative extents**:
    communication works precisely because the fragment set is singular and
    server-side.
 4. Client-side decomposition (e.g. a live preview while editing) is permitted only
-   as cache-fill and must be validated against the commit it claims before any
+   as cache-fill and must be validated against the version it claims before any
    reference is *published*; unpublished preview state is ephemeral by construction.
 
-### 15.6 Edit flow — extent refresh (revised)
+### 15.6 The span-set validity contract — invariants over algorithms
+
+Cross-edit stability and cross-editor agreement are **not** correctness
+requirements. The safety valve is that reference safety is *independent of the
+algorithm*: a stored set is acceptable for version V iff it passes these
+mechanically checkable invariants —
+
+1. **Content-addressed ids**: every span's `fragment_id` equals
+   `generate_fragment_id` of the fragment content it claims.
+2. **Fidelity**: each span's fragment content equals the actual lines it covers in
+   V (no ghost spans, no drift).
+3. **Structural sanity**: spans in-bounds and pairwise disjoint (v1 line
+   granularity; unspanned lines are legal — fragments are *atomic semantic units*,
+   not a full partition).
+4. **One set per version**: first valid writer wins; sets are immutable once
+   stored (§15.4).
+
+Any producer whose output passes these invariants — the handler's reference
+algorithm, or an editor's own — is reference-safe, because an id resolves to
+exactly the text it hashes regardless of who chunked it. Validation runs at the
+persistence boundary; the algorithm itself is pluggable per producer and may
+evolve over time without rewriting history (old sets are immutable).
+
+**Stability is a quality goal, not a gate**: producers SHOULD carry ids forward
+for unchanged fragment content (diff-anchored reuse, §6.2's content-hash ids make
+this natural), and id-churn over unchanged lines is the producer-quality metric.
+Algorithm changes between edits cost churn, never broken references.
+Determinism is required only per (algorithm, content) — same algorithm, same
+content ⇒ same set — which is what makes validation-by-recompute and pending
+catch-up (§15.7) sound.
+
+### 15.7 Edit flow — span refresh
 
 1. Client submits a commit (ops or full content) → main service validates `based_on`
    hash + §4.5 gates, creates the ArtifactDelta, updates `Artifact.content` — the
    artifact's belief lands **first**.
-2. Bridge invokes the handler with (base content, new content) → fresh extent set
+2. Bridge invokes the handler with (base content, new content) → fresh span set
    (re-decomposition is exact and cheap at ≤400k chars; unchanged fragments keep
-   their IDs, so the extent diff is meaningful).
-3. **Handler reachable**: extent rows are written in the same transaction boundary —
-   content, delta, and extents land as one atomic step.
-4. **Handler down**: the commit still lands (belief capture outranks reference
-   infrastructure), and the new commit is marked `extents_pending`. Reference
-   resolution for that commit degrades *explicitly* — content reads are unaffected;
-   the resolver answers "pending", never silently wrong. Catch-up is
-   change_log-driven (system#12) and safe because handler output is deterministic —
-   a pure function of content — so late computation converges to the same set
-   whenever it runs. Concurrency is unchanged: all Core writes remain in the main
-   service process; the handler never touches the database.
+   their IDs, so the span diff is meaningful). A client may supply its own set via
+   the §6.2 path; it passes the same validation (§15.6).
+3. **Producer reachable**: span rows are written in the same transaction boundary —
+   content, delta, and spans land as one atomic step.
+4. **Producer down** (for handler-driven commits): the commit still lands (belief
+   capture outranks reference infrastructure), and the new version is marked
+   `spans_pending`. Reference resolution for that version degrades *explicitly* —
+   content reads are unaffected; the resolver answers "pending", never silently
+   wrong. Catch-up is change_log-driven (system#12) and sound: the late set is
+   computed once, validated, and stored — there is nothing to diverge from, since
+   the pending version had no set. Concurrency is unchanged: all Core writes remain
+   in the main service process; the handler never touches the database.
 
-Staleness here is bounded, visible, and self-healing toward a unique answer — the
-precondition that makes pending-degradation acceptable for canonical data.
+Metadata-only edits never enter this flow (§15.2): the content version is
+unchanged, so the stored set simply remains current.
 
-### 15.7 Client impact
+### 15.8 Client impact
 
 Project Studio and ArtiLab (and any future artifact client) stop owning fragment
 registries entirely: they render and resolve references via the service's read
 surfaces, and cache per §15.5. The §6.2 client-side fragment protocol becomes one
-supported input shape (ops with client-supplied fragments for agent-driven edits),
-not a requirement for every client — and never the basis for cross-app references.
+supported *producer* path — ops with client-supplied fragments and spans, subject
+to the §15.6 validation — not a requirement for every client, and never the basis
+for cross-app references.
 
-### 15.8 Migration and non-goals
+### 15.9 Migration and non-goals
 
-- Extents now need a proper (tiny) canonical-schema migration — trivially empty at
+- Spans now need a proper (tiny) canonical-schema migration — trivially empty at
   zero production deltas; legacy point-ops remain valid (a point insert is a 1-line
-  extent).
-- Non-goals for v1: char-level extents, cross-artifact fragments, semantic analysis
+  span).
+- Non-goals for v1: char-level spans, cross-artifact fragments, semantic analysis
   inside the handler (the stage-3 statement pipeline may later ride the same handler,
   but that is a separate decision).
 
@@ -950,6 +996,7 @@ not a requirement for every client — and never the basis for cross-app referen
 | 0.4.0 | 2026-02-12 | **Revised conversation operations:** Replace `collapse_conversation`/`reopen_conversation` with `fold`; clarified implicit branching via RFC-003 ContextFrame inheritance. Aligned with RFC-005 single-word verb convention. |
 | 0.4.2 | 2026-11-28 | **Added §15 Artifact Handler** (operator ruling): main service does not handle artifacts — dedicated handler owns fragment decomposition, extents, extent storage + refresh; extents stored as derived side-car (entity_fts precedent) with delta-trail traceability, Artifact schema untouched; §7.2 cross-ref. (0.4.1 edits carried unversioned.) |
 | 0.4.3 | 2026-11-28 | **§15.4–15.6 corrected (operator review): extents are CANONICAL main-service state, not per-app derived metadata** — multi-app referencing (Project Studio / ArtiLab / viewers / agent editors) needs one resolver or shared annotations fragment; new first-class `artifact_fragment_extent` canonical table (Artifact entity schema still untouched), immutable per commit (pure function of content), single-resolver rule + cache-by-commit (§15.5), transactional write with explicit `extents_pending` degradation when the handler is down (§15.6) |
+| 0.4.4 | 2026-11-28 | **§15.2/§15.6 sharpened (operator review): per-version semantics formalized** — span sets key on the CONTENT version (metadata-only edits never recompute); terminology extent → **fragment span** (qualified vs §6.5 reference span); **span-set validity contract (§15.6)**: invariants over algorithms — id/ fidelity/structure/one-set-per-version are MUST, algorithm agreement is NOT; stability (unchanged text keeps ids) demoted to a producer SHOULD (diff-anchored carry-forward); producers plural (handler reference algo or editor's own), validated at the persistence boundary; `artifact_fragment_extent` table renamed `artifact_fragment_span`; `extents_pending` → `spans_pending` |
 
 ---
 
