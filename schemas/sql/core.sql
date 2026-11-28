@@ -1,5 +1,5 @@
 -- MemoGarden Core Database Schema
--- Schema Version: 20261124
+-- Schema Version: 20261128
 -- Description: Base Core tables + change feed (system#12 search-sync slice)
 --
 -- DESIGN:
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS _schema_metadata (
 );
 
 INSERT OR IGNORE INTO _schema_metadata VALUES
-    ('version', '20261124', datetime('now')),
+    ('version', '20261128', datetime('now')),
     ('base_schema', 'memogarden-core-base', datetime('now')),
     ('description', 'Core base tables only; type schemas in JSON', datetime('now')),
     ('epoch_date', '2020-01-01', datetime('now'));
@@ -284,7 +284,10 @@ CREATE TABLE IF NOT EXISTS provider_runs (
     status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'success', 'failed')),
     started_at TEXT NOT NULL,
     finished_at TEXT,
-    triggered_by TEXT,                        -- 'heartbeat' | 'manual'
+    triggered_by TEXT,                        -- 'heartbeat' | 'manual' | 'external-app'
+    triggered_by_key TEXT,                    -- api_keys.name of the authenticating key (RFC-012 tagging)
+    external_app_id TEXT,                     -- verbatim app-supplied id (X-External-App-Id header; the
+                                              -- app self-describes — we don't presume its automations)
     detail TEXT                               -- JSON: counts or error
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_runs_single_flight
