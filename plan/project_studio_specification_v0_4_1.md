@@ -1,6 +1,6 @@
 # Project Studio Specification
 
-**Version:** 0.4.7
+**Version:** 0.4.8
 **Status:** Draft
 **Last Updated:** 2026-11-28
 **Supersedes:** MemoGarden Project System PRD v0.3.0
@@ -1063,6 +1063,7 @@ for cross-app references.
 | 0.4.4 | 2026-11-28 | **§15.2/§15.6 sharpened (operator review): per-version semantics formalized** — span sets key on the CONTENT version (metadata-only edits never recompute); terminology extent → **fragment span** (qualified vs §6.5 reference span); **span-set validity contract (§15.6)**: invariants over algorithms — id/ fidelity/structure/one-set-per-version are MUST, algorithm agreement is NOT; stability (unchanged text keeps ids) demoted to a producer SHOULD (diff-anchored carry-forward); producers plural (handler reference algo or editor's own), validated at the persistence boundary; `artifact_fragment_extent` table renamed `artifact_fragment_span`; `extents_pending` → `spans_pending` |
 | 0.4.5 | 2026-11-28 | **§15 redefined (operator review): spans are SEMANTIC TEXT FRAGMENTS** — clause/sentence-part/sentence, not line regions; addressing = block-relative CHAR offsets (`block_hash, start_char, end_char`; blocks content-addressed; navigation path derived at read, never stored); **deltas minimal (§15.4)**: `artifact_fragment` (content-addressed, version-independent rows) + `artifact_span_set` (per-version membership) + deltas carry `span_ops` diffs + `spans_digest` — full sets never embedded in deltas, history replays via the content-ops machinery; **§15.6 recommended layered chunking pipeline** (block parse → sentence segmentation → rule-based density refinement per doc_class → optional async LLM refinement as separate producer pass, never in the synchronous write path); tables: `artifact_fragment` + `artifact_span_set` |
 | 0.4.6 | 2026-11-28 | §15.6 pointer added: the reference chunking algorithm now has its own spec — [span_chunking_specification_v0_1.md](span_chunking_specification_v0_1.md) (block taxonomy, per-type rules incl. operator-directed headings/cells/items/images/links, prose pipeline stages 1–3, worked example) |
+| 0.4.8 | 2026-11-28 | **§15.6 stage 2 density refinement IMPLEMENTED** — the reference chunking spec bumped to v0.2 with the version-pinned rules (`ALGO_VERSION 0.2.0-stage2`: merge-then-split, density features, per-doc_class profiles; `doc_class` flows bridge → handler as request-scoped metadata, handler stays Core-free); stage 3 (async LLM) remains unbuilt |
 | 0.4.7 | 2026-11-28 | **§15.4 membership correction (backfill finding, CSS20.pdf)**: identical text is ONE content-addressed fragment occurring at many positions (docling's repeated `<!-- image -->` placeholders, form-letter sentences) — `artifact_span_set` membership rows are POSITIONS and must never collapse repeats (PK = the full tuple incl. `ord`, schema 20261201); `span_del` therefore keys on `(fragment_id, ord)` pairs, not bare fragment ids |
 
 ---

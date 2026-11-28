@@ -1,9 +1,9 @@
 # Span Chunking Specification
 
-**Version:** 0.1.0
-**Status:** Draft
+**Version:** 0.2.0
+**Status:** Implemented (stages 0–2) · Draft (stage 3)
 **Last Updated:** 2026-11-28
-**Parent:** Project Studio Specification v0.4.6 §15 (Artifact Handler), §15.6 (span-set validity contract)
+**Parent:** Project Studio Specification v0.4.8 §15 (Artifact Handler), §15.6 (span-set validity contract)
 **Implements:** the reference chunking algorithm for the Artifact Handler; guidance for all other producers
 
 ---
@@ -19,8 +19,10 @@ it uses. This spec exists so implementation and future improvement reference one
 algorithm description instead of rediscovering it.
 
 Stages 0–1 are **normative for the reference algorithm** (deterministic, run in the
-commit write path). Stages 2–3 are **extensions** applied to prose "where resources
-are available"; their output passes the same validation.
+commit write path). Stage 2 is an extension **implemented by the reference
+producer** (§6 v0.2 pin; on by default, profile-gated); stage 3 remains
+prose-only guidance, "where resources are available". All stages' output passes
+the same validation.
 
 ## 2. Span model (recap)
 
@@ -99,14 +101,53 @@ sentences and *merges* of adjacent sparse sentences. Merging never crosses block
 boundaries and never touches atomic spans (code, images, links). Rule-based on
 purpose: a learned density model would churn ids on every model bump.
 
+**v0.2 pin — the implemented rules** (`handler/profiles.py`, `ALGO_VERSION =
+"0.2.0-stage2"`; bump the pin on any rule/param change — §9 determinism is
+"same algorithm version + same content ⇒ same span set"):
+
+- **Prose scope**: exactly the sentence-segmented paths — paragraphs,
+  blockquotes, and the §4 >400-char list-item/cell fallbacks. The §4
+  one-span rulings (short list items, regular cells) are never overridden.
+- **Merge phase** (before splits): runs of adjacent sentences shorter than
+  `merge_max_chars` collapse to one span, capped at `merged_span_max_chars`;
+  a non-sparse sentence ends the run. Per block, so crossings are
+  structurally impossible.
+- **Split phase**: a span scoring ≥ `split_density` (and ≥
+  `min_sentence_chars` long) breaks at top-level `,` / `;`. Never inside
+  parentheses; never between digits (thousands separators: `1,234` stays
+  whole — the §5 decimal trap again). Clauses under `MIN_CLAUSE_CHARS` (12)
+  are never cut; a tiny tail attaches to the previous clause.
+- **Density score** = weighted feature hits per 100 chars: digit chars ×0.25,
+  currency amounts (`S$1` / `123.45`) ×2.0, dates (day-month, DD-MM-YYYY,
+  bare year) ×2.0, profile term hits ×1.0 (word-boundary, case-insensitive).
+- **Profiles** (`doc_class` arrives as request-scoped metadata from the
+  bridge — the handler stays Core-free): `statement` (split 4.0, merge 45,
+  cap 180, split-floor 50; terms balance/debit/credit/transaction/payment)
+  and `bill` (4.5 / 45 / 180 / 50; invoice, amount due, due date, gst,
+  total) are dense-lean; every other class (overview, notice, policy,
+  document, unknown, mixed) falls back to `DEFAULT` (6.0 / 60 / 220 / 60,
+  no terms).
+- **Order matters**: merge first, then split — a merge of sparse sentences
+  that is itself dense still splits; clauses from the split phase are never
+  re-merged.
+
 ## 7. Stage 3 — LLM refinement (extension; prose only; async)
 
 A separate producer pass, never in the synchronous write path. The LLM proposes
 *adjustments to existing spans* (split/merge anchored to char ranges of spans it
 was given), never a wholesale re-chunk. Output passes the §15.6 validation like
-any producer's.
+any producer's. **Not implemented** — the only stage still unbuilt.
 
 ## 8. Worked example
+
+This example pins the **stages 0–1 reference output** (the normative core). The
+production default adds stage 2 (`profiles.DEFAULT`); on this example it is
+inert — the prose sentences are either non-sparse (row 9) or the only sparse
+sentence in their block (row 10, and merges never cross blocks) — so the
+byte-exact expectation below also holds for the default profile. The
+segmentation-guard tests pin the stages 0–1 floor explicitly via
+`profiles.STAGE1_ONLY`; stage-2 behavior has its own fixtures
+(`test/test_profiles.py`).
 
 ````markdown
 ## Premium Summary
@@ -165,3 +206,4 @@ new tariff applies from 1 December.
 | Version | Date | Changes |
 |---------|------|---------|
 | 0.1.0 | 2026-11-28 | Initial draft — block taxonomy + per-type rules (operator-directed: headings/cells/items/images/links), prose pipeline stages 1–3, worked example |
+| 0.2.0 | 2026-11-28 | §6 pinned: stage 2 density refinement IMPLEMENTED (`ALGO_VERSION 0.2.0-stage2`) — merge-then-split rules, density features + weights, per-doc_class profiles (statement/bill tuned, DEFAULT fallback), prose-path gate incl. §4-ruling carve-out, thousands-comma/paren guards; §8 note (example = stages 0–1 reference, byte-exact under the default profile too); status: stages 0–2 implemented, stage 3 remains |

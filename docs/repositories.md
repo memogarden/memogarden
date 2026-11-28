@@ -228,7 +228,7 @@ These are related to MemoGarden but not part of the core system.
 
 **Purpose:** artifact handler (Project Studio §15) — the span chunking worker: markdown in → fragment spans out over a local unix socket. Content-agnostic; NO Core access or credentials (chunking never runs in the main service — operator ruling §15).
 
-**Status:** Built (2026-11-28); reference algorithm per `plan/span_chunking_specification_v0_1.md` stages 0–1 (stage 2 density + stage 3 LLM are spec extensions, unbuilt)
+**Status:** Built (2026-11-28); reference algorithm per `plan/span_chunking_specification_v0_1.md` stages 0–2 (stage 2 density profiles live 2026-11-28, `ALGO_VERSION 0.2.0-stage2`; stage 3 LLM remains an unbuilt extension)
 **Contains:**
 - `handler/chunker.py` - stage 0 block scanner (exact source offsets) + per-type rules + stage 1 sentence segmentation
 - `handler/ids.py` - §6.2 content-hash fragment ids (mod-36³ errata + salt-chain collisions)
