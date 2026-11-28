@@ -1,6 +1,6 @@
 # Project Studio Specification
 
-**Version:** 0.4.2
+**Version:** 0.4.3
 **Status:** Draft
 **Last Updated:** 2026-11-28
 **Supersedes:** MemoGarden Project System PRD v0.3.0
@@ -798,12 +798,15 @@ Mobile-first voice input for:
 
 ## 15. Artifact Handler
 
-**Added v0.4.2 (operator ruling, 2026-11-28).** The main MemoGarden service
-(memogarden-system / memogarden-api) does **not** take on responsibility for handling
-artifacts. Artifact handling — fragment decomposition, extent determination, extent
-persistence, and extent refresh on edit — is owned by a dedicated **Artifact Handler**
-component. This section specifies the responsibility boundary and the storage design;
-implementation mechanics live with the handler's own repository when built.
+**Added v0.4.2 (operator ruling, 2026-11-28); §15.4–15.6 corrected v0.4.3 (extents
+are canonical service state, not per-app derived metadata — multi-app referencing
+requires a single resolver).** The main MemoGarden service (memogarden-system /
+memogarden-api) does **not** take on responsibility for *handling* artifacts.
+Artifact handling — fragment decomposition, extent determination, extent refresh on
+edit — is owned by a dedicated **Artifact Handler** component; the main service
+persists and serves the results as canonical state. This section specifies the
+responsibility boundary and the storage design; implementation mechanics live with
+the handler's own repository when built.
 
 ### 15.1 Boundary ruling
 
@@ -845,57 +848,92 @@ output: { fragments: [ { id, content, start_line, end_line } ],
           removed: [ id ], extents_version }
 ```
 
-### 15.4 Extent storage — without Artifact-schema dependency
+### 15.4 Extent storage — canonical service state (corrected v0.4.3)
 
-The Artifact schema (§5.2) is **not extended**: no `fragments` field, no reserved
-`data` key, no schema-version coupling. Fragments/extents are *derived metadata about*
-the artifact — not part of its belief state — and are stored accordingly:
+v0.4.2 classified extents as derived side-car (the `entity_fts` posture). **That
+classification was wrong for this data.** The FTS analogy fits *per-consumer indexes*
+— search hits that only one service reads. Fragments are *communication*: Project
+Studio, ArtiLab, generic viewers, and agent editors must all reference the **same**
+fragment set, or shared annotations and cross-app communication become impossible.
+Per-app derived extents would create exactly that fragmentation. Therefore:
 
-- **Side-car in the Core database**, following the `entity_fts` precedent: internal
-  derived tables (keyed `(artifact_uuid, fragment_id)`, carrying content hash, extent
-  lines, and the commit the set was computed against, plus a per-artifact head cursor
-  for staleness detection), runtime-ensured by the owning path, **not** part of the
-  canonical `schemas/sql/schema.sql`, excluded from the entity hash chain, documented
-  outside the canonical schema (as `docs/database-indexes.md` already does for FTS).
-- **Traceability stays on the delta trail**: ArtifactDelta Items (§5.3) gain an
-  optional fragment/extent map for the commit they record, so historical extents are
-  replayable and the side-car is a materialized *current view* — rebuildable from
-  deltas, exactly the posture `snapshots` (§5.2) already declare.
-- Fragment **content** is never stored on the artifact: it rides the carrying item
-  (Message.fragments, §5.5) and/or the delta's fragment map; resolution is a lookup.
-- Rejected alternatives: a reserved key in Artifact `data` (schema dependency in
-  substance); a Fragment *entity* type (entity explosion, consistency burden); a
-  handler-owned store (split-brain against Core's single-writer discipline).
+- **Fragment identity needs no sync at all**: IDs are content hashes (§6.2) —
+  identical content anywhere yields the identical ID. Identity is self-converging;
+  there is no registry to distribute.
+- **Extents are canonical main-service state**: a first-class table in the canonical
+  schema (its own `artifact_fragment_extent` table — the Artifact *entity* schema
+  stays untouched, honoring the original constraint; the dependency runs one way:
+  extents reference artifacts, never the reverse). Rows are written transactionally
+  in the commit boundary and are **immutable per commit**: the extent set for a
+  given commit is a pure function of that commit's content. The current set is the
+  head pointer; history is per-commit sets.
+- The `entity_fts` posture (runtime-ensured, outside canonical schema, rebuildable)
+  remains reserved for genuine indexes that consumers reach through one service. It
+  does not fit addressable, cross-app state.
 
-### 15.5 Edit flow — extent refresh
+Rejected alternatives (unchanged from v0.4.2, plus the retraction): a reserved key
+in Artifact `data` (schema dependency in substance); a Fragment *entity* type
+(entity explosion, consistency burden); a handler-owned store (split-brain against
+Core's single-writer discipline); and *per-app derived extents* (this section's
+correction — unsyncable across apps).
+
+### 15.5 Multi-app coherence — the single-resolver rule
+
+Nothing needs syncing, because **no app ever holds authoritative extents**:
+
+1. **One resolver**: reference resolution (`^a7f` → span + content) is a
+   main-service read surface backed by the canonical table. Apps ask; they never
+   compute. Two apps citing `^a7f` on the same artifact resolve to the same span
+   and the same content because the ID is the content hash and the resolver is
+   singular.
+2. **Cache by commit, safely**: apps may cache extent sets keyed by
+   `(artifact_uuid, commit)`. This cannot diverge: per-commit sets are immutable,
+   so a stale cache is *detectable* (the head commit moved) and never *conflicting*.
+3. **Shared annotations cite, not store**: an annotation from any app — Project
+   Studio message, ArtiLab comment, agent editor — carries
+   `(artifact_uuid, fragment_id)` (optionally pinned `@commit` per §6.4). The
+   service resolves it identically for every other app, present or future. Shared
+   communication works precisely because the fragment set is singular and
+   server-side.
+4. Client-side decomposition (e.g. a live preview while editing) is permitted only
+   as cache-fill and must be validated against the commit it claims before any
+   reference is *published*; unpublished preview state is ephemeral by construction.
+
+### 15.6 Edit flow — extent refresh (revised)
 
 1. Client submits a commit (ops or full content) → main service validates `based_on`
    hash + §4.5 gates, creates the ArtifactDelta, updates `Artifact.content` — the
    artifact's belief lands **first**.
-2. Bridge invokes the handler with (base content, new content) → handler returns the
-   fresh extent set (re-decomposition is exact and cheap at ≤400k chars; unchanged
-   fragments keep their IDs, so the extent diff is meaningful).
-3. Bridge persists the side-car rows in the same boundary; the delta records the map.
+2. Bridge invokes the handler with (base content, new content) → fresh extent set
+   (re-decomposition is exact and cheap at ≤400k chars; unchanged fragments keep
+   their IDs, so the extent diff is meaningful).
+3. **Handler reachable**: extent rows are written in the same transaction boundary —
+   content, delta, and extents land as one atomic step.
+4. **Handler down**: the commit still lands (belief capture outranks reference
+   infrastructure), and the new commit is marked `extents_pending`. Reference
+   resolution for that commit degrades *explicitly* — content reads are unaffected;
+   the resolver answers "pending", never silently wrong. Catch-up is
+   change_log-driven (system#12) and safe because handler output is deterministic —
+   a pure function of content — so late computation converges to the same set
+   whenever it runs. Concurrency is unchanged: all Core writes remain in the main
+   service process; the handler never touches the database.
 
-**Failure posture** (docling / embed-daemon precedents): if the handler is
-unreachable, the commit still succeeds and the side-car head cursor falls behind —
-staleness is *visible*, never silent corruption — and a change_log-driven catch-up
-sweep (system#12 change feed) re-invokes the handler when it returns. Concurrency is
-unchanged: all Core writes remain in the main service process; the handler never
-touches the database.
+Staleness here is bounded, visible, and self-healing toward a unique answer — the
+precondition that makes pending-degradation acceptable for canonical data.
 
-### 15.6 Client impact
+### 15.7 Client impact
 
 Project Studio and ArtiLab (and any future artifact client) stop owning fragment
-registries entirely: they render and resolve references via read surfaces backed by
-the extent side-car. The §6.2 client-side fragment protocol becomes one supported
-input shape (ops with client-supplied fragments for agent-driven edits), not a
-requirement for every client.
+registries entirely: they render and resolve references via the service's read
+surfaces, and cache per §15.5. The §6.2 client-side fragment protocol becomes one
+supported input shape (ops with client-supplied fragments for agent-driven edits),
+not a requirement for every client — and never the basis for cross-app references.
 
-### 15.7 Migration and non-goals
+### 15.8 Migration and non-goals
 
-- No production migration: the delta verbs have zero production rows today; legacy
-  point-ops remain valid (a point insert is a 1-line extent).
+- Extents now need a proper (tiny) canonical-schema migration — trivially empty at
+  zero production deltas; legacy point-ops remain valid (a point insert is a 1-line
+  extent).
 - Non-goals for v1: char-level extents, cross-artifact fragments, semantic analysis
   inside the handler (the stage-3 statement pipeline may later ride the same handler,
   but that is a separate decision).
@@ -911,6 +949,7 @@ requirement for every client.
 | 0.3.0 | 2025-12-29 | Storage split (Soil/Core), Item hierarchy, Trigger relations |
 | 0.4.0 | 2026-02-12 | **Revised conversation operations:** Replace `collapse_conversation`/`reopen_conversation` with `fold`; clarified implicit branching via RFC-003 ContextFrame inheritance. Aligned with RFC-005 single-word verb convention. |
 | 0.4.2 | 2026-11-28 | **Added §15 Artifact Handler** (operator ruling): main service does not handle artifacts — dedicated handler owns fragment decomposition, extents, extent storage + refresh; extents stored as derived side-car (entity_fts precedent) with delta-trail traceability, Artifact schema untouched; §7.2 cross-ref. (0.4.1 edits carried unversioned.) |
+| 0.4.3 | 2026-11-28 | **§15.4–15.6 corrected (operator review): extents are CANONICAL main-service state, not per-app derived metadata** — multi-app referencing (Project Studio / ArtiLab / viewers / agent editors) needs one resolver or shared annotations fragment; new first-class `artifact_fragment_extent` canonical table (Artifact entity schema still untouched), immutable per commit (pure function of content), single-resolver rule + cache-by-commit (§15.5), transactional write with explicit `extents_pending` degradation when the handler is down (§15.6) |
 
 ---
 
