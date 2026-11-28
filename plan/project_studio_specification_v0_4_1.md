@@ -1,6 +1,6 @@
 # Project Studio Specification
 
-**Version:** 0.4.5
+**Version:** 0.4.6
 **Status:** Draft
 **Last Updated:** 2026-11-28
 **Supersedes:** MemoGarden Project System PRD v0.3.0
@@ -970,7 +970,11 @@ set — which is what makes validation-by-recompute and pending catch-up (§15.7
 sound.
 
 **Recommended chunking pipeline (non-normative — the contract above is the only
-gate).** Layered, deterministic-first, LLM optional:
+gate).** The reference algorithm — per-block-type chunking rules (headings, table
+cells, list items, images/captions, links, prose), fallback thresholds, and the
+worked example — is specified in full in
+[span_chunking_specification_v0_1.md](span_chunking_specification_v0_1.md).
+Layered, deterministic-first, LLM optional:
 
 - **Stage 0 — block parse (deterministic):** parse the markdown into a
   content-addressed block tree (headings, paragraphs, list items, table cells,
@@ -1057,6 +1061,7 @@ for cross-app references.
 | 0.4.3 | 2026-11-28 | **§15.4–15.6 corrected (operator review): extents are CANONICAL main-service state, not per-app derived metadata** — multi-app referencing (Project Studio / ArtiLab / viewers / agent editors) needs one resolver or shared annotations fragment; new first-class `artifact_fragment_extent` canonical table (Artifact entity schema still untouched), immutable per commit (pure function of content), single-resolver rule + cache-by-commit (§15.5), transactional write with explicit `extents_pending` degradation when the handler is down (§15.6) |
 | 0.4.4 | 2026-11-28 | **§15.2/§15.6 sharpened (operator review): per-version semantics formalized** — span sets key on the CONTENT version (metadata-only edits never recompute); terminology extent → **fragment span** (qualified vs §6.5 reference span); **span-set validity contract (§15.6)**: invariants over algorithms — id/ fidelity/structure/one-set-per-version are MUST, algorithm agreement is NOT; stability (unchanged text keeps ids) demoted to a producer SHOULD (diff-anchored carry-forward); producers plural (handler reference algo or editor's own), validated at the persistence boundary; `artifact_fragment_extent` table renamed `artifact_fragment_span`; `extents_pending` → `spans_pending` |
 | 0.4.5 | 2026-11-28 | **§15 redefined (operator review): spans are SEMANTIC TEXT FRAGMENTS** — clause/sentence-part/sentence, not line regions; addressing = block-relative CHAR offsets (`block_hash, start_char, end_char`; blocks content-addressed; navigation path derived at read, never stored); **deltas minimal (§15.4)**: `artifact_fragment` (content-addressed, version-independent rows) + `artifact_span_set` (per-version membership) + deltas carry `span_ops` diffs + `spans_digest` — full sets never embedded in deltas, history replays via the content-ops machinery; **§15.6 recommended layered chunking pipeline** (block parse → sentence segmentation → rule-based density refinement per doc_class → optional async LLM refinement as separate producer pass, never in the synchronous write path); tables: `artifact_fragment` + `artifact_span_set` |
+| 0.4.6 | 2026-11-28 | §15.6 pointer added: the reference chunking algorithm now has its own spec — [span_chunking_specification_v0_1.md](span_chunking_specification_v0_1.md) (block taxonomy, per-type rules incl. operator-directed headings/cells/items/images/links, prose pipeline stages 1–3, worked example) |
 
 ---
 
