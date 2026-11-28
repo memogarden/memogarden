@@ -1,300 +1,118 @@
 ---
 name: memogarden-schema
-description: SQLite schema modification workflow, data model reference, and conventions for MemoGarden Core. Use when adding tables, modifying columns, changing database structure, or referencing the data model.
+description: SQLite schema modification workflow for MemoGarden — the two
+  change paths (core-side migration runner vs soil-side self-applies),
+  version-bump checklist, submodule pin mechanics, index framing. Use when
+  adding tables/columns/indexes or touching the schema files.
 ---
 
 # Working with SQLite Schema
 
-## Schema Modification Workflow
+> **Rewritten 2026-11-28** — the previous version taught the dead
+> `memogarden-core` layout. This version reflects the verified mechanisms
+> (exercised by schema 20261128/20261129 on 2026-11-28).
+
+## Where the schema lives
+
+- **Canonical**: `/schemas/sql/core.sql` + `/schemas/sql/soil.sql` (root
+  repo) — single source of truth, versioned by banner + the
+  `_schema_metadata` seed row inside each file. YAML type contracts live in
+  `/schemas/*.yaml`, machine schemas in `/schemas/types/`.
+- **Bundled copy**: `memogarden-system/system/schemas/memogarden/` — a
+  gitlink (submodule) pin of the ROOT repo. This copy is what the server
+  actually loads (loader order: importlib.resources → submodule mount →
+  workspace fallback). A schema change ships as: **root commit → push root →
+  bump the system repo's submodule pin**.
+- **Migrations**: `memogarden-system/system/schemas/sql/migrations/
+  migrate_<from>_to_<to>.sql` (plain files in the system repo).
+- **Load resolution** (`system/schemas.py::get_sql_schema`): importlib
+  resources → `system/schemas/memogarden/schemas/sql/<layer>.sql` →
+  `system/schemas/sql/<layer>.sql` → `<workspace>/schemas/sql/<layer>.sql`.
+
+## THE TWO CHANGE PATHS — pick correctly
+
+### Core-side change (provider_runs, api_keys, entity, users, …)
+
+Edit `core.sql` **and** add `migrations/migrate_<from>_to_<to>.sql`, **and**
+bump `EXPECTED_SCHEMA_VERSION` + `SCHEMA_VERSION_CHAIN` in
+`system/core/__init__.py`. The runner (`_run_migrations`) walks the chain at
+every `init_db()` — i.e. at app boot. Fresh DBs seed at EXPECTED directly
+from core.sql. Exercises: 20261124 (change feed), 20261128 (run tagging),
+20261129 (key descriptions).
+
+### Soil-side change (item, system_relation, item_fts, …)
+
+Edit `soil.sql` **only**. `init_system` calls `Soil.init_schema()`
+**unconditionally at every boot** (executescript, all `IF NOT EXISTS`), so
+existing DBs converge at the next restart — no migration file, **no
+EXPECTED bump** (soil's version banner is informational; api#95's
+item_fts triggers landed exactly this way). Pre-flight any
+possibly-failing DDL read-only first (e.g. a new UNIQUE index fails hard
+if existing data violates it).
+
+## Version-bump checklist (core-side; every step has bitten a session)
+
+1. `core.sql`: banner line 2 + `_schema_metadata` seed row + the DDL.
+2. `EXPECTED_SCHEMA_VERSION` + `SCHEMA_VERSION_CHAIN` append.
+3. Migration file: `BEGIN IMMEDIATE` … DDL … `UPDATE _schema_metadata SET
+   value='<new>'`. Additive ALTERs only (SQLite has no DROP-COLUMN-IF-
+   EXISTS guard); **new columns must be strippable** for fixtures.
+4. **Version-guard tests** assert the literal: `test_agent_identity.py`
+   (`test_expected_version_is_…`), `test_rfc011_scope_grants.py`
+   (`== EXPECTED_SCHEMA_VERSION == "<ver>"`). Update both.
+5. **Fixtures that simulate old DBs must STRIP the new columns** (seed
+   fresh → stamp version back → DROP the new columns → walk the chain):
+   `test_change_feed.py::migrated_db` fixture and every
+   `*migration_converges*` test. A real old DB never carried them.
+6. Make new migration tests **EXPECTED-relative** (`assert version ==
+   EXPECTED_SCHEMA_VERSION`), never hardcoded — future bumps stop
+   breaking them.
+7. Submodule pin: root push → `git submodule update` / checkout in the
+   system worktree → commit the gitlink.
+8. Suite green (system; then api — whose tests resolve schemas through
+   the MAIN system checkout, since the editable install's finder beats
+   PYTHONPATH there).
+
+## Indexes — NOT canonical schema (operator framing, 2026-11-28)
+
+Indexes are accepted optimizations expected to change with
+implementation; consumers must stay correct without them. Inventory +
+framing: `docs/database-indexes.md`. The partial UNIQUE indexes
+(`idx_provider_runs_single_flight`, `idx_event_verdict_identity`) are the
+integrity-carrying exception — document any new one there.
+
+## Conventions (unchanged, still binding)
+
+- Raw SQL, parameterized; **no ORM**; SQLite only.
+- UTC ISO 8601 everywhere via `utils.isodatetime`; uuids via
+  `utils.uid` / `system.soil.generate_soil_uuid` (plain in storage,
+  `core_`/`soil_` prefixes added at the API layer).
+- WAL + `foreign_keys=ON` + `busy_timeout=5000` are set in both
+  connection factories — don't unset.
+- **Multi-statement write sequences use `Soil.write_txn()`**
+  (BEGIN IMMEDIATE, system#15): one deterministic lock acquisition;
+  Python's auto-begun DEFERRED transactions starve under concurrent
+  writers. Single-INSERT writes are fine as-is.
+- Facts are immutable: changes are amends (new version + supersedes);
+  entities mutate in place via `core.entity.update_data`.
+- JSON `data`/`metadata` columns; scopes live at `data.scopes`
+  (entities) / `metadata.scopes` (facts), plain uuids.
+
+## Testing
+
+- Fresh-DB check: `init_db()` into a temp `MEMOGARDEN_DATA_DIR`, assert
+  columns/version; existing-DB check: seed, stamp version back, strip
+  new columns, run the migration/`init_db()` again, assert convergence.
+- Worktree suites: `git submodule update --init` FIRST (missing
+  submodule = 5 confusing type-schema test failures).
+- After schema changes: `PRAGMA integrity_check;` on a copy.
+- Prod pre-flights are read-only URIs:
+  `sqlite3 "file:$HOME/.local/share/memogarden/core.db?mode=ro" …`.
+
+## Non-goals / traps
 
-Follow this step-by-step process when modifying the database schema:
-
-### 1. Edit Schema File
-
-Edit [memogarden_core/schema/schema.sql](../../memogarden/memogarden-core/memogarden_core/schema/schema.sql):
-
-```sql
--- Example: Adding a new column to transactions table
-ALTER TABLE transactions ADD COLUMN tags TEXT;
-```
-
-### 2. Create Migration Script (if needed)
-
-If the database already exists in production, create a migration script:
-
-```bash
-# Migrations are stored in db/migrations/
-mkdir -p /home/kureshii/memogarden/memogarden-core/memogarden_core/db/migrations
-```
-
-Create migration file: `db/migrations/001_add_tags_to_transactions.sql`
-
-```sql
--- Migration: Add tags column to transactions
--- Date: 2025-12-24
-
-ALTER TABLE transactions ADD COLUMN tags TEXT;
-```
-
-**Note:** For the complete migration framework with deconfliction, validation, and rollback strategies, see `/plan/future/migration-mechanism.md`.
-
-### 3. Update Seed Data (if tables changed)
-
-If you modified tables referenced in seed data, update:
-
-[memogarden_core/schema/seed.sql](../../memogarden/memogarden-core/memogarden_core/schema/seed.sql)
-
-### 4. Update Pydantic Schemas
-
-Update API request/response schemas to match schema:
-
-```python
-# memogarden_core/api/v1/schemas/transaction.py
-class TransactionCreate(BaseModel):
-    ...
-    tags: str | None = Field(None, description="Optional tags")
-```
-
-### 5. Update Core Operations (if needed)
-
-Update operations classes if schema changes affect database operations:
-
-[memogarden_core/db/transaction.py](../../memogarden/memogarden-core/memogarden_core/db/transaction.py)
-
-```python
-def create(self, entity_id: str, amount: float, ..., tags: str | None = None):
-    ...
-    sql = """
-        INSERT INTO transactions (id, amount, ..., tags, created_at, updated_at)
-        VALUES (?, ?, ..., ?, ?, ?)
-    """
-    ...
-```
-
-### 6. Test with Fresh Database
-
-Always test schema changes with a fresh database:
-
-```bash
-cd /home/kureshii/memogarden/memogarden-core
-
-# Remove existing database
-rm -f data/memogarden.db
-
-# Reinitialize
-poetry run python -c "from memogarden_core.db import init_db; init_db()"
-
-# Run tests
-./run_tests.sh
-```
-
-## Schema Conventions
-
-### Column Naming
-
-- **Primary keys**: `id` (TEXT, UUID v4)
-- **Foreign keys**: `<table>_id` (e.g., `account_id`, `category_id`)
-- **Timestamps**: `created_at`, `updated_at` (TEXT, ISO 8601 UTC)
-- **Dates**: `<entity>_date` (e.g., `transaction_date`) (TEXT, ISO 8601 date)
-- **Booleans**: `is_<action>` (e.g., `is_active`) (INTEGER, 0 or 1)
-
-### Data Types
-
-```sql
--- Identifiers (UUIDs)
-TEXT PRIMARY KEY
-
--- Foreign keys
-TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE
-
--- Numeric values
-REAL NOT NULL
-
--- Text content
-TEXT
-
--- ISO 8601 timestamps
-TEXT NOT NULL  -- Format: '2025-12-24T10:30:00Z'
-
--- ISO 8601 dates
-TEXT NOT NULL  -- Format: '2025-12-24'
-
--- Boolean flags
-INTEGER NOT NULL DEFAULT 0  -- 0 = false, 1 = true
-```
-
-### Constraints
-
-```sql
--- Foreign key with cascade
-FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
-
--- Unique constraint
-UNIQUE(email, username)
-
--- Check constraint
-CHECK (amount >= 0)
-
--- Not null with default
-TEXT NOT NULL DEFAULT 'SGD'
-```
-
-### Entity Registry Pattern
-
-All major entities must have entries in `entity_registry`:
-
-```sql
--- When creating a transaction
--- 1. Create entity registry entry first
-INSERT INTO entity_registry (id, entity_type, created_at, updated_at)
-VALUES (?, 'transactions ?, ?);
-
--- 2. Then create the transaction
-INSERT INTO transactions (id, amount, ...)
-VALUES (?, ...);
-```
-
-The Core API handles this automatically when using `core.transaction.create()`.
-
-## Data Model Quick Reference
-
-### Transactions (Core Entity)
-
-```sql
-id              TEXT PRIMARY KEY    -- UUID
-amount          REAL                -- Numeric value
-currency        TEXT                -- Default 'SGD'
-transaction_date TEXT               -- ISO 8601 date (YYYY-MM-DD)
-account_id      TEXT                -- FK to accounts
-category_id     TEXT                -- FK to categories (nullable)
-author          TEXT                -- User/agent identifier
-recurrence_id   TEXT                -- FK to recurrences (nullable)
-notes           TEXT                -- Optional description
-created_at      TEXT                -- ISO 8601 timestamp
-updated_at      TEXT                -- ISO 8601 timestamp
-```
-
-### Accounts
-
-```sql
-id          TEXT PRIMARY KEY
-name        TEXT                    -- e.g., "Household", "Personal"
-currency    TEXT                    -- Default 'SGD'
-created_at  TEXT
-updated_at  TEXT
-```
-
-### Categories
-
-```sql
-id          TEXT PRIMARY KEY
-name        TEXT                    -- e.g., "Food", "Transport"
-icon        TEXT                    -- Optional icon identifier
-created_at  TEXT
-updated_at  TEXT
-```
-
-## Common Schema Changes
-
-### Adding a Column
-
-```sql
-ALTER TABLE transactions ADD COLUMN tags TEXT;
-```
-
-### Adding a Table
-
-```sql
-CREATE TABLE recurrences (
-    id TEXT PRIMARY KEY,
-    frequency TEXT NOT NULL,
-    interval_value INTEGER NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-```
-
-### Adding an Index
-
-```sql
-CREATE INDEX idx_transactions_account_id ON transactions(account_id);
-CREATE INDEX idx_transactions_date ON transactions(transaction_date);
-```
-
-### Adding a Foreign Key
-
-Requires recreating table (SQLite limitation):
-
-```sql
--- 1. Create new table with foreign key
-CREATE TABLE transactions_new (
-    ...
-    FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
-);
-
--- 2. Copy data
-INSERT INTO transactions_new SELECT * FROM transactions;
-
--- 3. Drop old table
-DROP TABLE transactions;
-
--- 4. Rename new table
-ALTER TABLE transactions_new RENAME TO transactions;
-```
-
-## Verification
-
-After schema changes, verify:
-
-```bash
-# Connect to database
-sqlite3 /home/kureshii/memogarden/memogarden-core/data/memogarden.db
-
-# Check schema
-.schema transactions
-
-# Verify data integrity
-PRAGMA integrity_check;
-
-# Check foreign keys are enabled
-PRAGMA foreign_keys;
-
-# Exit
-.quit
-```
-
-## Important Notes
-
-1. **No ORM**: All SQL is handwritten - schema.sql is source of truth
-2. **Auto-generated IDs**: All entity IDs are plain UUID v4 strings (database storage)
-   - **API layer adds prefixes**: `entity_` for Entities, `item_` for Soil Items (future)
-   - Database stores plain UUIDs: `a1b2c3d4-e5f6-7890-abcd-ef1234567890`
-   - API returns prefixed: `entity_a1b2c3d4-e5f6-7890-abcd-ef1234567890`
-3. **UTC timestamps**: Always store timestamps as ISO 8601 UTC: `2025-12-24T10:30:00Z`
-4. **Foreign keys**: Enabled via `PRAGMA foreign_keys = ON`
-5. **WAL mode**: Enabled for concurrent access: `PRAGMA journal_mode = WAL`
-6. **Entity vs Item**: Entities (mutable Core) vs Items (immutable Soil, future) - distinct types with different purposes
-
-## Future Design Reference
-
-For advanced schema topics and design decisions documented for future implementation:
-
-- **Schema Extension System**: `/plan/future/schema-extension-design.md`
-  - Base schema vs. extensions philosophy
-  - Two extension mechanisms (structured SQL + JSON data)
-  - Extension lifecycle and sharing between users
-
-- **Migration Framework**: `/plan/future/migration-mechanism.md`
-  - Complete migration workflow with validation
-  - Deconfliction rules and conflict resolution
-  - Default value application and rollback strategy
-  - Soil archival for schema history
-
-- **Memogarden Soil**: `/plan/future/soil-design.md`
-  - Immutable storage architecture for emails, invoices, statements
-  - Fossilization mechanism (lossy compaction)
-  - Retrieval and reconstruction APIs
-
-These documents are design references for when MemoGarden needs schema evolution, multi-user extensions, or document archival capabilities.
-
-For database architecture details, see [architecture.md](../../memogarden/memogarden-core/docs/architecture.md).
+- No ORM, no new deps, no async.
+- `key_prefix` on api_keys is a static type tag, not an identifier.
+- The full migration mechanism doc (`plan/future/migration-mechanism.md`)
+  is design-reference; the runner in `system/core/__init__.py` is the
+  implemented truth.
