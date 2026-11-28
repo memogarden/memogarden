@@ -1,6 +1,6 @@
 -- MemoGarden Core Database Schema
--- Schema Version: 20261129
--- Description: Base Core tables + change feed (system#12 search-sync slice)
+-- Schema Version: 20261130
+-- Description: Base Core tables + change feed (system#12 search-sync slice) + artifact spans (Project Studio §15)
 --
 -- DESIGN:
 -- - entity: Global registry with JSON data field
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS _schema_metadata (
 );
 
 INSERT OR IGNORE INTO _schema_metadata VALUES
-    ('version', '20261129', datetime('now')),
+    ('version', '20261130', datetime('now')),
     ('base_schema', 'memogarden-core-base', datetime('now')),
     ('description', 'Core base tables only; type schemas in JSON', datetime('now')),
     ('epoch_date', '2020-01-01', datetime('now'));
@@ -328,6 +328,56 @@ CREATE TABLE IF NOT EXISTS provider_accounts (
 );
 CREATE INDEX IF NOT EXISTS idx_provider_accounts_due
     ON provider_accounts(provider_name, status, next_due_at);
+
+-- ============================================================================
+-- ARTIFACT SPANS (Project Studio spec §15.4, v0.4.5): fragment spans are
+-- CANONICAL cross-app state — Project Studio, ArtiLab, viewers, and agent
+-- editors must all reference the same fragment set (single-resolver rule,
+-- §15.5). The Artifact ENTITY schema stays untouched (the dependency runs
+-- one way: spans reference artifacts, never the reverse). Chunking is
+-- computed by the dedicated Artifact Handler (memogarden-artifact-handler,
+-- socket worker — no Core access) and persisted by the thin bridge in
+-- memogarden-api; deltas carry span_ops diffs, never full sets (v0.4.5).
+-- ============================================================================
+
+-- One row per fragment span, CONTENT-ADDRESSED and version-independent: a
+-- fragment's block-relative address cannot change without its block
+-- changing — and a changed block re-chunks its spans anyway. Insert-only.
+CREATE TABLE IF NOT EXISTS artifact_fragment (
+    artifact_uuid TEXT NOT NULL,
+    fragment_id   TEXT NOT NULL,               -- §6.2 content-hash id (^abc)
+    content       TEXT NOT NULL,               -- exact span text
+    block_hash    TEXT NOT NULL,               -- content-addressed leaf block
+    block_type    TEXT NOT NULL,               -- heading|paragraph|list_item|table|image|standalone_link|code_fence|blockquote|html
+    start_char    INTEGER NOT NULL,            -- relative to block text
+    end_char      INTEGER NOT NULL,            -- exclusive
+    PRIMARY KEY (artifact_uuid, fragment_id)
+);
+
+-- Per-version membership (tiny): which fragments belong to which content
+-- version, in document order, with version-scoped absolute offsets (abs
+-- offsets shift when upstream content changes — they are version-scoped
+-- data, not fragment identity).
+CREATE TABLE IF NOT EXISTS artifact_span_set (
+    artifact_uuid   TEXT NOT NULL,
+    content_version TEXT NOT NULL,
+    fragment_id     TEXT NOT NULL,
+    ord             INTEGER NOT NULL,
+    abs_start       INTEGER NOT NULL,
+    abs_end         INTEGER NOT NULL,
+    PRIMARY KEY (artifact_uuid, content_version, fragment_id)
+);
+
+-- Commit-path status: 'pending' when the producer was unreachable at commit
+-- time (§15.6 step 4 — the artifact's belief lands first, spans catch up via
+-- the change_log sweep); 'ok' once the set lands. One row per version.
+CREATE TABLE IF NOT EXISTS artifact_span_status (
+    artifact_uuid   TEXT NOT NULL,
+    content_version TEXT NOT NULL,
+    status          TEXT NOT NULL CHECK (status IN ('pending', 'ok', 'failed')),
+    updated_at      TEXT NOT NULL,
+    PRIMARY KEY (artifact_uuid, content_version)
+);
 
 -- ============================================================================
 -- TRIGGERS
