@@ -1,6 +1,6 @@
 -- MemoGarden Core Database Schema
--- Schema Version: 20261130
--- Description: Base Core tables + change feed (system#12 search-sync slice) + artifact spans (Project Studio §15)
+-- Schema Version: 20261201
+-- Description: Base Core tables + change feed (system#12 search-sync slice) + artifact spans (Project Studio §15; span_set keyed per position — same fragment may occur repeatedly)
 --
 -- DESIGN:
 -- - entity: Global registry with JSON data field
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS _schema_metadata (
 );
 
 INSERT OR IGNORE INTO _schema_metadata VALUES
-    ('version', '20261130', datetime('now')),
+    ('version', '20261201', datetime('now')),
     ('base_schema', 'memogarden-core-base', datetime('now')),
     ('description', 'Core base tables only; type schemas in JSON', datetime('now')),
     ('epoch_date', '2020-01-01', datetime('now'));
@@ -365,7 +365,7 @@ CREATE TABLE IF NOT EXISTS artifact_span_set (
     ord             INTEGER NOT NULL,
     abs_start       INTEGER NOT NULL,
     abs_end         INTEGER NOT NULL,
-    PRIMARY KEY (artifact_uuid, content_version, fragment_id)
+    PRIMARY KEY (artifact_uuid, content_version, fragment_id, ord)
 );
 
 -- Commit-path status: 'pending' when the producer was unreachable at commit
