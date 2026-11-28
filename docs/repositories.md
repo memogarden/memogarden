@@ -224,6 +224,19 @@ These are related to MemoGarden but not part of the core system.
 
 **Note:** content stays read-only (editing requires the Project Studio `commit_artifact` fragment protocol); scope edits stay in the console (cascade semantics). Details in `memogarden-artilab/HANDOVER.md` and `~/sysinfo/incidents/2026-11-28-artilab-deploy.md`.
 
+### `memogarden-artifact-handler/`
+
+**Purpose:** artifact handler (Project Studio §15) — the span chunking worker: markdown in → fragment spans out over a local unix socket. Content-agnostic; NO Core access or credentials (chunking never runs in the main service — operator ruling §15).
+
+**Status:** Built (2026-11-28); reference algorithm per `plan/span_chunking_specification_v0_1.md` stages 0–1 (stage 2 density + stage 3 LLM are spec extensions, unbuilt)
+**Contains:**
+- `handler/chunker.py` - stage 0 block scanner (exact source offsets) + per-type rules + stage 1 sentence segmentation
+- `handler/ids.py` - §6.2 content-hash fragment ids (mod-36³ errata + salt-chain collisions)
+- `handler/validate.py` - §15.6 validity invariants (tests; the api bridge runs its own independent copy)
+- `handler/daemon.py` - unix socket server, idle self-exit (docling/embed template)
+- `scripts/systemd/` - `memogarden-artifact-handler.{socket,service}` (RuntimeDirectory pattern)
+**Persisted by:** the thin bridge in `memogarden-api/api/artifact_spans.py` into the canonical span tables (schema 20261130); read via `GET /api/v1/artifacts/<uuid>/spans`; consumed by ArtiLab's hover overlay
+
 ### `app-budget/`
 
 **Purpose:** Budget app (Flutter)

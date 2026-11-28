@@ -157,6 +157,19 @@ curl -H "Authorization: Bearer $JWT" \
 # store (path resolved under the store root, never trusted verbatim)
 curl -OJ -H "Authorization: Bearer $JWT" \
   "http://localhost:8600/api/v1/artifacts/core_<uuid>/file"
+
+# Fragment spans for the HEAD content version (Project Studio §15.4/§15.5 —
+# the single-resolver read surface; spans are canonical state in the
+# artifact_fragment/artifact_span_set tables, chunked by the Artifact
+# Handler and persisted by the api bridge). status: ok (spans follow,
+# ordered by document position, abs offsets into the raw markdown of
+# content_version) | pending (§15.6 — producer was down at commit; sweep
+# fills) | none (never chunked).
+curl -H "Authorization: Bearer $JWT" \
+  "http://localhost:8600/api/v1/artifacts/core_<uuid>/spans"
+# → {"artifact_uuid", "content_version", "status", "spans":
+#     [{fragment_id, ord, content, block_hash, block_type, start_char,
+#       end_char, abs_start, abs_end}]}
 ```
 
 Console page: `/console/documents` — browse/search/detail for ingested
