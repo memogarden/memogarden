@@ -121,3 +121,4 @@ wt/
 triage-model/*
 !triage-model/README.md
 memogarden-docling/
+memogarden-artilab/

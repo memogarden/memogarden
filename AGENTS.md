@@ -32,6 +32,7 @@ This document provides context and guidelines for AI assistants (Claude, GPT, et
 10. `memogarden.github.io/` - Documentation site
 11. **Search** (`memogarden-search/`) - Model-layer search service: the semantic plane + opt-in cross-encoder rerank behind the `search` verb's `semantic`/`hybrid` strategies and the console Items tab (embed daemon over a unix socket, socket-activated `memogarden-embed.{socket,service}`, index builder, change_log-driven catch-up); query-time inference never runs inside the API process
 12. **Docling** (`memogarden-docling/`) - Document-ingestion worker: PDF in → DoclingDocument JSON + markdown out over a unix socket (content-agnostic; uv-pinned python 3.12, docling 2.153.0; socket-activated `memogarden-docling.{socket,service}`; `CUDA_VISIBLE_DEVICES` empty — pip torch lacks sm_61 for the driver-visible MX150). The MemoGarden-aware half is `providers/docling-extractor/` (root): `~/Documents` watch → Triage-scoped Attachment facts + Core Artifacts, trial phase (see ~/sysinfo incident 2026-11-26)
+13. **Artilab** (`memogarden-artilab/`) - Artifact editor PWA (browse/search/relabel Core Artifacts + markdown capture); `artilab.service` on 127.0.0.1:7429, served at artilab.ngjunsiang.me via the tada tunnel + Access (deployed 2026-11-28); server holds zero credentials (JWT-only artifact routes → console-style login in the browser; server = static host + transparent API proxy)
 
 ### Submodules (pinned in root repo as gitlinks)
 

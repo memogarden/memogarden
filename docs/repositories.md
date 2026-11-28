@@ -212,6 +212,18 @@ These are related to MemoGarden but not part of the core system.
 
 **Note:** read state is deliberately app-local; MemoGarden will eventually record URL visits as facts, subsuming it (see `~/sysinfo/incidents/2026-11-18-readly-pwa.md`).
 
+### `memogarden-artilab/`
+
+**Purpose:** artilab — artifact editor PWA (browse/search/inspect the docling-era Core Artifacts; relabel metadata via `/mg edit`; capture markdown artifacts)
+
+**Status:** Deployed (2026-11-28) at `artilab.ngjunsiang.me` (tada Cloudflare tunnel + Access; `artilab.service`, port 7429)
+**Contains:**
+- `packages/server/` - `artilab serve` (node:http): static host + **transparent reverse proxy** (`/api/*`, `/mg`, `/auth/*` → 127.0.0.1:8600) — zero secrets; the operator JWT lives in the browser (artifact routes are JWT-only by design)
+- `packages/web/` - PWA UI (Vite + React 19 + TanStack Query 5, marked + DOMPurify, hand-rolled 4-route routing, sw.js with Access session recovery)
+- `scripts/` - systemd unit mirror + installer + icon generator
+
+**Note:** content stays read-only (editing requires the Project Studio `commit_artifact` fragment protocol); scope edits stay in the console (cascade semantics). Details in `memogarden-artilab/HANDOVER.md` and `~/sysinfo/incidents/2026-11-28-artilab-deploy.md`.
+
 ### `app-budget/`
 
 **Purpose:** Budget app (Flutter)
